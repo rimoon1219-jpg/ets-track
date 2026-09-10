@@ -1,0 +1,1948 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETS TRACK | Ecolotex Shonan Co., Ltd.</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<style>
+  body { margin: 0; background: #FAF9F6; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ▼▼▼ ここをApps Scriptデプロイ後の「ウェブアプリのURL」に書き換えてください ▼▼▼
+const API_URL = 'https://script.google.com/macros/s/AKfycbyQEs0L_0WLHnQNSak-OlZlrKyR5Ew_zVQWiDOPz3PBy7csP_HS92LQyc47WcNFrld0/exec';
+
+// ▼ 地図表示用（Googleマップ APIキーに書き換えてください）▼
+const GOOGLE_MAPS_API_KEY = 'AIzaSyBqEAhpt-XVjaoKAiKxKkmfdLJ7IzKKi0g';
+// ▲▲▲ ここまで ▲▲▲
+
+const DEVICE_STAFF_KEY = 'genbaTracker_staffName';
+function getDeviceStaff() {
+  try { return localStorage.getItem(DEVICE_STAFF_KEY) || ''; } catch (e) { return ''; }
+}
+function setDeviceStaff(name) {
+  try { localStorage.setItem(DEVICE_STAFF_KEY, name); } catch (e) {}
+}
+
+const storage = {
+  async get(key) {
+    const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(key)}`);
+    const data = await res.json();
+    if (!data.found) throw new Error('not found: ' + key);
+    return { key: data.key, value: data.value };
+  },
+  async set(key, value) {
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'set', key, value }),
+    });
+    return { key, value };
+  },
+  async delete(key) {
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'delete', key }),
+    });
+    return { key, deleted: true };
+  },
+  async list(prefix) {
+    const res = await fetch(`${API_URL}?action=list&prefix=${encodeURIComponent(prefix || '')}`);
+    const data = await res.json();
+    return { keys: data.keys || [] };
+  },
+  async uploadPhoto(dataUrl, filename) {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'uploadPhoto', dataUrl, filename }),
+    });
+    const data = await res.json();
+    return data.url;
+  },
+};
+
+// 立米数（請求書関連）を編集するための合言葉。後で洋子さんの希望のものに変更します。
+const RYUBEI_PASSWORD = '8989';
+
+const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
+const TRUCK_COLORS = ['#E63946', '#457B9D', '#2A9D8F', '#FFB703', '#9B5DE5'];
+
+const SCHED_STATUSES = [
+  { key: '新規', color: '#E63946' },
+  { key: '木・断熱', color: '#F2A29B' },
+  { key: 'ボード', color: '#457B9D' },
+  { key: 'ボード・サイディング', color: '#8B5E3C' },
+  { key: '木完', color: '#2EC4B6' },
+  { key: 'クロス', color: '#2B2B2B' },
+  { key: 'クリーニング', color: '#9B5DE5' },
+  { key: '最終', color: '#FF6B9D' },
+  { key: '追加', color: '#FFB703' },
+  { key: '会社予定', color: '#2A9D8F' },
+  { key: '単発', color: '#6C757D' },
+];
+
+function statusColor(list, key) {
+  const found = list.find((s) => s.key === key);
+  return found ? found.color : '#999';
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function circledNumber(n) {
+  const circled = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮','⑯','⑰','⑱','⑲','⑳'];
+  if (n >= 1 && n <= 20) return circled[n - 1];
+  return `(${n})`;
+}
+
+function addDays(dateStr, days) {
+  const d = dateStr ? new Date(dateStr) : new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function compressImage(file, maxSize = 640, quality = 0.55) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxSize) {
+          height = Math.round((height * maxSize) / width);
+          width = maxSize;
+        } else if (height > maxSize) {
+          width = Math.round((width * maxSize) / height);
+          height = maxSize;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function mapUrl(address) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
+// 住所文字列から「市」「区」レベルの地域名を自動抽出する（配車のグループ分け用）
+function extractArea(address) {
+  if (!address) return '未分類';
+  let s = address.trim();
+  // 都道府県を取り除く
+  s = s.replace(/^.*?(都|道|府|県)/, '');
+  // 郵便番号などを取り除く
+  s = s.replace(/^〒?\d{3}-?\d{4}\s*/, '');
+  // 市 + 区 のパターン（例：横浜市神奈川区）
+  let m = s.match(/^([^\s0-9０-９]+?市)([^\s0-9０-９]+?区)/);
+  if (m) return m[1] + m[2];
+  // 市のみ（例：大和市）
+  m = s.match(/^([^\s0-9０-９]+?市)/);
+  if (m) return m[1];
+  // 郡 + 町村
+  m = s.match(/^([^\s0-9０-９]+?郡[^\s0-9０-９]+?[町村])/);
+  if (m) return m[1];
+  // 区のみ（東京23区想定）
+  m = s.match(/^([^\s0-9０-９]+?区)/);
+  if (m) return m[1];
+  return '未分類';
+}
+
+function loadGoogleMapsScript() {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.maps) { resolve(); return; }
+    if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY.indexOf('PASTE_') === 0) { reject(new Error('no_key')); return; }
+    const existing = document.getElementById('gmaps-script');
+    if (existing) { existing.addEventListener('load', () => resolve()); return; }
+    const script = document.createElement('script');
+    script.id = 'gmaps-script';
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}`;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('load_failed'));
+    document.head.appendChild(script);
+  });
+}
+
+async function geocodeAddress(address) {
+  if (!address) return null;
+  try {
+    const cached = await storage.get(`geocode:${address}`);
+    if (cached && cached.value) return JSON.parse(cached.value);
+  } catch (e) { /* キャッシュなし、続けて取得 */ }
+  return new Promise((resolve) => {
+    const geocoder = new window.google.maps.Geocoder();
+    geocoder.geocode({ address }, async (results, status) => {
+      if (status === 'OK' && results[0]) {
+        const loc = results[0].geometry.location;
+        const latLng = { lat: loc.lat(), lng: loc.lng() };
+        try { await storage.set(`geocode:${address}`, JSON.stringify(latLng)); } catch (e) {}
+        resolve(latLng);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+function markerIcon(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="${color}" stroke="#fff" stroke-width="3"/></svg>`;
+  return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new window.google.maps.Size(28, 28) };
+}
+
+function daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
+function firstWeekday(year, month) { return new Date(year, month, 1).getDay(); }
+function isSaturday(dateStr) { return new Date(dateStr + 'T00:00:00').getDay() === 6; }
+
+// ---------- Month calendar (like TimeTree month view) ----------
+function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selectedDate }) {
+  const [year, month] = monthCursor.split('-').map(Number);
+  const total = daysInMonth(year, month - 1);
+  const startWeekday = firstWeekday(year, month - 1);
+  const countByDate = {};
+  records.forEach((r) => { countByDate[r.date] = (countByDate[r.date] || 0) + 1; });
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    cells.push(dateStr);
+  }
+
+  function shiftMonth(delta) {
+    let m = month + delta, y = year;
+    if (m > 12) { m = 1; y += 1; }
+    if (m < 1) { m = 12; y -= 1; }
+    setMonthCursor(`${y}-${String(m).padStart(2, '0')}`);
+  }
+
+  return (
+    <div style={styles.calBox}>
+      <div style={styles.calHeader}>
+        <button style={styles.calNavBtn} onClick={() => shiftMonth(-1)}>‹</button>
+        <div style={styles.calTitle}>{year}年{month}月</div>
+        <button style={styles.calNavBtn} onClick={() => shiftMonth(1)}>›</button>
+      </div>
+      <div style={styles.calWeekRow}>
+        {['日', '月', '火', '水', '木', '金', '土'].map((w) => (
+          <div key={w} style={styles.calWeekLabel}>{w}</div>
+        ))}
+      </div>
+      <div style={styles.calGrid}>
+        {cells.map((dateStr, i) => {
+          if (!dateStr) return <div key={i} style={styles.calCellEmpty} />;
+          const count = countByDate[dateStr] || 0;
+          const day = Number(dateStr.slice(-2));
+          const sat = isSaturday(dateStr);
+          return (
+            <button
+              key={i}
+              onClick={() => onPickDate(dateStr)}
+              style={{
+                ...styles.calCell,
+                ...(dateStr === selectedDate ? styles.calCellActive : {}),
+                ...(sat ? { color: '#457B9D' } : {}),
+              }}
+            >
+              <span style={styles.calDayNum}>{day}</span>
+              {count > 0 && <span style={styles.calCount}>{count}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function GenbaTracker() {
+  const [tab, setTab] = useState('sched'); // sched | mgmt | dispatch
+  const [schedRecords, setSchedRecords] = useState([]);
+  const [mgmtRecords, setMgmtRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState('');
+
+  const [search, setSearch] = useState('');
+  const [kumitenFilter, setKumitenFilter] = useState('全て');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [showUncollectedOnly, setShowUncollectedOnly] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [monthCursor, setMonthCursor] = useState(todayStr().slice(0, 7));
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [bulkFrom, setBulkFrom] = useState('');
+  const [bulkTo, setBulkTo] = useState('');
+  const [showExport, setShowExport] = useState(false);
+  const [exportText, setExportText] = useState('');
+  const [ryubeiUnlocked, setRyubeiUnlocked] = useState(false);
+
+  // dispatch state
+  const [dispatchDate, setDispatchDate] = useState(todayStr());
+  const [regularTruckCount, setRegularTruckCount] = useState(6);
+  const [includeKei, setIncludeKei] = useState(true);
+  const [dumpOnlyCount, setDumpOnlyCount] = useState(0);
+  const [assignments, setAssignments] = useState({}); // siteId -> truck id string ('R1','KEI','D1'...) or '' for unassigned
+  const [extraSiteIds, setExtraSiteIds] = useState([]); // 他の日の予定から追加した現場ID
+  const [showAddExtraSite, setShowAddExtraSite] = useState(false);
+  const [extraSiteSearch, setExtraSiteSearch] = useState('');
+  const [collectNote, setCollectNote] = useState('');
+  const [dumpNote, setDumpNote] = useState('');
+  const [showDispatchMap, setShowDispatchMap] = useState(false);
+  const [mapStatus, setMapStatus] = useState('idle'); // idle | loading | error | ready
+  const mapDivRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const mapMarkersRef = useRef([]);
+  const [dispatchLoaded, setDispatchLoaded] = useState(false);
+
+  // invoice state
+  const [invoiceKumiten, setInvoiceKumiten] = useState('OHA');
+  const [invoiceMonth, setInvoiceMonth] = useState(todayStr().slice(0, 7));
+  const [showInvoiceExport, setShowInvoiceExport] = useState(false);
+  const [invoiceExportText, setInvoiceExportText] = useState('');
+  const [invoiceEdits, setInvoiceEdits] = useState({}); // recordId -> lineItems編集中バッファ
+  const [showSummaryView, setShowSummaryView] = useState(false);
+  const [summaryFrom, setSummaryFrom] = useState('');
+  const [summaryTo, setSummaryTo] = useState('');
+  const [summaryKumitenFilter, setSummaryKumitenFilter] = useState('全て');
+  const [ganttKumitenFilter, setGanttKumitenFilter] = useState('全て');
+  const [ganttMonthOffset, setGanttMonthOffset] = useState(-1); // 表示開始位置（今月からのズレ）
+  const [kumitenList, setKumitenList] = useState(DEFAULT_KUMITEN);
+  const [showKumitenEditor, setShowKumitenEditor] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkImportText, setBulkImportText] = useState('');
+  const [bulkImportBusy, setBulkImportBusy] = useState(false);
+  const [showBulkUpdate, setShowBulkUpdate] = useState(false);
+  const [bulkUpdateText, setBulkUpdateText] = useState('');
+  const [deviceStaff, setDeviceStaffState] = useState(getDeviceStaff());
+
+  function changeDeviceStaff() {
+    const name = window.prompt('この端末を使う担当者名を入力してください（次回から自動で入力されます）', deviceStaff);
+    if (name === null) return;
+    setDeviceStaff(name.trim());
+    setDeviceStaffState(name.trim());
+    showToast('担当者名を覚えました');
+  }
+
+  const emptySched = () => ({
+    name: '', kumiten: 'OHA', address: '', area: '', status: '新規', staff: deviceStaff, note: '', date: todayStr(),
+    time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, expectedVisits: '12',
+  });
+  const emptyMgmt = () => ({
+    name: '', kumiten: 'OHA', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [],
+  });
+  const [form, setForm] = useState(emptySched());
+  const [pendingPhotos, setPendingPhotos] = useState([]);
+
+  useEffect(() => { load(); }, []);
+  useEffect(() => { if (tab === 'dispatch') loadDispatch(dispatchDate); }, [tab, dispatchDate]);
+
+  useEffect(() => {
+    if (!showDispatchMap) return;
+    let cancelled = false;
+    async function build() {
+      setMapStatus('loading');
+      try {
+        await loadGoogleMapsScript();
+      } catch (e) {
+        if (!cancelled) setMapStatus('error');
+        return;
+      }
+      if (cancelled || !mapDivRef.current) return;
+      const map = new window.google.maps.Map(mapDivRef.current, {
+        center: { lat: 35.4, lng: 139.4 },
+        zoom: 11,
+      });
+      mapInstanceRef.current = map;
+      mapMarkersRef.current.forEach((m) => m.setMap(null));
+      mapMarkersRef.current = [];
+
+      const bounds = new window.google.maps.LatLngBounds();
+      const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+      let placed = 0;
+      for (const s of daySites) {
+        if (!s.address) continue;
+        const loc = await geocodeAddress(s.address);
+        if (cancelled) return;
+        if (!loc) continue;
+        const truckId = assignments[s.id];
+        const idx = opts.findIndex((o) => o.id === truckId);
+        const color = idx >= 0 ? TRUCK_COLORS[idx % TRUCK_COLORS.length] : '#9A9A94';
+        const marker = new window.google.maps.Marker({
+          position: loc,
+          map,
+          icon: markerIcon(color),
+          title: `${s.name}${truckId ? '（' + (opts.find((o) => o.id === truckId) || {}).label + '）' : '（未割当）'}`,
+        });
+        mapMarkersRef.current.push(marker);
+        bounds.extend(loc);
+        placed++;
+      }
+      if (placed > 0) map.fitBounds(bounds);
+      if (!cancelled) setMapStatus('ready');
+    }
+    build();
+    return () => { cancelled = true; };
+  }, [showDispatchMap, dispatchDate, assignments, regularTruckCount, includeKei, dumpOnlyCount]);
+
+  async function load() {
+    setLoading(true);
+    try {
+      try {
+        const km = await storage.get('meta:kumiten', true);
+        let list = DEFAULT_KUMITEN;
+        if (km && km.value) {
+          list = JSON.parse(km.value);
+          const missing = DEFAULT_KUMITEN.filter((n) => n !== 'その他' && !list.includes(n));
+          if (missing.length > 0) {
+            const others = list.filter((k) => k !== 'その他');
+            list = list.includes('その他') ? [...others, ...missing, 'その他'] : [...list, ...missing];
+          }
+        }
+        await storage.set('meta:kumiten', JSON.stringify(list), true);
+        setKumitenList(list);
+      } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
+
+      const sList = await storage.list('sched:', true);
+      const sItems = [];
+      for (const k of (sList && sList.keys) || []) {
+        const r = await storage.get(k, true);
+        if (r && r.value) sItems.push(JSON.parse(r.value));
+      }
+      sItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setSchedRecords(sItems);
+
+      const mList = await storage.list('mgmt:', true);
+      const mItems = [];
+      for (const k of (mList && mList.keys) || []) {
+        const r = await storage.get(k, true);
+        if (r && r.value) mItems.push(JSON.parse(r.value));
+      }
+      mItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setMgmtRecords(mItems);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  }
+
+  async function loadDispatch(date) {
+    setDispatchLoaded(false);
+    const satDefault = isSaturday(date) ? 3 : 6;
+    try {
+      const r = await storage.get(`dispatch:${date}`, true);
+      if (r && r.value) {
+        const parsed = JSON.parse(r.value);
+        setRegularTruckCount(parsed.regularTruckCount ?? satDefault);
+        setIncludeKei(parsed.includeKei ?? true);
+        setDumpOnlyCount(parsed.dumpOnlyCount ?? 0);
+        setAssignments(parsed.assignments || {});
+        setExtraSiteIds(parsed.extraSiteIds || []);
+        setCollectNote(parsed.collectNote || '');
+        setDumpNote(parsed.dumpNote || '');
+      } else {
+        setRegularTruckCount(satDefault);
+        setIncludeKei(true);
+        setDumpOnlyCount(0);
+        setAssignments({});
+        setExtraSiteIds([]);
+        setCollectNote('');
+        setDumpNote('');
+      }
+    } catch (e) {
+      setRegularTruckCount(satDefault);
+      setIncludeKei(true);
+      setDumpOnlyCount(0);
+      setAssignments({});
+      setExtraSiteIds([]);
+      setCollectNote('');
+      setDumpNote('');
+    }
+    setDispatchLoaded(true);
+  }
+
+  async function saveDispatch(nextAssignments, nextRegular, nextKei, nextDump, nextExtra, nextCollectNote, nextDumpNote) {
+    const payload = {
+      regularTruckCount: nextRegular,
+      includeKei: nextKei,
+      dumpOnlyCount: nextDump,
+      assignments: nextAssignments,
+      extraSiteIds: nextExtra !== undefined ? nextExtra : extraSiteIds,
+      collectNote: nextCollectNote !== undefined ? nextCollectNote : collectNote,
+      dumpNote: nextDumpNote !== undefined ? nextDumpNote : dumpNote,
+    };
+    await storage.set(`dispatch:${dispatchDate}`, JSON.stringify(payload), true);
+  }
+
+  function setAssignment(siteId, truckId) {
+    const next = { ...assignments, [siteId]: truckId };
+    setAssignments(next);
+    saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
+  }
+
+  async function moveSiteToDate(record) {
+    try {
+      await storage.set(`sched:${record.id}`, JSON.stringify({ ...record, date: dispatchDate }));
+      showToast(`${record.name} の予定日を${dispatchDate}に変更しました`);
+      load();
+    } catch (e) { showToast('変更に失敗しました'); }
+  }
+
+  function addExtraSite(siteId) {
+    if (extraSiteIds.includes(siteId)) return;
+    const next = [...extraSiteIds, siteId];
+    setExtraSiteIds(next);
+    saveDispatch(assignments, regularTruckCount, includeKei, dumpOnlyCount, next);
+  }
+
+  function removeExtraSite(siteId) {
+    const next = extraSiteIds.filter((id) => id !== siteId);
+    setExtraSiteIds(next);
+    const nextAssign = { ...assignments };
+    delete nextAssign[siteId];
+    setAssignments(nextAssign);
+    saveDispatch(nextAssign, regularTruckCount, includeKei, dumpOnlyCount, next);
+  }
+
+  function autoAssignTrucks() {
+    const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+    if (opts.length === 0) { showToast('トラックがありません'); return; }
+    const counts = {};
+    opts.forEach((o) => { counts[o.id] = 0; });
+    Object.values(assignments).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
+
+    // 地域ごとにまとめる（並び順は現場が出てきた順＝なるべく近い地域が固まっている前提）
+    const areaOrder = [];
+    const areas = {};
+    daySites.forEach((s) => {
+      if (assignments[s.id]) return; // すでに割り振り済みはそのまま
+      const area = s.area || extractArea(s.address) || '未分類';
+      if (!areas[area]) { areas[area] = []; areaOrder.push(area); }
+      areas[area].push(s);
+    });
+
+    const unassignedTotal = areaOrder.reduce((sum, a) => sum + areas[a].length, 0);
+    const target = Math.max(1, Math.ceil(unassignedTotal / opts.length)); // 1台あたりの目安件数
+
+    const next = { ...assignments };
+    let truckIdx = 0;
+    areaOrder.forEach((area) => {
+      const sites = areas[area];
+      // 今のトラックがすでに目安件数に達していて、次のトラックがまだ残っていれば進める
+      // （地域を分割はしない＝同じ地域は必ず同じトラックにまとめる）
+      while (truckIdx < opts.length - 1 && counts[opts[truckIdx].id] >= target) {
+        truckIdx++;
+      }
+      const truckId = opts[truckIdx].id;
+      sites.forEach((s) => { next[s.id] = truckId; counts[truckId]++; });
+    });
+
+    setAssignments(next);
+    saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
+    showToast('地域のまとまりを優先して割り振りました（手動でも調整できます）');
+  }
+
+  function saveCollectNote(value) {
+    setCollectNote(value);
+    saveDispatch(assignments, regularTruckCount, includeKei, dumpOnlyCount, extraSiteIds, value, dumpNote);
+  }
+
+  function saveDumpNoteValue(value) {
+    setDumpNote(value);
+    saveDispatch(assignments, regularTruckCount, includeKei, dumpOnlyCount, extraSiteIds, collectNote, value);
+  }
+
+  function changeRegularTruckCount(n) {
+    const v = Math.max(0, n);
+    setRegularTruckCount(v);
+    saveDispatch(assignments, v, includeKei, dumpOnlyCount);
+  }
+
+  function toggleKei() {
+    const v = !includeKei;
+    setIncludeKei(v);
+    saveDispatch(assignments, regularTruckCount, v, dumpOnlyCount);
+  }
+
+  function changeDumpOnlyCount(n) {
+    const v = Math.max(0, n);
+    setDumpOnlyCount(v);
+    saveDispatch(assignments, regularTruckCount, includeKei, v);
+  }
+
+  function buildTruckOptions(regular, kei, dump) {
+    const opts = [];
+    for (let i = 1; i <= regular; i++) opts.push({ id: `R${i}`, label: `トラック${i}` });
+    if (kei) opts.push({ id: 'KEI', label: '軽自動車' });
+    for (let i = 1; i <= dump; i++) opts.push({ id: `D${i}`, label: `捨て専用${i}` });
+    return opts;
+  }
+
+  function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2500); }
+
+  function fillFromExistingSite(name) {
+    if (editingId) return; // 既存の編集中は上書きしない
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const match = schedRecords.find((r) => r.name.trim() === trimmed);
+    if (!match) return;
+    setForm((f) => ({
+      ...f,
+      supervisorName: f.supervisorName || match.supervisorName || '',
+      supervisorPhone: f.supervisorPhone || match.supervisorPhone || '',
+      houseNumber: f.houseNumber || match.houseNumber || '',
+      garaRequired: f.garaRequired || match.garaRequired || false,
+      expectedVisits: match.expectedVisits || f.expectedVisits || '12',
+      area: f.area || match.area || '',
+      address: f.address || match.address || '',
+    }));
+  }
+
+  function openNew() {
+    setForm(tab === 'sched' ? emptySched() : emptyMgmt());
+    setEditingId(null);
+    setPendingPhotos([]);
+    setShowForm(true);
+  }
+
+  function openEdit(r) {
+    setForm(r);
+    setEditingId(r.id);
+    setPendingPhotos([]);
+    setShowForm(true);
+  }
+
+  function handoffToMgmt(schedRecord) {
+    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr() });
+    setEditingId(null);
+    setPendingPhotos([]);
+    setTab('mgmt');
+    setShowForm(true);
+  }
+
+  function duplicateRecord(r, dayOffset = 7) {
+    const { id, createdAt, photos, ...rest } = r;
+    setForm({ ...rest, date: addDays(r.date, dayOffset), photos: [] });
+    setEditingId(null);
+    setPendingPhotos([]);
+    setShowForm(true);
+  }
+
+  async function saveRecord() {
+    if (!form.name.trim()) { showToast('現場名を入力してください'); return; }
+    const prefix = tab === 'sched' ? 'sched' : 'mgmt';
+    const id = editingId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let record = { ...form, id, createdAt: form.createdAt || Date.now() };
+    if (tab === 'sched' && record.address && !record.area) {
+      record = { ...record, area: extractArea(record.address) };
+    }
+    let extraPhotos = [];
+    if (tab === 'mgmt' && pendingPhotos.length > 0) {
+      showToast(`写真をアップロード中…（${pendingPhotos.length}枚）`);
+      for (const file of pendingPhotos) {
+        try {
+          const dataUrl = await compressImage(file);
+          const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`);
+          extraPhotos.push({ staff: deviceStaff || form.staff || '担当者', img: url, at: Date.now() });
+        } catch (e) { console.error(e); }
+      }
+    }
+    if (extraPhotos.length > 0) {
+      record = { ...record, photos: [...(record.photos || []), ...extraPhotos] };
+    }
+    try {
+      await storage.set(`${prefix}:${id}`, JSON.stringify(record), true);
+      showToast('保存しました');
+      setShowForm(false);
+      setEditingId(null);
+      setPendingPhotos([]);
+      load();
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+
+  async function runBulkImport() {
+    const lines = bulkImportText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
+    setBulkImportBusy(true);
+    let count = 0;
+    for (const line of lines) {
+      const cols = line.split('\t');
+      const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, expectedVisits, staff, note] = cols;
+      if (!name || name === '現場名') continue; // ヘッダー行はスキップ
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const record = {
+        id, createdAt: Date.now(),
+        name: name.trim(),
+        kumiten: (kumiten || 'その他').trim(),
+        address: (address || '').trim(),
+        area: (address ? extractArea(address) : '') ,
+        date: (date || todayStr()).trim(),
+        time: (time || '').trim(),
+        status: (status || '新規').trim(),
+        supervisorName: (supervisorName || '').trim(),
+        supervisorPhone: (supervisorPhone || '').trim(),
+        garaRequired: (gara || '').trim() === '○' || (gara || '').trim().toLowerCase() === 'true',
+        expectedVisits: (expectedVisits || '').trim(),
+        staff: (staff || deviceStaff || '').trim(),
+        note: (note || '').trim(),
+      };
+      try {
+        await storage.set(`sched:${record.id}`, JSON.stringify(record));
+        count++;
+      } catch (e) { console.error(e); }
+    }
+    setBulkImportBusy(false);
+    showToast(`${count}件取り込みました`);
+    setShowBulkImport(false);
+    setBulkImportText('');
+    load();
+  }
+
+  function copyUpdateTemplate() {
+    const header = '現場名\t監督名\t監督電話\tハウスNo・事業場コード';
+    navigator.clipboard.writeText(header).then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'));
+  }
+
+  async function runBulkUpdate() {
+    const lines = bulkUpdateText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
+    setBulkImportBusy(true);
+    let updated = 0;
+    for (const line of lines) {
+      const cols = line.split('\t');
+      const [name, supervisorName, supervisorPhone, houseNumber] = cols;
+      if (!name || name === '現場名') continue;
+      const matches = schedRecords.filter((r) => r.name.trim() === name.trim());
+      for (const rec of matches) {
+        const updatedRec = {
+          ...rec,
+          supervisorName: (supervisorName || '').trim() || rec.supervisorName,
+          supervisorPhone: (supervisorPhone || '').trim() || rec.supervisorPhone,
+          houseNumber: (houseNumber || '').trim() || rec.houseNumber,
+        };
+        try {
+          await storage.set(`sched:${rec.id}`, JSON.stringify(updated));
+          updated++;
+        } catch (e) { console.error(e); }
+      }
+    }
+    setBulkImportBusy(false);
+    showToast(`${updated}件更新しました`);
+    setShowBulkUpdate(false);
+    setBulkUpdateText('');
+    load();
+  }
+
+  function copyImportTemplate() {
+    const header = '現場名\t工務店\t住所\t日付(YYYY-MM-DD)\t時間(HH:MM 任意)\tステータス\t監督名\t監督電話\tガラ必須(○か空欄)\t想定回数\t担当者\t注意事項';
+    navigator.clipboard.writeText(header).then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'));
+  }
+
+  async function deleteRecord(id) {
+    const prefix = tab === 'sched' ? 'sched' : 'mgmt';
+    try {
+      await storage.delete(`${prefix}:${id}`, true);
+      showToast('削除しました');
+      load();
+    } catch (e) { showToast('削除に失敗しました'); }
+  }
+
+  async function bulkDelete() {
+    if (!bulkFrom || !bulkTo) { showToast('期間を指定してください'); return; }
+    const prefix = tab === 'sched' ? 'sched' : 'mgmt';
+    const source = tab === 'sched' ? schedRecords : mgmtRecords;
+    const targets = source.filter((r) => r.date >= bulkFrom && r.date <= bulkTo);
+    if (targets.length === 0) { showToast('対象がありません'); return; }
+    if (!window.confirm(`${targets.length}件を削除します。よろしいですか？`)) return;
+    for (const r of targets) await storage.delete(`${prefix}:${r.id}`, true);
+    showToast(`${targets.length}件削除しました`);
+    setShowBulkDelete(false);
+    setBulkFrom(''); setBulkTo('');
+    load();
+  }
+
+  async function addPhotoToMgmt(id, staffName, files) {
+    const record = mgmtRecords.find((r) => r.id === id);
+    if (!record) return;
+    const fileArray = Array.from(files);
+    showToast(`アップロード中…（${fileArray.length}枚）`);
+    const newPhotos = [];
+    for (const file of fileArray) {
+      try {
+        const dataUrl = await compressImage(file);
+        const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`);
+        newPhotos.push({ staff: staffName || '担当者', img: url, at: Date.now() });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    const photos = [...(record.photos || []), ...newPhotos];
+    const updated = { ...record, photos };
+    await storage.set(`mgmt:${id}`, JSON.stringify(updated), true);
+    showToast(`写真を${newPhotos.length}枚追加しました`);
+    load();
+  }
+
+  function buildExportText() {
+    const groups = {};
+    const order = [];
+    filtered.forEach((r) => {
+      if (!groups[r.kumiten]) { groups[r.kumiten] = []; order.push(r.kumiten); }
+      groups[r.kumiten].push(r);
+    });
+    const sections = order.map((kumiten) => {
+      const lines = groups[kumiten].map((r) => {
+        const sched = schedRecords.find((s) => s.name.trim() === r.name.trim());
+        const supervisor = (sched && sched.supervisorName) ? sched.supervisorName : '（未登録）';
+        const houseNo = (sched && sched.houseNumber) ? sched.houseNumber : '（未登録）';
+        return `【${r.name}】\n日付：${r.date}\n監督：${supervisor}／ハウスNo・事業場コード：${houseNo}\n内訳：${r.items || '(未入力)'}`;
+      });
+      return `■${kumiten}\n\n` + lines.join('\n\n');
+    });
+    return sections.join('\n\n----------\n\n');
+  }
+
+  function openExport() { setExportText(buildExportText()); setShowExport(true); }
+
+  async function copyExport() {
+    try {
+      await navigator.clipboard.writeText(exportText);
+      showToast('コピーしました。マニフェスト用チャットに貼り付けてください');
+    } catch (e) { showToast('コピーできませんでした。手動で選択してコピーしてください'); }
+  }
+
+  function tryUnlockRyubei() {
+    const input = window.prompt('立米数を編集するには合言葉を入力してください');
+    if (input === null) return;
+    if (input === RYUBEI_PASSWORD) { setRyubeiUnlocked(true); showToast('ロック解除しました'); }
+    else showToast('合言葉が違います');
+  }
+
+  function getEditItems(record) {
+    return invoiceEdits[record.id] !== undefined ? invoiceEdits[record.id] : (record.lineItems || []);
+  }
+
+  function addInvoiceLineItem(record) {
+    const items = [...getEditItems(record), { name: '', qty: '', unit: 'm3', unitPrice: '' }];
+    setInvoiceEdits((prev) => ({ ...prev, [record.id]: items }));
+  }
+
+  function updateInvoiceLineItem(record, idx, field, value) {
+    const items = [...getEditItems(record)];
+    items[idx] = { ...items[idx], [field]: value };
+    setInvoiceEdits((prev) => ({ ...prev, [record.id]: items }));
+  }
+
+  function removeInvoiceLineItem(record, idx) {
+    const items = getEditItems(record).filter((_, i) => i !== idx);
+    setInvoiceEdits((prev) => ({ ...prev, [record.id]: items }));
+  }
+
+  async function saveInvoiceLineItems(record) {
+    const items = getEditItems(record);
+    const updated = { ...record, lineItems: items };
+    try {
+      await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      showToast('保存しました');
+      setInvoiceEdits((prev) => { const next = { ...prev }; delete next[record.id]; return next; });
+      load();
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+
+  function lineItemAmount(item) {
+    const q = parseFloat(item.qty);
+    const p = parseFloat(item.unitPrice);
+    if (isNaN(q) || isNaN(p)) return 0;
+    return q * p;
+  }
+
+  function tryUnlockInvoiceTab() {
+    if (ryubeiUnlocked) { setTab('invoice'); return; }
+    const input = window.prompt('請求書タブを開くには合言葉を入力してください');
+    if (input === null) return;
+    if (input === RYUBEI_PASSWORD) {
+      setRyubeiUnlocked(true);
+      setTab('invoice');
+      showToast('ロック解除しました');
+    } else {
+      showToast('合言葉が違います');
+    }
+  }
+
+  async function saveKumitenList(next) {
+    setKumitenList(next);
+    await storage.set('meta:kumiten', JSON.stringify(next), true);
+  }
+
+  async function addKumitenName() {
+    const name = window.prompt('新しい工務店名／区分を入力してください（例：〇〇ホーム）');
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    if (kumitenList.includes(trimmed)) { showToast('すでにあります'); return; }
+    const others = kumitenList.filter((k) => k !== 'その他');
+    const next = kumitenList.includes('その他') ? [...others, trimmed, 'その他'] : [...kumitenList, trimmed];
+    await saveKumitenList(next);
+    showToast(`「${trimmed}」を追加しました`);
+  }
+
+  async function moveKumiten(index, dir) {
+    const next = [...kumitenList];
+    const target = index + dir;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    await saveKumitenList(next);
+  }
+
+  async function removeKumiten(index) {
+    const name = kumitenList[index];
+    if (!window.confirm(`「${name}」をリストから削除しますか？（過去のデータは残ります）`)) return;
+    const next = kumitenList.filter((_, i) => i !== index);
+    await saveKumitenList(next);
+  }
+
+  const activeList = tab === 'sched' ? schedRecords : mgmtRecords;
+  const statusList = SCHED_STATUSES;
+  const collectedNames = new Set(mgmtRecords.map((r) => r.name));
+
+  let filtered = activeList.filter((r) => {
+    if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return false;
+    if (dateFrom && r.date < dateFrom) return false;
+    if (dateTo && r.date > dateTo) return false;
+    if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+  if (tab === 'sched' && showUncollectedOnly) filtered = filtered.filter((r) => !collectedNames.has(r.name));
+
+  // ---- dispatch derived data ----
+  const daySitesBase = schedRecords.filter((r) => r.date === dispatchDate);
+  const extraSites = schedRecords.filter((r) => extraSiteIds.includes(r.id) && r.date !== dispatchDate);
+  const daySites = [...daySitesBase, ...extraSites];
+  const byArea = {};
+  daySites.forEach((s) => {
+    const area = s.area || extractArea(s.address) || '未分類';
+    if (!byArea[area]) byArea[area] = [];
+    byArea[area].push(s);
+  });
+  const unassignedCount = daySites.filter((s) => !assignments[s.id]).length;
+  const truckOptions = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+
+  // ---- invoice derived data ----
+  const invoiceRecords = mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発'));
+  const invoiceBySite = {};
+  invoiceRecords.forEach((r) => {
+    if (!invoiceBySite[r.name]) invoiceBySite[r.name] = { name: r.name, items: [] };
+    (r.lineItems || []).forEach((it) => {
+      const q = parseFloat(it.qty); const p = parseFloat(it.unitPrice);
+      const amount = (isNaN(q) || isNaN(p)) ? 0 : q * p;
+      invoiceBySite[r.name].items.push({ ...it, amount, date: r.date });
+    });
+  });
+  const invoiceRows = Object.values(invoiceBySite)
+    .filter((s) => s.items.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  const invoiceGrandTotal = invoiceRows.reduce((sum, site) => sum + site.items.reduce((s, it) => s + it.amount, 0), 0);
+
+  // ---- 工務店・現場・日付ごとの集計（期間自由指定） ----
+  const summaryRecords = mgmtRecords.filter((r) => {
+    if (summaryKumitenFilter !== '全て' && r.kumiten !== summaryKumitenFilter) return false;
+    if (summaryFrom && r.date < summaryFrom) return false;
+    if (summaryTo && r.date > summaryTo) return false;
+    return true;
+  });
+
+  function recordAmount(r) {
+    return (r.lineItems || []).reduce((s, it) => {
+      const q = parseFloat(it.qty); const p = parseFloat(it.unitPrice);
+      return s + (isNaN(q) || isNaN(p) ? 0 : q * p);
+    }, 0);
+  }
+
+  const summaryTree = {}; // { kumiten: { siteName: [{date, amount, status}] } }
+  summaryRecords.forEach((r) => {
+    if (!summaryTree[r.kumiten]) summaryTree[r.kumiten] = {};
+    if (!summaryTree[r.kumiten][r.name]) summaryTree[r.kumiten][r.name] = [];
+    summaryTree[r.kumiten][r.name].push({ date: r.date, amount: recordAmount(r), status: r.status });
+  });
+
+  function buildSummaryTSV() {
+    const header = '工務店\t現場名\t日付\tタグ\t金額';
+    const rows = [];
+    Object.keys(summaryTree).sort().forEach((kumiten) => {
+      Object.keys(summaryTree[kumiten]).sort((a, b) => a.localeCompare(b, 'ja')).forEach((site) => {
+        summaryTree[kumiten][site].forEach((v) => {
+          rows.push(`${kumiten}\t${site}\t${v.date}\t${v.status}\t${Math.round(v.amount)}`);
+        });
+      });
+    });
+    const grandTotal = summaryRecords.reduce((s, r) => s + recordAmount(r), 0);
+    rows.push(`合計\t\t\t${summaryRecords.length}件\t${Math.round(grandTotal)}`);
+    return [header, ...rows].join('\n');
+  }
+
+  function buildInvoiceTSV() {
+    const header = '現場名\t名称\t数量\t単位\t単価\t金額\t備考（日付）';
+    const blocks = invoiceRows.map((site) => {
+      const rows = site.items.map((it) => `${site.name}\t${it.name}\t${it.qty}\t${it.unit}\t${it.unitPrice}\t${Math.round(it.amount)}\t${it.date}`);
+      const subtotal = site.items.reduce((s, it) => s + it.amount, 0);
+      rows.push(`${site.name}\t小計\t\t\t\t${Math.round(subtotal)}\t`);
+      return rows.join('\n');
+    });
+    return [header, ...blocks, `合計\t\t\t\t\t${Math.round(invoiceGrandTotal)}\t`].join('\n');
+  }
+
+  function openInvoiceExport() {
+    setInvoiceExportText(buildInvoiceTSV());
+    setShowInvoiceExport(true);
+  }
+
+  async function copyInvoiceExport() {
+    try {
+      await navigator.clipboard.writeText(invoiceExportText);
+      showToast('コピーしました。Excelなどに貼り付けてください');
+    } catch (e) { showToast('コピーできませんでした。手動で選択してコピーしてください'); }
+  }
+
+  return (
+    <div style={styles.page}>
+      <style>{`
+        * { box-sizing: border-box; }
+        input, select, button, textarea { font-family: inherit; }
+        input::placeholder, textarea::placeholder { color: #9A9A94; }
+      `}</style>
+
+      <div style={styles.header}>
+        <div>
+          <div style={styles.brand}>ETS TRACK</div>
+          <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
+          <div style={styles.brandSub}>
+            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          {(tab === 'sched' || tab === 'mgmt') && <button style={styles.addBtn} onClick={openNew}>＋ 追加</button>}
+          <button style={styles.staffChip} onClick={changeDeviceStaff}>
+            {deviceStaff ? `担当：${deviceStaff}（変更）` : '担当者名を設定'}
+          </button>
+        </div>
+      </div>
+
+      <div style={styles.tabRow}>
+        <button onClick={() => setTab('sched')} style={{ ...styles.tabBtn, ...(tab === 'sched' ? styles.tabBtnActive : {}) }}>予定表</button>
+        <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
+        <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
+        <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
+        {ryubeiUnlocked && (
+          <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
+        )}
+        <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">🔒</button>
+      </div>
+
+      {tab !== 'dispatch' && (
+        <>
+          <div style={styles.searchBox}>
+            <input style={styles.searchInput} placeholder="現場名で検索" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div style={styles.searchRow2}>
+              <input type="date" style={styles.dateInput} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <span style={{ color: '#B0B0A6', fontSize: 12 }}>〜</span>
+              <input type="date" style={styles.dateInput} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            </div>
+            <div style={styles.chipRow}>
+              {['全て', ...kumitenList].map((k) => (
+                <button key={k} onClick={() => setKumitenFilter(k)} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
+              ))}
+              <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 工務店を編集・並び替え</button>
+              {tab === 'sched' && (
+                <button onClick={() => setShowUncollectedOnly((v) => !v)} style={{ ...styles.chip, ...(showUncollectedOnly ? { ...styles.chipActive, borderColor: '#E63946' } : {}) }}>未回収のみ</button>
+              )}
+              {tab === 'sched' && (
+                <button onClick={() => setShowCalendar((v) => !v)} style={{ ...styles.chip, ...(showCalendar ? styles.chipActive : {}) }}>📅 カレンダー表示</button>
+              )}
+            </div>
+          </div>
+
+          {tab === 'sched' && showCalendar && (
+            <MonthCalendar
+              records={schedRecords}
+              monthCursor={monthCursor}
+              setMonthCursor={setMonthCursor}
+              selectedDate={dateFrom === dateTo ? dateFrom : ''}
+              onPickDate={(d) => { setDateFrom(d); setDateTo(d); }}
+            />
+          )}
+
+          <div style={styles.toolRow}>
+            <button style={styles.linkBtn} onClick={() => setShowBulkDelete(true)}>期間を指定して一括削除</button>
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkImport(true)}>TimeTreeから一括インポート</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkUpdate(true)}>監督名・ハウスNoを一括更新</button>}
+            {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
+          </div>
+
+          {!loading && filtered.length === 0 && <div style={styles.empty}>該当する現場がありません。</div>}
+
+          <div style={styles.list}>
+            {filtered.map((r) => (
+              <div key={r.id} style={styles.card}>
+                <div style={{ ...styles.cardBar, background: statusColor(statusList, r.status) }} />
+                <div style={styles.cardBody} onClick={() => openEdit(r)}>
+                  <div style={styles.cardTop}>
+                    {tab === 'sched' && r.time && <span style={styles.timeBadge}>⏰ {r.time}</span>}
+                    {tab === 'sched' && r.garaRequired && <span style={styles.garaBadge}>🧺 ガラ袋必須</span>}
+                    {tab === 'sched' && (() => {
+                      const count = mgmtRecords.filter((m) => m.name.trim() === r.name.trim()).length;
+                      const isSingle = r.status === '単発';
+                      const expected = isSingle ? 0 : (Number(r.expectedVisits) || 0);
+                      const over = expected > 0 && count > expected;
+                      return (
+                        <span style={{ ...styles.visitBadge, ...(over ? styles.visitBadgeOver : {}) }}>
+                          {expected > 0 ? `${count}/${expected}` : `${count}回`}
+                        </span>
+                      );
+                    })()}
+                    <span style={styles.badge}><span style={{ ...styles.dot, background: statusColor(statusList, r.status) }} />{r.status}</span>
+                    <span style={styles.kumitenTag}>{r.kumiten}</span>
+                    {r.area && <span style={styles.areaTag}>{r.area}</span>}
+                    <span style={styles.dateText}>{r.date}</span>
+                  </div>
+                  <div style={styles.cardName}>{r.name}</div>
+                  {tab === 'sched' && r.address && (
+                    <a href={mapUrl(r.address)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={styles.addrLink}>📍 {r.address}</a>
+                  )}
+                  {tab === 'sched' && (r.supervisorName || r.supervisorPhone) && (
+                    <div style={styles.supervisorRow} onClick={(e) => e.stopPropagation()}>
+                      {r.supervisorName && <span style={styles.supervisorName}>監督：{r.supervisorName}</span>}
+                      {r.supervisorPhone && <a href={`tel:${r.supervisorPhone}`} style={styles.phoneLink}>📞 {r.supervisorPhone}</a>}
+                    </div>
+                  )}
+
+                  {tab === 'sched' && r.note && <div style={styles.noteText}>{r.note}</div>}
+                  {tab === 'mgmt' && r.items && <div style={styles.noteText}>{r.items}</div>}
+
+
+                  {r.staff && <div style={styles.cardMeta}>担当: {r.staff}</div>}
+                  <div style={styles.actionRow} onClick={(e) => e.stopPropagation()}>
+                    {tab === 'sched' && <button style={styles.handoffBtn} onClick={() => handoffToMgmt(r)}>→ 今日の管理表を作成</button>}
+                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 複製（1週間後）</button>
+                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 複製（連棟・数日後）</button>
+                  </div>
+                </div>
+                {tab === 'mgmt' && (
+                  <div style={styles.photoThread}>
+                    {(r.photos || []).map((p, i) => (
+                      <div key={i} style={styles.photoItem}><img src={p.img} alt="" style={styles.threadImg} /><span style={styles.photoStaff}>{p.staff}</span></div>
+                    ))}
+                    <label style={styles.addPhotoBtn}>
+                      ＋写真
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) { const staffName = window.prompt('担当者名を入力してください', deviceStaff || r.staff || ''); if (staffName !== null) addPhotoToMgmt(r.id, staffName, file); }
+                      }} />
+                    </label>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab === 'dispatch' && (
+        <div>
+          <div style={styles.searchBox}>
+            <label style={styles.label}>配車する日</label>
+            <input type="date" style={styles.input} value={dispatchDate} onChange={(e) => setDispatchDate(e.target.value)} />
+
+            <label style={styles.label}>通常トラック台数</label>
+            <div style={styles.stepperRow}>
+              <button style={styles.stepperBtn} onClick={() => changeRegularTruckCount(regularTruckCount - 1)}>－</button>
+              <span style={styles.stepperValue}>{regularTruckCount}台</span>
+              <button style={styles.stepperBtn} onClick={() => changeRegularTruckCount(regularTruckCount + 1)}>＋</button>
+            </div>
+
+            <button
+              onClick={toggleKei}
+              style={{ ...styles.garaToggle, marginTop: 10, ...(includeKei ? styles.garaToggleOn : {}) }}
+            >
+              {includeKei ? '✅ 軽自動車あり' : '軽自動車なし（タップで追加）'}
+            </button>
+
+            <label style={styles.label}>捨て専用便（台数）</label>
+            <div style={styles.stepperRow}>
+              <button style={styles.stepperBtn} onClick={() => changeDumpOnlyCount(dumpOnlyCount - 1)}>－</button>
+              <span style={styles.stepperValue}>{dumpOnlyCount}台</span>
+              <button style={styles.stepperBtn} onClick={() => changeDumpOnlyCount(dumpOnlyCount + 1)}>＋</button>
+            </div>
+
+            {isSaturday(dispatchDate) && <div style={styles.satHint}>土曜日です。台数を減らせます。</div>}
+          </div>
+
+          <div style={styles.searchBox}>
+            <label style={styles.label}>回収メモ</label>
+            <textarea
+              style={{ ...styles.input, minHeight: 60 }}
+              value={collectNote}
+              onChange={(e) => setCollectNote(e.target.value)}
+              onBlur={(e) => saveCollectNote(e.target.value)}
+              placeholder="例：〇〇現場は9時までに終わらせる、など"
+            />
+            <label style={styles.label}>捨て（処分）メモ</label>
+            <textarea
+              style={{ ...styles.input, minHeight: 60 }}
+              value={dumpNote}
+              onChange={(e) => setDumpNote(e.target.value)}
+              onBlur={(e) => saveDumpNoteValue(e.target.value)}
+              placeholder="例：処分場の受付は15時まで、など"
+            />
+          </div>
+
+          <div style={styles.dispatchSummary}>
+            <span>本日 {daySites.length}件</span>
+            <span style={{ color: unassignedCount > 0 ? '#E63946' : '#2A9D8F', fontWeight: 700 }}>
+              未割当 {unassignedCount}件
+            </span>
+          </div>
+
+          <div style={styles.toolRow}>
+            <button style={styles.linkBtn} onClick={autoAssignTrucks}>🪄 未割当を自動で割り振る</button>
+            <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowAddExtraSite(true)}>＋ 他の日の現場を追加</button>
+            <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowDispatchMap(true)}>🗺️ 地図で見る</button>
+          </div>
+
+          {Object.keys(byArea).length === 0 && <div style={styles.empty}>この日の予定がまだ登録されていません。</div>}
+
+          {Object.entries(byArea).map(([area, sites]) => (
+            <div key={area} style={styles.areaGroup}>
+              <div style={styles.areaGroupTitle}>{area}（{sites.length}件）</div>
+              {sites.map((s) => {
+                const assigned = assignments[s.id] || '';
+                const optIndex = truckOptions.findIndex((o) => o.id === assigned);
+                const barColor = optIndex >= 0 ? TRUCK_COLORS[optIndex % TRUCK_COLORS.length] : '#E63946';
+                return (
+                  <div key={s.id} style={{ ...styles.dispatchRow, borderLeft: `4px solid ${barColor}` }}>
+                    <div style={styles.dispatchInfo}>
+                      <div style={styles.dispatchName}>
+                        {s.garaRequired && <span style={{ marginRight: 4 }}>🧺</span>}
+                        {s.name}
+                        {extraSiteIds.includes(s.id) && (
+                          <span style={styles.extraTag}>
+                            他日({s.date})から追加
+                            <button style={styles.extraRemoveBtn} onClick={(ev) => { ev.stopPropagation(); removeExtraSite(s.id); }}>✕</button>
+                          </span>
+                        )}
+                      </div>
+                      {(() => {
+                        const c = mgmtRecords.filter((m) => m.name.trim() === s.name.trim()).length;
+                        const isSingle = s.status === '単発';
+                        const ex = isSingle ? 0 : (Number(s.expectedVisits) || 0);
+                        const over = ex > 0 && c > ex;
+                        return (
+                          <span style={{ ...styles.visitBadge, ...(over ? styles.visitBadgeOver : {}) }}>
+                            {ex > 0 ? `${c}/${ex}` : `${c}回`}
+                          </span>
+                        );
+                      })()}
+                      {s.address && <a href={mapUrl(s.address)} target="_blank" rel="noreferrer" style={styles.addrLinkSmall}>📍地図</a>}
+                    </div>
+                    <select
+                      style={styles.truckSelect}
+                      value={assigned}
+                      onChange={(e) => setAssignment(s.id, e.target.value)}
+                    >
+                      <option value="">未割当</option>
+                      {truckOptions.map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+
+          {daySites.length > 0 && (
+            <div style={styles.truckSummaryBox}>
+              <div style={styles.areaGroupTitle}>台ごとの件数</div>
+              {truckOptions.map((o, i) => {
+                const count = daySites.filter((s) => assignments[s.id] === o.id).length;
+                return (
+                  <div key={o.id} style={styles.truckSummaryRow}>
+                    <span style={{ ...styles.truckDot, background: TRUCK_COLORS[i % TRUCK_COLORS.length] }} />
+                    {o.label}：{count}件
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'gantt' && (() => {
+        const base = new Date();
+        base.setDate(1);
+        base.setMonth(base.getMonth() + ganttMonthOffset);
+        const winStart = base.toISOString().slice(0, 10);
+        const winEndDate = new Date(base);
+        winEndDate.setMonth(winEndDate.getMonth() + 4);
+        const winEnd = winEndDate.toISOString().slice(0, 10);
+        return (
+          <GanttChart
+            schedRecords={schedRecords}
+            kumitenFilter={ganttKumitenFilter}
+            windowStart={winStart}
+            windowEnd={winEnd}
+            onShift={(d) => setGanttMonthOffset((v) => v + d)}
+            onPickKumiten={setGanttKumitenFilter}
+            kumitenList={kumitenList}
+          />
+        );
+      })()}
+
+      {tab === 'invoice' && (
+        <div>
+          {!ryubeiUnlocked ? (
+            <div style={styles.empty}>
+              <div style={{ marginBottom: 10 }}>🔒 このタブは社長さんと洋子さん専用です</div>
+              <button style={styles.lockBtn} onClick={tryUnlockRyubei}>合言葉を入力して開く</button>
+            </div>
+          ) : (
+            <>
+              <div style={styles.searchBox}>
+                <label style={styles.label}>工務店</label>
+                <div style={styles.chipRow}>
+                  {kumitenList.map((k) => (
+                    <button key={k} onClick={() => setInvoiceKumiten(k)} style={{ ...styles.chip, ...(invoiceKumiten === k ? styles.chipActive : {}) }}>{k}</button>
+                  ))}
+                  <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
+                </div>
+                <label style={styles.label}>対象月</label>
+                <input type="month" style={styles.input} value={invoiceMonth} onChange={(e) => setInvoiceMonth(e.target.value)} />
+              </div>
+
+              <button style={{ ...styles.linkBtn, marginBottom: 14 }} onClick={() => setShowSummaryView(true)}>
+                📊 工務店・現場・日付ごとの集計を見る（期間自由指定）
+              </button>
+
+              <div style={styles.dispatchSummary}>
+                <span>{invoiceKumiten}／{invoiceMonth}（追加・単発のみ対象）</span>
+                <span style={{ fontWeight: 700 }}>合計 ¥{Math.round(invoiceGrandTotal).toLocaleString()}</span>
+              </div>
+
+              <div style={styles.areaGroupTitle}>価格を入力する（追加・単発の記録）</div>
+              {invoiceRecords.length === 0 && <div style={styles.empty}>この工務店・この月の「追加」「単発」の記録がまだありません。</div>}
+
+              {invoiceRecords.map((record) => {
+                const items = getEditItems(record);
+                const dirty = invoiceEdits[record.id] !== undefined;
+                return (
+                  <div key={record.id} style={styles.invoiceRow}>
+                    <div style={styles.invoiceName}>{record.name}</div>
+                    <div style={styles.invoiceMeta}>{record.date}／{record.status}</div>
+                    {items.map((item, idx) => (
+                      <div key={idx} style={styles.lineItemRow}>
+                        <input style={styles.lineItemName} placeholder="名称（例：混合）" value={item.name} onChange={(e) => updateInvoiceLineItem(record, idx, 'name', e.target.value)} />
+                        <input style={styles.lineItemSmall} placeholder="数量" value={item.qty} onChange={(e) => updateInvoiceLineItem(record, idx, 'qty', e.target.value)} inputMode="decimal" />
+                        <input style={styles.lineItemSmall} placeholder="単位" value={item.unit} onChange={(e) => updateInvoiceLineItem(record, idx, 'unit', e.target.value)} />
+                        <input style={styles.lineItemSmall} placeholder="単価" value={item.unitPrice} onChange={(e) => updateInvoiceLineItem(record, idx, 'unitPrice', e.target.value)} inputMode="decimal" />
+                        <span style={styles.lineItemAmount}>¥{lineItemAmount(item).toLocaleString()}</span>
+                        <button type="button" style={styles.lineItemRemove} onClick={() => removeInvoiceLineItem(record, idx)}>✕</button>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                      <button type="button" style={styles.dupBtn} onClick={() => addInvoiceLineItem(record)}>＋ 項目を追加</button>
+                      {dirty && <button type="button" style={styles.handoffBtn} onClick={() => saveInvoiceLineItems(record)}>保存</button>}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {invoiceRows.length > 0 && (
+                <>
+                  <div style={{ ...styles.areaGroupTitle, marginTop: 18 }}>集計結果</div>
+                  {invoiceRows.map((site) => {
+                    const subtotal = site.items.reduce((s, it) => s + it.amount, 0);
+                    return (
+                      <div key={site.name} style={styles.invoiceRow}>
+                        <div style={styles.invoiceName}>{site.name}</div>
+                        {site.items.map((it, i) => (
+                          <div key={i} style={styles.invoiceItemLine}>
+                            <span>{it.name || '（名称未入力）'}</span>
+                            <span>{it.qty}{it.unit}</span>
+                            <span>単価¥{it.unitPrice}</span>
+                            <span style={{ fontWeight: 700 }}>¥{Math.round(it.amount).toLocaleString()}</span>
+                          </div>
+                        ))}
+                        <div style={styles.invoiceM3}>小計 ¥{Math.round(subtotal).toLocaleString()}</div>
+                      </div>
+                    );
+                  })}
+                  <button style={{ ...styles.saveBtn, marginTop: 14 }} onClick={openInvoiceExport}>
+                    請求書フォーマット用にコピー
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {showSummaryView && (
+        <div style={styles.overlay} onClick={() => setShowSummaryView(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>工務店・現場・日付ごとの集計</div>
+              <button style={styles.closeBtn} onClick={() => setShowSummaryView(false)}>✕</button>
+            </div>
+            <div style={styles.exportHint}>
+              締め日が工務店ごとに違う前提で、期間を自由に指定できます。請求書とは直接連動しません（確認用の集計です）。
+            </div>
+
+            <label style={styles.label}>開始日</label>
+            <input type="date" style={styles.input} value={summaryFrom} onChange={(e) => setSummaryFrom(e.target.value)} />
+            <label style={styles.label}>終了日</label>
+            <input type="date" style={styles.input} value={summaryTo} onChange={(e) => setSummaryTo(e.target.value)} />
+
+            <label style={styles.label}>工務店</label>
+            <div style={styles.chipRow}>
+              {['全て', ...kumitenList].map((k) => (
+                <button key={k} onClick={() => setSummaryKumitenFilter(k)} style={{ ...styles.chip, ...(summaryKumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
+              ))}
+            </div>
+
+            <div style={{ ...styles.dispatchSummary, marginTop: 12 }}>
+              <span>対象 {summaryRecords.length}件</span>
+              <span style={{ fontWeight: 700 }}>合計 ¥{Math.round(summaryRecords.reduce((s, r) => s + recordAmount(r), 0)).toLocaleString()}</span>
+            </div>
+
+            {Object.keys(summaryTree).length === 0 && <div style={styles.empty}>該当するデータがありません。</div>}
+
+            {Object.keys(summaryTree).sort().map((kumiten) => {
+              const sites = summaryTree[kumiten];
+              const kumitenTotal = Object.values(sites).flat().reduce((s, v) => s + v.amount, 0);
+              const kumitenCount = Object.values(sites).flat().length;
+              return (
+                <div key={kumiten} style={styles.areaGroup}>
+                  <div style={styles.areaGroupTitle}>■{kumiten}（{kumitenCount}件／¥{Math.round(kumitenTotal).toLocaleString()}）</div>
+                  {Object.keys(sites).sort((a, b) => a.localeCompare(b, 'ja')).map((site) => {
+                    const visits = sites[site];
+                    const siteTotal = visits.reduce((s, v) => s + v.amount, 0);
+                    return (
+                      <div key={site} style={styles.invoiceRow}>
+                        <div style={styles.invoiceName}>{site}</div>
+                        {visits.map((v, i) => (
+                          <div key={i} style={styles.invoiceItemLine}>
+                            <span>{v.date}</span>
+                            <span>{v.status}</span>
+                            <span style={{ fontWeight: v.amount > 0 ? 700 : 400 }}>{v.amount > 0 ? `¥${Math.round(v.amount).toLocaleString()}` : '-'}</span>
+                          </div>
+                        ))}
+                        <div style={styles.invoiceM3}>小計 {visits.length}件／¥{Math.round(siteTotal).toLocaleString()}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+
+            {summaryRecords.length > 0 && (
+              <button
+                style={{ ...styles.saveBtn, marginTop: 14 }}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(buildSummaryTSV());
+                    showToast('コピーしました');
+                  } catch (e) { showToast('コピーできませんでした'); }
+                }}
+              >
+                この集計をコピー（タブ区切り）
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showInvoiceExport && (
+        <div style={styles.overlay} onClick={() => setShowInvoiceExport(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>請求書用データ（タブ区切り）</div>
+              <button style={styles.closeBtn} onClick={() => setShowInvoiceExport(false)}>✕</button>
+            </div>
+            <div style={styles.exportHint}>Excelや工務店フォーマットに貼り付けると、そのまま列が揃います。実際のフォーマットを見せてもらえれば、列の並びをもっと合わせ込めます。</div>
+            <textarea style={{ ...styles.input, minHeight: 220, fontSize: 12 }} value={invoiceExportText} readOnly />
+            <div style={styles.sheetActions}><button style={styles.saveBtn} onClick={copyInvoiceExport}>コピーする</button></div>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
+        <div style={styles.overlay} onClick={() => setShowForm(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>{editingId ? '編集' : '追加'}（{tab === 'sched' ? '現場予定表' : '現場管理表'}）</div>
+              <button style={styles.closeBtn} onClick={() => setShowForm(false)}>✕</button>
+            </div>
+
+            <label style={styles.label}>現場名</label>
+            <input
+              style={styles.input}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onBlur={(e) => tab === 'sched' && fillFromExistingSite(e.target.value)}
+              placeholder="例：南林間604①"
+            />
+            {tab === 'sched' && !editingId && <div style={styles.autofillHint}>同じ現場名を入力すると、監督名・電話番号・ガラ必須などが自動で入ります</div>}
+
+            <label style={styles.label}>工務店</label>
+            <div style={styles.statusGrid}>
+              {kumitenList.map((k) => (
+                <button key={k} onClick={() => setForm({ ...form, kumiten: k })} style={{ ...styles.statusOption, borderColor: form.kumiten === k ? '#2A9D8F' : '#E5E3DC', background: form.kumiten === k ? '#2A9D8F1A' : '#fff' }}>{k}</button>
+              ))}
+              <button type="button" onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
+            </div>
+
+            {tab === 'sched' && (
+              <>
+                <label style={styles.label}>住所</label>
+                <input
+                  style={styles.input}
+                  value={form.address || ''}
+                  onChange={(e) => {
+                    const addr = e.target.value;
+                    setForm((f) => ({ ...f, address: addr, area: f.areaTouched ? f.area : extractArea(addr) }));
+                  }}
+                  placeholder="例：大和市南林間6-4-21"
+                />
+
+                <label style={styles.label}>地域（住所から自動入力。必要なら書き換えできます）</label>
+                <input
+                  style={styles.input}
+                  value={form.area || ''}
+                  onChange={(e) => setForm({ ...form, area: e.target.value, areaTouched: true })}
+                  placeholder="住所を入力すると自動で入ります"
+                />
+
+                <div style={styles.row2}>
+                  <div style={{ flex: 1 }}>
+                    <label style={styles.label}>監督名</label>
+                    <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} placeholder="例：須藤大樹" />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={styles.label}>監督の電話番号</label>
+                    <input style={styles.input} value={form.supervisorPhone || ''} onChange={(e) => setForm({ ...form, supervisorPhone: e.target.value })} placeholder="090-1234-5678" inputMode="tel" />
+                  </div>
+                </div>
+
+                <label style={styles.label}>ハウスNo／事業場コード（マニフェスト用）</label>
+                <input style={styles.input} value={form.houseNumber || ''} onChange={(e) => setForm({ ...form, houseNumber: e.target.value })} placeholder="例：262441" />
+
+                <div style={styles.row2}>
+                  <div style={{ flex: 1 }}>
+                    <label style={styles.label}>ガラ袋</label>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, garaRequired: !form.garaRequired })}
+                      style={{ ...styles.garaToggle, ...(form.garaRequired ? styles.garaToggleOn : {}) }}
+                    >
+                      {form.garaRequired ? '✅ 必須' : '不要（タップで必須に）'}
+                    </button>
+                  </div>
+                  <div style={{ width: 92 }}>
+                    <label style={styles.label}>想定回数</label>
+                    <input style={styles.input} value={form.expectedVisits || ''} onChange={(e) => setForm({ ...form, expectedVisits: e.target.value })} placeholder="12" inputMode="numeric" />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <label style={styles.label}>{tab === 'sched' ? 'ステータス' : 'ゴミの種類タグ'}</label>
+            <div style={styles.statusGrid}>
+              {statusList.map((s) => (
+                <button key={s.key} onClick={() => setForm({ ...form, status: s.key })} style={{ ...styles.statusOption, borderColor: form.status === s.key ? s.color : '#E5E3DC', background: form.status === s.key ? `${s.color}1A` : '#fff' }}>
+                  <span style={{ ...styles.dot, background: s.color }} />{s.key}
+                </button>
+              ))}
+            </div>
+
+            <div style={styles.row2}>
+              <div style={{ flex: 1 }}>
+                <label style={styles.label}>日付</label>
+                <input type="date" style={styles.input} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+              </div>
+              {tab === 'sched' && (
+                <div style={{ flex: 1 }}>
+                  <label style={styles.label}>時間（あれば）</label>
+                  <input type="time" style={styles.input} value={form.time || ''} onChange={(e) => setForm({ ...form, time: e.target.value })} />
+                </div>
+              )}
+            </div>
+
+            <label style={styles.label}>担当者</label>
+            <input style={styles.input} value={form.staff} onChange={(e) => setForm({ ...form, staff: e.target.value })} placeholder="担当者名" />
+
+            {tab === 'sched' && (
+              <>
+                <label style={styles.label}>注意事項・メモ</label>
+                <textarea style={{ ...styles.input, minHeight: 70 }} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="例：大工さんに連絡なしで日程移動しないこと" />
+              </>
+            )}
+
+            {tab === 'mgmt' && (
+              <>
+                <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
+                <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
+
+              </>
+            )}
+
+            <div style={styles.sheetActions}>
+              {editingId && <button style={styles.deleteBtn} onClick={() => { deleteRecord(editingId); setShowForm(false); }}>削除</button>}
+              <button style={styles.saveBtn} onClick={saveRecord}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showKumitenEditor && (
+        <div style={styles.overlay} onClick={() => setShowKumitenEditor(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>工務店リストの編集・並び替え</div>
+              <button style={styles.closeBtn} onClick={() => setShowKumitenEditor(false)}>✕</button>
+            </div>
+            {kumitenList.map((k, i) => (
+              <div key={k} style={styles.kumitenEditRow}>
+                <span style={styles.kumitenEditName}>{k}</span>
+                <div style={styles.kumitenEditBtns}>
+                  <button style={styles.kumitenArrowBtn} onClick={() => moveKumiten(i, -1)} disabled={i === 0}>▲</button>
+                  <button style={styles.kumitenArrowBtn} onClick={() => moveKumiten(i, 1)} disabled={i === kumitenList.length - 1}>▼</button>
+                  <button style={styles.kumitenDeleteBtn} onClick={() => removeKumiten(i)}>削除</button>
+                </div>
+              </div>
+            ))}
+            <button style={{ ...styles.saveBtn, marginTop: 14 }} onClick={addKumitenName}>＋ 新しい工務店を追加</button>
+          </div>
+        </div>
+      )}
+
+      {showDispatchMap && (
+        <div style={styles.overlay} onClick={() => setShowDispatchMap(false)}>
+          <div style={styles.mapSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>{dispatchDate} の現場マップ</div>
+              <button style={styles.closeBtn} onClick={() => setShowDispatchMap(false)}>✕</button>
+            </div>
+
+            {mapStatus === 'error' && (
+              <div style={styles.empty}>
+                地図を表示できませんでした。GOOGLE_MAPS_API_KEYが設定されているか確認してください。
+              </div>
+            )}
+            {mapStatus === 'loading' && <div style={styles.empty}>地図を読み込み中…（住所が多いと少し時間がかかります）</div>}
+
+            <div ref={mapDivRef} style={{ ...styles.mapCanvas, display: mapStatus === 'ready' || mapStatus === 'loading' ? 'block' : 'none' }} />
+
+            {mapStatus === 'ready' && (
+              <div style={styles.mapLegend}>
+                {buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount).map((o, i) => (
+                  <span key={o.id} style={styles.mapLegendItem}>
+                    <span style={{ ...styles.truckDot, background: TRUCK_COLORS[i % TRUCK_COLORS.length] }} />
+                    {o.label}
+                  </span>
+                ))}
+                <span style={styles.mapLegendItem}>
+                  <span style={{ ...styles.truckDot, background: '#9A9A94' }} />
+                  未割当
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showAddExtraSite && (
+        <div style={styles.overlay} onClick={() => setShowAddExtraSite(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>他の日の現場を今日の配車に追加</div>
+              <button style={styles.closeBtn} onClick={() => setShowAddExtraSite(false)}>✕</button>
+            </div>
+            <input
+              style={styles.input}
+              placeholder="現場名で検索"
+              value={extraSiteSearch}
+              onChange={(e) => setExtraSiteSearch(e.target.value)}
+            />
+            <div style={{ marginTop: 10, maxHeight: 320, overflowY: 'auto' }}>
+              {schedRecords
+                .filter((r) => r.date !== dispatchDate && !extraSiteIds.includes(r.id))
+                .filter((r) => !extraSiteSearch || r.name.toLowerCase().includes(extraSiteSearch.toLowerCase()))
+                .slice(0, 30)
+                .map((r) => (
+                  <div key={r.id} style={styles.extraPickRow}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 13.5 }}>{r.name}</div>
+                      <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.date}／{r.kumiten}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button style={styles.pickMoveBtn} onClick={() => { moveSiteToDate(r); setShowAddExtraSite(false); }}>📅 日付を移動</button>
+                      <button style={styles.pickTempBtn} onClick={() => { addExtraSite(r.id); showToast(`${r.name} を一時追加しました`); }}>＋一時追加</button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkUpdate && (
+        <div style={styles.overlay} onClick={() => !bulkImportBusy && setShowBulkUpdate(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>監督名・ハウスNoを一括更新</div>
+              <button style={styles.closeBtn} onClick={() => setShowBulkUpdate(false)}>✕</button>
+            </div>
+            <div style={styles.exportHint}>
+              現場名は既に登録済みのものと完全に一致する必要があります（同じ現場名の予定が複数日あれば、まとめて全部更新されます）。列は「現場名・監督名・監督電話・ハウスNo」の順、タブ区切りで貼り付けてください。
+            </div>
+            <button style={{ ...styles.linkBtn, marginBottom: 8 }} onClick={copyUpdateTemplate}>見出し行をコピーする</button>
+            <textarea
+              style={{ ...styles.input, minHeight: 200, fontSize: 12 }}
+              value={bulkUpdateText}
+              onChange={(e) => setBulkUpdateText(e.target.value)}
+              placeholder="ここにExcelからコピーした内容を貼り付け"
+            />
+            <div style={styles.sheetActions}>
+              <button style={styles.saveBtn} onClick={runBulkUpdate} disabled={bulkImportBusy}>
+                {bulkImportBusy ? '更新中…' : '更新する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkImport && (
+        <div style={styles.overlay} onClick={() => !bulkImportBusy && setShowBulkImport(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>TimeTreeから一括インポート</div>
+              <button style={styles.closeBtn} onClick={() => setShowBulkImport(false)}>✕</button>
+            </div>
+            <div style={styles.exportHint}>
+              Excel/スプレッドシートで列を「現場名・工務店・住所・日付・時間・ステータス・監督名・監督電話・ガラ必須・想定回数・担当者・注意事項」の順に用意し、その範囲をコピーしてここに貼り付けてください（タブ区切り）。1行1件です。
+            </div>
+            <button style={{ ...styles.linkBtn, marginBottom: 8 }} onClick={copyImportTemplate}>見出し行をコピーする（Excelの1行目に貼り付け用）</button>
+            <textarea
+              style={{ ...styles.input, minHeight: 200, fontSize: 12 }}
+              value={bulkImportText}
+              onChange={(e) => setBulkImportText(e.target.value)}
+              placeholder="ここにExcelからコピーした内容を貼り付け"
+            />
+            <div style={styles.sheetActions}>
+              <button style={styles.saveBtn} onClick={runBulkImport} disabled={bulkImportBusy}>
+                {bulkImportBusy ? '取り込み中…' : '取り込む'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBulkDelete && (
+        <div style={styles.overlay} onClick={() => setShowBulkDelete(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>期間を指定して一括削除（{tab === 'sched' ? '現場予定表' : '現場管理表'}）</div>
+              <button style={styles.closeBtn} onClick={() => setShowBulkDelete(false)}>✕</button>
+            </div>
+            <label style={styles.label}>開始日</label>
+            <input type="date" style={styles.input} value={bulkFrom} onChange={(e) => setBulkFrom(e.target.value)} />
+            <label style={styles.label}>終了日</label>
+            <input type="date" style={styles.input} value={bulkTo} onChange={(e) => setBulkTo(e.target.value)} />
+            <div style={styles.sheetActions}><button style={styles.deleteBtn} onClick={bulkDelete}>この期間を削除</button></div>
+          </div>
+        </div>
+      )}
+
+      {showExport && (
+        <div style={styles.overlay} onClick={() => setShowExport(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>マニフェスト用テキスト</div>
+              <button style={styles.closeBtn} onClick={() => setShowExport(false)}>✕</button>
+            </div>
+            <div style={styles.exportHint}>上の検索・日付・工務店の絞り込みが反映されています。コピーしてマニフェストのプロジェクトチャットに貼り付けてください。</div>
+            <textarea style={{ ...styles.input, minHeight: 220, fontSize: 13 }} value={exportText} readOnly />
+            <div style={styles.sheetActions}><button style={styles.saveBtn} onClick={copyExport}>コピーする</button></div>
+          </div>
+        </div>
+      )}
+
+      {toast && <div style={styles.toast}>{toast}</div>}
+      <div style={styles.footerNote}>※このデータはチームで共有されています（立米数のみ合言葉でロック）</div>
+    </div>
+  );
+}
+
+const styles = {
+  page: { background: '#FAF9F6', minHeight: '100vh', padding: '20px 16px 40px', color: '#232320', fontFamily: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif', maxWidth: 720, margin: '0 auto' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 14 },
+  brand: { fontSize: 22, fontWeight: 700, letterSpacing: '0.01em' },
+  brandTag: { fontSize: 10.5, color: '#2A9D8F', fontWeight: 700, letterSpacing: '0.06em', marginTop: 1 },
+  brandSub: { fontSize: 13, color: '#8A8A83', marginTop: 3 },
+  addBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  tabRow: { display: 'flex', gap: 8, marginBottom: 14 },
+  tabBtn: { flex: 1, background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px', fontSize: 14, fontWeight: 600, color: '#8A8A83', cursor: 'pointer' },
+  tabBtnActive: { background: '#232320', color: '#fff', borderColor: '#232320' },
+  lockIconBtn: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, width: 40, fontSize: 14, cursor: 'pointer' },
+  staffChip: { background: 'none', border: 'none', color: '#457B9D', fontSize: 11.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
+  searchBox: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 12, padding: 12, marginBottom: 10 },
+  searchInput: { width: '100%', border: '1px solid #E5E3DC', borderRadius: 8, padding: '9px 11px', fontSize: 14, marginBottom: 8, background: '#FBFAF7' },
+  searchRow2: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 },
+  dateInput: { flex: 1, border: '1px solid #E5E3DC', borderRadius: 8, padding: '7px 8px', fontSize: 12.5, background: '#FBFAF7' },
+  chipRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  chip: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 999, padding: '5px 10px', fontSize: 12, color: '#4A4A45', cursor: 'pointer' },
+  chipActive: { borderColor: '#2A9D8F', borderWidth: 2, fontWeight: 700, color: '#232320' },
+  dot: { width: 8, height: 8, borderRadius: '50%', display: 'inline-block' },
+  toolRow: { marginBottom: 12 },
+  linkBtn: { background: 'none', border: 'none', color: '#457B9D', fontSize: 13, textDecoration: 'underline', cursor: 'pointer', padding: 0 },
+  empty: { background: '#fff', border: '1px dashed #D8D6CD', borderRadius: 12, padding: 24, textAlign: 'center', color: '#8A8A83', fontSize: 14 },
+  list: { display: 'flex', flexDirection: 'column', gap: 10 },
+  card: { display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+  cardBar: { height: 4, width: '100%' },
+  cardBody: { padding: '12px 14px', cursor: 'pointer' },
+  cardTop: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
+  timeBadge: { fontSize: 12.5, background: '#E63946', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
+  badge: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#5A5A54', fontWeight: 600 },
+  kumitenTag: { fontSize: 11, background: '#F0EFE9', color: '#6B6B63', borderRadius: 6, padding: '2px 6px', fontWeight: 700 },
+  areaTag: { fontSize: 11, background: '#E7F1EF', color: '#2A9D8F', borderRadius: 6, padding: '2px 6px', fontWeight: 700 },
+  dateText: { fontSize: 12, color: '#A5A59C', marginLeft: 'auto' },
+  cardName: { fontSize: 16, fontWeight: 700, marginBottom: 4 },
+  addrLink: { fontSize: 13, color: '#457B9D', display: 'block', marginBottom: 4, textDecoration: 'none' },
+  supervisorRow: { display: 'flex', gap: 12, alignItems: 'center', marginBottom: 6 },
+  supervisorName: { fontSize: 12.5, color: '#5A5A54' },
+  phoneLink: { fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, textDecoration: 'none' },
+  noteText: { fontSize: 13, color: '#6B6B63', marginBottom: 6, whiteSpace: 'pre-wrap' },
+  cardMeta: { fontSize: 12.5, color: '#5A5A54' },
+  m3Row: { marginBottom: 6 },
+  m3Value: { fontSize: 12.5, color: '#5A5A54', fontWeight: 700 },
+  lockBtn: { background: '#F6F1E7', border: '1px dashed #D8C9A3', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: '#8A6D3B', cursor: 'pointer' },
+  handoffBtn: { background: '#232320', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  actionRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  dupBtn: { background: '#fff', color: '#457B9D', border: '1px solid #C7D7E0', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+  photoThread: { display: 'flex', gap: 8, padding: '0 14px 12px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid #F0EFE9', paddingTop: 10 },
+  photoItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 },
+  threadImg: { width: 56, height: 56, objectFit: 'cover', borderRadius: 8 },
+  photoStaff: { fontSize: 10, color: '#8A8A83' },
+  addPhotoBtn: { border: '1px dashed #D8D6CD', borderRadius: 8, padding: '8px 10px', fontSize: 11.5, color: '#8A8A83', cursor: 'pointer' },
+  overlay: { position: 'fixed', inset: 0, background: 'rgba(20,20,18,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 },
+  sheet: { background: '#fff', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: '18px 18px 24px' },
+  sheetHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  sheetTitle: { fontSize: 16, fontWeight: 700 },
+  closeBtn: { background: 'none', border: 'none', fontSize: 16, color: '#8A8A83', cursor: 'pointer' },
+  label: { display: 'block', fontSize: 12.5, color: '#7A7A72', marginBottom: 5, marginTop: 12, fontWeight: 600 },
+  input: { width: '100%', border: '1px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 14.5, color: '#232320', background: '#FBFAF7' },
+  statusGrid: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  statusOption: { display: 'flex', alignItems: 'center', gap: 5, border: '2px solid #E5E3DC', borderRadius: 999, padding: '7px 11px', fontSize: 12.5, cursor: 'pointer' },
+  row2: { display: 'flex', gap: 10 },
+  sheetActions: { display: 'flex', gap: 10, marginTop: 20 },
+  saveBtn: { flex: 1, background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 10, padding: '12px', fontSize: 15, fontWeight: 700, cursor: 'pointer' },
+  deleteBtn: { background: '#fff', color: '#E63946', border: '1px solid #E63946', borderRadius: 10, padding: '12px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  toast: { position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: '#232320', color: '#fff', padding: '10px 18px', borderRadius: 999, fontSize: 13.5, zIndex: 100 },
+  footerNote: { textAlign: 'center', fontSize: 11.5, color: '#B0B0A6', marginTop: 24 },
+  exportHint: { fontSize: 12.5, color: '#8A8A83', marginBottom: 10, lineHeight: 1.5 },
+  // calendar
+  calBox: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 12, padding: 12, marginBottom: 10 },
+  calHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  calNavBtn: { background: '#F0EFE9', border: 'none', borderRadius: 8, width: 30, height: 30, fontSize: 16, cursor: 'pointer' },
+  calTitle: { fontSize: 14, fontWeight: 700 },
+  calWeekRow: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 },
+  calWeekLabel: { textAlign: 'center', fontSize: 11, color: '#A5A59C' },
+  calGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
+  calCellEmpty: { height: 40 },
+  calCell: { height: 40, border: '1px solid #F0EFE9', borderRadius: 8, background: '#FBFAF7', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12 },
+  calCellActive: { background: '#232320', color: '#fff', borderColor: '#232320' },
+  calDayNum: { fontWeight: 700 },
+  calCount: { fontSize: 9, color: '#E63946', fontWeight: 800 },
+  // dispatch
+  dispatchSummary: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13 },
+  satHint: { fontSize: 12, color: '#457B9D', marginTop: 6 },
+  stepperRow: { display: 'flex', alignItems: 'center', gap: 12 },
+  stepperBtn: { width: 36, height: 36, borderRadius: 8, border: '1px solid #E5E3DC', background: '#fff', fontSize: 18, cursor: 'pointer' },
+  stepperValue: { fontSize: 15, fontWeight: 700, minWidth: 40, textAlign: 'center' },
+  extraTag: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '1px 6px', marginLeft: 6, fontWeight: 700 },
+  extraRemoveBtn: { background: 'none', border: 'none', color: '#8A6D00', fontSize: 10, cursor: 'pointer', padding: 0 },
+  extraPickRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 4px', borderBottom: '1px solid #F0EFE9' },
+  mapSheet: { background: '#fff', width: '100%', maxWidth: 640, maxHeight: '92vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: '18px 18px 24px' },
+  mapCanvas: { width: '100%', height: 420, borderRadius: 10, background: '#F0EFE9' },
+  mapLegend: { display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 },
+  mapLegendItem: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#5A5A54' },
+  pickMoveBtn: { background: '#232320', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer' },
+  pickTempBtn: { background: '#fff', color: '#457B9D', border: '1px solid #C7D7E0', borderRadius: 8, padding: '6px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' },
+  areaGroup: { marginBottom: 16 },
+  areaGroupTitle: { fontSize: 13, fontWeight: 700, color: '#5A5A54', marginBottom: 6 },
+  dispatchRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginBottom: 6, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' },
+  dispatchInfo: { display: 'flex', flexDirection: 'column' },
+  dispatchName: { fontSize: 13.5, fontWeight: 600 },
+  addrLinkSmall: { fontSize: 11, color: '#457B9D', textDecoration: 'none' },
+  truckSelect: { border: '1px solid #E5E3DC', borderRadius: 8, padding: '5px 6px', fontSize: 12.5, background: '#FBFAF7' },
+  truckSummaryBox: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: 12, marginTop: 8 },
+  truckSummaryRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 0' },
+  truckDot: { width: 10, height: 10, borderRadius: '50%', display: 'inline-block' },
+  invoiceRow: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px 12px', marginBottom: 8 },
+  invoiceName: { fontSize: 14, fontWeight: 700, marginBottom: 2 },
+  invoiceMeta: { fontSize: 11.5, color: '#8A8A83', marginBottom: 4 },
+  invoiceM3: { fontSize: 15, fontWeight: 800, color: '#2A9D8F', marginTop: 6, textAlign: 'right' },
+  invoiceItemLine: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12.5, color: '#5A5A54', padding: '3px 0', borderTop: '1px solid #F0EFE9' },
+  lineItemRow: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 },
+  lineItemName: { flex: 2, border: '1px solid #E5E3DC', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#FBFAF7' },
+  lineItemSmall: { flex: 1, border: '1px solid #E5E3DC', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#FBFAF7', minWidth: 0 },
+  lineItemAmount: { fontSize: 12, fontWeight: 700, color: '#2A9D8F', minWidth: 64, textAlign: 'right' },
+  lineItemRemove: { background: 'none', border: 'none', color: '#E63946', fontSize: 14, cursor: 'pointer', padding: '0 2px' },
+  lineItemTotal: { textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#232320', marginTop: 6 },
+  autofillHint: { fontSize: 11, color: '#8A8A83', marginTop: 4 },
+  garaToggle: { width: '100%', textAlign: 'left', border: '2px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, background: '#fff', color: '#8A8A83', cursor: 'pointer' },
+  garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
+  garaBadge: { fontSize: 11.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
+  visitBadge: { fontSize: 11, color: '#6B6B63', fontWeight: 700, background: '#F0EFE9', borderRadius: 6, padding: '2px 6px' },
+  visitBadgeOver: { color: '#fff', background: '#E63946' },
+  dispatchVisitCount: { fontSize: 11, color: '#8A8A83' },
+  fileInputPlain: { fontSize: 12.5, marginTop: 2 },
+  pendingPhotoRow: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  pendingPhotoItem: { position: 'relative' },
+  pendingPhotoImg: { width: 56, height: 56, objectFit: 'cover', borderRadius: 8 },
+  pendingPhotoRemove: { position: 'absolute', top: -6, right: -6, background: '#E63946', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer', lineHeight: '18px', padding: 0 },
+  addKumitenChip: { background: '#F0EFE9', border: '1px dashed #C7C3B8', borderRadius: 999, padding: '5px 10px', fontSize: 12, color: '#6B6B63', cursor: 'pointer' },
+  kumitenEditRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F0EFE9' },
+  kumitenEditName: { fontSize: 14, fontWeight: 600 },
+  kumitenEditBtns: { display: 'flex', gap: 6 },
+  kumitenArrowBtn: { background: '#F0EFE9', border: 'none', borderRadius: 6, width: 28, height: 28, fontSize: 12, cursor: 'pointer' },
+  ganttBox: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 12, padding: '16px 12px 12px', position: 'relative' },
+  ganttAxis: { position: 'relative', height: 20, marginBottom: 8, borderBottom: '1px solid #F0EFE9' },
+  ganttTick: { position: 'absolute', fontSize: 10.5, color: '#A5A59C', transform: 'translateX(-4px)' },
+  ganttTodayLine: { position: 'absolute', top: 0, bottom: -400, width: 2, background: '#E63946', opacity: 0.5 },
+  ganttRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, position: 'relative' },
+  ganttLabel: { width: 108, fontSize: 11.5, color: '#4A4A45', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  ganttTrack: { flex: 1, height: 16, position: 'relative', background: '#FAF9F6', borderRadius: 4 },
+  ganttBar: { position: 'absolute', top: 0, height: 16, borderRadius: 4 },
+  kumitenDeleteBtn: { background: '#fff', border: '1px solid #E63946', color: '#E63946', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
+};
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<GenbaTracker />);
+</script>
+</body>
+</html>
