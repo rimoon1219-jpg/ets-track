@@ -419,6 +419,121 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
   );
 }
 
+// ---------- Gantt-style progress chart (新規〜最終) ----------
+function dateToDay(dateStr) {
+  return Math.floor(new Date(dateStr + 'T00:00:00').getTime() / 86400000);
+}
+function dayToDate(day) {
+  return new Date(day * 86400000).toISOString().slice(0, 10);
+}
+
+function GanttChart({ schedRecords, kumitenFilter, windowStart, windowEnd, onShift, onPickKumiten, kumitenList }) {
+  const todayDay = dateToDay(todayStr());
+  const startDay = dateToDay(windowStart);
+  const endDay = dateToDay(windowEnd);
+  const totalDays = Math.max(1, endDay - startDay);
+
+  const bySite = {};
+  schedRecords.forEach((r) => {
+    if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return;
+    if (!bySite[r.name]) bySite[r.name] = { name: r.name, kumiten: r.kumiten, dates: [], hasFinal: false, finalDay: null, hasSingle: false };
+    const d = dateToDay(r.date);
+    bySite[r.name].dates.push(d);
+    if (r.status === '最終') {
+      bySite[r.name].hasFinal = true;
+      bySite[r.name].finalDay = bySite[r.name].finalDay === null ? d : Math.max(bySite[r.name].finalDay, d);
+    }
+    if (r.status === '単発') {
+      bySite[r.name].hasSingle = true;
+    }
+  });
+
+  const rows = Object.values(bySite).map((s) => {
+    const minDay = Math.min(...s.dates);
+    const maxDay = Math.max(...s.dates);
+    const isDone = s.hasFinal || s.hasSingle; // 最終が付いた、または単発の仕事は「完了扱い」にする
+    const barEndDay = s.hasFinal ? s.finalDay : (s.hasSingle ? maxDay : Math.max(maxDay, todayDay));
+    return { ...s, startDay: minDay, endDay: barEndDay, ongoing: !isDone, isDone };
+  })
+    .filter((s) => !(s.isDone && todayDay - s.endDay > 14)) // 完了（最終／単発）から2週間経過したら工程表から非表示（データ自体は消えません）
+    .filter((s) => s.endDay >= startDay && s.startDay <= endDay)
+    .sort((a, b) => a.startDay - b.startDay);
+
+  // 月の目盛り
+  const monthTicks = [];
+  let cursor = new Date(windowStart + 'T00:00:00');
+  cursor.setDate(1);
+  while (dateToDay(cursor.toISOString().slice(0, 10)) <= endDay) {
+    const d = dateToDay(cursor.toISOString().slice(0, 10));
+    if (d >= startDay) monthTicks.push({ day: d, label: `${cursor.getMonth() + 1}月` });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const overlappingToday = rows.filter((r) => r.startDay <= todayDay && r.endDay >= todayDay).length;
+
+  return (
+    <div>
+      <div style={styles.searchBox}>
+        <div style={styles.chipRow}>
+          {['全て', ...kumitenList].map((k) => (
+            <button key={k} onClick={() => onPickKumiten(k)} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+          <button style={styles.calNavBtn} onClick={() => onShift(-1)}>‹ 前月</button>
+          <span style={{ fontSize: 12.5, color: '#5A5A54' }}>{windowStart} 〜 {windowEnd}</span>
+          <button style={styles.calNavBtn} onClick={() => onShift(1)}>次月 ›</button>
+        </div>
+      </div>
+
+      <div style={styles.dispatchSummary}>
+        <span>表示中 {rows.length}件</span>
+        <span style={{ fontWeight: 700, color: '#E63946' }}>本日時点で重なり {overlappingToday}件</span>
+      </div>
+
+      <div style={styles.ganttBox}>
+        <div style={styles.ganttAxis}>
+          {monthTicks.map((t, i) => (
+            <div key={i} style={{ ...styles.ganttTick, left: `${((t.day - startDay) / totalDays) * 100}%` }}>{t.label}</div>
+          ))}
+          <div style={{ ...styles.ganttTodayLine, left: `${((todayDay - startDay) / totalDays) * 100}%` }} />
+        </div>
+
+        {rows.length === 0 && <div style={styles.empty}>この期間・工務店に該当する現場がありません。</div>}
+
+        {rows.map((r) => {
+          const left = Math.max(0, ((r.startDay - startDay) / totalDays) * 100);
+          const right = Math.min(100, ((r.endDay - startDay) / totalDays) * 100);
+          const width = Math.max(1.5, right - left);
+          return (
+            <div key={r.name} style={styles.ganttRow}>
+              <div style={styles.ganttLabel}>{r.name}</div>
+              <div style={styles.ganttTrack}>
+                <div
+                  style={{
+                    ...styles.ganttBar,
+                    left: `${left}%`,
+                    width: `${width}%`,
+                    background: r.ongoing ? '#2A9D8F' : (r.hasSingle && !r.hasFinal ? '#FFB703' : '#9A9A94'),
+                  }}
+                  title={`${dayToDate(r.startDay)} 〜 ${dayToDate(r.endDay)}${r.ongoing ? '（進行中）' : (r.hasSingle && !r.hasFinal ? '（単発）' : '（最終済み）')}`}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={styles.mapLegend}>
+        <span style={styles.mapLegendItem}><span style={{ ...styles.truckDot, background: '#2A9D8F' }} />進行中（最終未登録）</span>
+        <span style={styles.mapLegendItem}><span style={{ ...styles.truckDot, background: '#9A9A94' }} />最終済み</span>
+        <span style={styles.mapLegendItem}><span style={{ ...styles.truckDot, background: '#FFB703' }} />単発</span>
+        <span style={styles.mapLegendItem}><span style={{ ...styles.truckDot, background: '#E63946' }} />本日のライン</span>
+      </div>
+    </div>
+  );
+}
+
 function GenbaTracker() {
   const [tab, setTab] = useState('sched'); // sched | mgmt | dispatch
   const [schedRecords, setSchedRecords] = useState([]);
