@@ -364,8 +364,14 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
   const [year, month] = monthCursor.split('-').map(Number);
   const total = daysInMonth(year, month - 1);
   const startWeekday = firstWeekday(year, month - 1);
-  const countByDate = {};
-  records.forEach((r) => { countByDate[r.date] = (countByDate[r.date] || 0) + 1; });
+
+  // 日付ごとに、その日に含まれるステータスの種類と件数を集計
+  const infoByDate = {};
+  records.forEach((r) => {
+    if (!infoByDate[r.date]) infoByDate[r.date] = { count: 0, statuses: [] };
+    infoByDate[r.date].count++;
+    if (!infoByDate[r.date].statuses.includes(r.status)) infoByDate[r.date].statuses.push(r.status);
+  });
 
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(null);
@@ -380,6 +386,8 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
     if (m < 1) { m = 12; y -= 1; }
     setMonthCursor(`${y}-${String(m).padStart(2, '0')}`);
   }
+
+  const MAX_DOTS = 4;
 
   return (
     <div style={styles.calBox}>
@@ -396,9 +404,11 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
       <div style={styles.calGrid}>
         {cells.map((dateStr, i) => {
           if (!dateStr) return <div key={i} style={styles.calCellEmpty} />;
-          const count = countByDate[dateStr] || 0;
+          const info = infoByDate[dateStr];
           const day = Number(dateStr.slice(-2));
           const sat = isSaturday(dateStr);
+          const dots = info ? info.statuses.slice(0, MAX_DOTS) : [];
+          const extra = info ? Math.max(0, info.statuses.length - MAX_DOTS) : 0;
           return (
             <button
               key={i}
@@ -410,7 +420,17 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
               }}
             >
               <span style={styles.calDayNum}>{day}</span>
-              {count > 0 && <span style={styles.calCount}>{count}</span>}
+              {info && (
+                <>
+                  <div style={styles.calDotRow}>
+                    {dots.map((s) => (
+                      <span key={s} style={{ ...styles.calDot, background: statusColor(SCHED_STATUSES, s) }} />
+                    ))}
+                    {extra > 0 && <span style={styles.calDotMore}>+{extra}</span>}
+                  </div>
+                  <span style={styles.calCount}>{info.count}件</span>
+                </>
+              )}
             </button>
           );
         })}
@@ -2156,11 +2176,14 @@ const styles = {
   calWeekRow: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 },
   calWeekLabel: { textAlign: 'center', fontSize: 11, color: '#A5A59C' },
   calGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
-  calCellEmpty: { height: 40 },
-  calCell: { height: 40, border: '1px solid #F0EFE9', borderRadius: 8, background: '#FBFAF7', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12 },
+  calCellEmpty: { height: 58 },
+  calCell: { height: 58, border: '1px solid #F0EFE9', borderRadius: 8, background: '#FBFAF7', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12, gap: 2, padding: '4px 2px' },
+  calDotRow: { display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center', minHeight: 8, maxWidth: 44 },
+  calDot: { width: 6, height: 6, borderRadius: '50%', display: 'inline-block' },
+  calDotMore: { fontSize: 8, color: '#A5A59C' },
   calCellActive: { background: '#232320', color: '#fff', borderColor: '#232320' },
   calDayNum: { fontWeight: 700 },
-  calCount: { fontSize: 9, color: '#E63946', fontWeight: 800 },
+  calCount: { fontSize: 8.5, color: '#8A8A83', fontWeight: 700 },
   // dispatch
   dispatchSummary: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13 },
   satHint: { fontSize: 12, color: '#457B9D', marginTop: 6 },
