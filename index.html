@@ -428,7 +428,7 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
           const dots = info ? info.statuses.slice(0, MAX_DOTS) : [];
           const extra = info ? Math.max(0, info.statuses.length - MAX_DOTS) : 0;
           return (
-            <button
+            <div
               key={i}
               onClick={() => onPickDate(dateStr)}
               style={{
@@ -449,7 +449,7 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
                   <span style={styles.calCount}>{info.count}件</span>
                 </>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
