@@ -41,6 +41,15 @@ function setDeviceStaff(name) {
   try { localStorage.setItem(DEVICE_STAFF_KEY, name); } catch (e) {}
 }
 
+// ---- カレンダー表示などを素早く出すための一時キャッシュ（端末内保存） ----
+const RECORDS_CACHE_KEY = 'etsTrackRecordsCache_v1';
+function getCachedRecords() {
+  try { return JSON.parse(localStorage.getItem(RECORDS_CACHE_KEY) || 'null'); } catch (e) { return null; }
+}
+function setCachedRecords(sched, mgmt, kumiten) {
+  try { localStorage.setItem(RECORDS_CACHE_KEY, JSON.stringify({ sched, mgmt, kumiten, savedAt: Date.now() })); } catch (e) {}
+}
+
 
 // ---- 保存エラー対策：端末への一時保存＋自動再送信の仕組み ----
 const PENDING_QUEUE_KEY = 'etsTrackPendingQueue';
@@ -664,7 +673,18 @@ function GenbaTracker() {
   const [form, setForm] = useState(emptySched());
   const [pendingPhotos, setPendingPhotos] = useState([]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    // 起動直後、まず端末に保存済みの前回データを即表示（カレンダーのドットもすぐ出る）
+    const cached = getCachedRecords();
+    if (cached) {
+      setSchedRecords(cached.sched || []);
+      setMgmtRecords(cached.mgmt || []);
+      if (cached.kumiten) setKumitenList(cached.kumiten);
+      setLoading(false);
+    }
+    // 裏側で最新データを取りに行き、取れ次第差し替える
+    load();
+  }, []);
   useEffect(() => { if (tab === 'dispatch') loadDispatch(dispatchDate); }, [tab, dispatchDate]);
 
   useEffect(() => {
@@ -717,10 +737,11 @@ function GenbaTracker() {
 
   async function load() {
     setLoading(true);
+    let list = kumitenList;
     try {
       try {
         const km = await storage.get('meta:kumiten', true);
-        let list = DEFAULT_KUMITEN;
+        list = DEFAULT_KUMITEN;
         if (km && km.value) {
           list = JSON.parse(km.value);
           const missing = DEFAULT_KUMITEN.filter((n) => n !== 'その他' && !list.includes(n));
@@ -734,22 +755,30 @@ function GenbaTracker() {
       } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
 
       const sList = await storage.list('sched:', true);
-      const sItems = [];
-      for (const k of (sList && sList.keys) || []) {
-        const r = await storage.get(k, true);
-        if (r && r.value) sItems.push(JSON.parse(r.value));
-      }
+      const sItems = (await Promise.all(
+        ((sList && sList.keys) || []).map(async (k) => {
+          try {
+            const r = await storage.get(k, true);
+            return r && r.value ? JSON.parse(r.value) : null;
+          } catch (e) { return null; }
+        })
+      )).filter(Boolean);
       sItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setSchedRecords(sItems);
 
       const mList = await storage.list('mgmt:', true);
-      const mItems = [];
-      for (const k of (mList && mList.keys) || []) {
-        const r = await storage.get(k, true);
-        if (r && r.value) mItems.push(JSON.parse(r.value));
-      }
+      const mItems = (await Promise.all(
+        ((mList && mList.keys) || []).map(async (k) => {
+          try {
+            const r = await storage.get(k, true);
+            return r && r.value ? JSON.parse(r.value) : null;
+          } catch (e) { return null; }
+        })
+      )).filter(Boolean);
       mItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setMgmtRecords(mItems);
+
+      setCachedRecords(sItems, mItems, list);
     } catch (e) { console.error(e); }
     setLoading(false);
   }
@@ -924,6 +953,20 @@ function GenbaTracker() {
       area: f.area || match.area || '',
       address: f.address || match.address || '',
     }));
+  }
+
+  // 監督名から電話番号を自動入力（同じ組頭＝工務店内で、過去に登録がある場合のみ。
+  // 「高橋さん」等の同姓が他の工務店にいても混同しないよう、組頭名も一致するものだけを対象にする）
+  function fillPhoneFromSupervisorName(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed || form.supervisorPhone) return; // 電話番号が既に入力済みなら上書きしない
+    const candidates = schedRecords
+      .filter((r) => r.kumiten === form.kumiten && (r.supervisorName || '').trim() === trimmed && r.supervisorPhone)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const match = candidates[0];
+    if (!match) return;
+    setForm((f) => (f.supervisorPhone ? f : { ...f, supervisorPhone: match.supervisorPhone }));
+    showToast(`${form.kumiten}の${trimmed}さんの電話番号を自動入力しました`);
   }
 
   function openNew() {
@@ -1868,7 +1911,7 @@ function GenbaTracker() {
                 <div style={styles.row2}>
                   <div style={{ flex: 1 }}>
                     <label style={styles.label}>監督名</label>
-                    <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} placeholder="例：須藤大樹" />
+                    <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} onBlur={(e) => fillPhoneFromSupervisorName(e.target.value)} placeholder="例：須藤大樹" />
                   </div>
                   <div style={{ flex: 1 }}>
                     <label style={styles.label}>監督の電話番号</label>
