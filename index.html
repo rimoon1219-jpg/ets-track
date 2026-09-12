@@ -1395,15 +1395,15 @@ function GenbaTracker() {
               {tab === 'sched' && (
                 <button onClick={() => setShowUncollectedOnly((v) => !v)} style={{ ...styles.chip, ...(showUncollectedOnly ? { ...styles.chipActive, borderColor: '#E63946' } : {}) }}>未回収のみ</button>
               )}
-              {tab === 'sched' && (
+              {(tab === 'sched' || tab === 'mgmt') && (
                 <button onClick={() => setShowCalendar((v) => !v)} style={{ ...styles.chip, ...(showCalendar ? styles.chipActive : {}) }}>📅 カレンダー表示</button>
               )}
             </div>
           </div>
 
-          {tab === 'sched' && showCalendar && (
+          {(tab === 'sched' || tab === 'mgmt') && showCalendar && (
             <MonthCalendar
-              records={schedRecords}
+              records={tab === 'sched' ? schedRecords : mgmtRecords}
               monthCursor={monthCursor}
               setMonthCursor={setMonthCursor}
               selectedDate={dateFrom === dateTo ? dateFrom : ''}
