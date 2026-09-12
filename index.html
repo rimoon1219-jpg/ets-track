@@ -158,14 +158,15 @@ async function uploadPhotoDirect(dataUrl, filename) {
 }
 
 // アップロードに失敗した写真を、あとで自動的にその現場の記録へ追加する
-async function attachPhotoToRecord(recordId, staff, url) {
-  const r = await fetch(`${API_URL}?action=get&key=${encodeURIComponent('mgmt:' + recordId)}`);
+async function attachPhotoToRecord(recordId, staff, url, recordPrefix) {
+  const prefix = recordPrefix || 'mgmt';
+  const r = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(prefix + ':' + recordId)}`);
   const data = await r.json();
   if (!data.found) return false;
   const record = JSON.parse(data.value);
   const photos = [...(record.photos || []), { staff: staff || '担当者', img: url, at: Date.now() }];
   const updated = { ...record, photos };
-  await sendToServer({ action: 'set', key: `mgmt:${recordId}`, value: JSON.stringify(updated) });
+  await sendToServer({ action: 'set', key: `${prefix}:${recordId}`, value: JSON.stringify(updated) });
   return true;
 }
 
@@ -174,7 +175,7 @@ async function retryPhotoQueue() {
   for (const item of q) {
     try {
       const url = await uploadPhotoDirect(item.dataUrl, item.filename);
-      await attachPhotoToRecord(item.recordId, item.staff, url);
+      await attachPhotoToRecord(item.recordId, item.staff, url, item.recordPrefix);
       removeFromPhotoQueue(item.id);
     } catch (e) {
       // 引き続き端末に残しておき、また後で試す
@@ -205,7 +206,7 @@ const storage = {
     const data = await res.json();
     return { keys: data.keys || [] };
   },
-  async uploadPhoto(dataUrl, filename, recordId, staff) {
+  async uploadPhoto(dataUrl, filename, recordId, staff, recordPrefix) {
     try {
       return await uploadPhotoDirect(dataUrl, filename);
     } catch (e) {
@@ -214,7 +215,7 @@ const storage = {
         throw new Error('保留中の写真が上限（3枚）に達しています。電波の良い場所でもう一度お試しください');
       }
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      q.push({ id, dataUrl, filename, recordId, staff, createdAt: Date.now() });
+      q.push({ id, dataUrl, filename, recordId, staff, recordPrefix: recordPrefix || 'mgmt', createdAt: Date.now() });
       savePhotoQueueToDisk(q);
       notifyPendingChange();
       scheduleRetry();
@@ -655,7 +656,7 @@ function GenbaTracker() {
 
   const emptySched = () => ({
     name: '', kumiten: 'OHA', address: '', area: '', status: '新規', staff: deviceStaff, note: '', date: todayStr(),
-    time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, expectedVisits: '12',
+    time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, expectedVisits: '12', photos: [],
   });
   const emptyMgmt = () => ({
     name: '', kumiten: 'OHA', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [],
@@ -964,13 +965,13 @@ function GenbaTracker() {
       record = { ...record, area: extractArea(record.address) };
     }
     let extraPhotos = [];
-    if (tab === 'mgmt' && pendingPhotos.length > 0) {
+    if (pendingPhotos.length > 0) {
       showToast(`写真をアップロード中…（${pendingPhotos.length}枚）`);
       for (const file of pendingPhotos) {
         try {
           const dataUrl = await compressImage(file);
           const staffName = deviceStaff || form.staff || '担当者';
-          const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`, id, staffName);
+          const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`, id, staffName, prefix);
           if (url) {
             extraPhotos.push({ staff: staffName, img: url, at: Date.now() });
           } else {
@@ -1093,16 +1094,19 @@ function GenbaTracker() {
     load();
   }
 
-  async function addPhotoToMgmt(id, staffName, files) {
-    const record = mgmtRecords.find((r) => r.id === id);
+  async function addPhotoToMgmt(id, staffName, files, recordTab) {
+    const activeTab = recordTab || tab;
+    const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
+    const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
+    const record = source.find((r) => r.id === id);
     if (!record) return;
-    const fileArray = Array.from(files);
+    const fileArray = files instanceof File ? [files] : Array.from(files);
     showToast(`アップロード中…（${fileArray.length}枚）`);
     const newPhotos = [];
     for (const file of fileArray) {
       try {
         const dataUrl = await compressImage(file);
-        const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`, id, staffName);
+        const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`, id, staffName, prefix);
         if (url) {
           newPhotos.push({ staff: staffName || '担当者', img: url, at: Date.now() });
         } else {
@@ -1114,7 +1118,7 @@ function GenbaTracker() {
     }
     const photos = [...(record.photos || []), ...newPhotos];
     const updated = { ...record, photos };
-    await storage.set(`mgmt:${id}`, JSON.stringify(updated), true);
+    await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
     showToast(`写真を${newPhotos.length}枚追加しました`);
     load();
   }
@@ -1466,7 +1470,7 @@ function GenbaTracker() {
                     <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 複製（連棟・数日後）</button>
                   </div>
                 </div>
-                {tab === 'mgmt' && (
+                {(tab === 'sched' || tab === 'mgmt') && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
                       <div key={i} style={styles.photoItem}><img src={p.img} alt="" style={styles.threadImg} /><span style={styles.photoStaff}>{p.staff}</span></div>
@@ -1923,6 +1927,36 @@ function GenbaTracker() {
               <>
                 <label style={styles.label}>注意事項・メモ</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="例：大工さんに連絡なしで日程移動しないこと" />
+
+                <label style={styles.label}>写真（この場でまとめて追加できます。保存時にアップロードされます）</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={styles.fileInputPlain}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    setPendingPhotos((prev) => [...prev, ...files]);
+                    e.target.value = '';
+                  }}
+                />
+                {pendingPhotos.length > 0 && (
+                  <div style={styles.pendingPhotoRow}>
+                    {pendingPhotos.map((file, i) => (
+                      <div key={i} style={styles.pendingPhotoItem}>
+                        <img src={URL.createObjectURL(file)} alt="" style={styles.pendingPhotoImg} />
+                        <button
+                          type="button"
+                          style={styles.pendingPhotoRemove}
+                          onClick={() => setPendingPhotos((prev) => prev.filter((_, idx) => idx !== i))}
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {editingId && (form.photos || []).length > 0 && (
+                  <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（カード下の「＋写真」からも追加できます）</div>
+                )}
               </>
             )}
 
@@ -1931,6 +1965,35 @@ function GenbaTracker() {
                 <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
 
+                <label style={styles.label}>写真（この場でまとめて追加できます。保存時にアップロードされます）</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={styles.fileInputPlain}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    setPendingPhotos((prev) => [...prev, ...files]);
+                    e.target.value = '';
+                  }}
+                />
+                {pendingPhotos.length > 0 && (
+                  <div style={styles.pendingPhotoRow}>
+                    {pendingPhotos.map((file, i) => (
+                      <div key={i} style={styles.pendingPhotoItem}>
+                        <img src={URL.createObjectURL(file)} alt="" style={styles.pendingPhotoImg} />
+                        <button
+                          type="button"
+                          style={styles.pendingPhotoRemove}
+                          onClick={() => setPendingPhotos((prev) => prev.filter((_, idx) => idx !== i))}
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {editingId && (form.photos || []).length > 0 && (
+                  <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（カード下の「＋写真」からも追加できます）</div>
+                )}
               </>
             )}
 
