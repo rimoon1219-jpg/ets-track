@@ -428,6 +428,7 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
           const sat = isSaturday(dateStr);
           const dots = info ? info.statuses.slice(0, MAX_DOTS) : [];
           const extra = info ? Math.max(0, info.statuses.length - MAX_DOTS) : 0;
+          const isSelected = dateStr === selectedDate;
           return (
             <div
               key={i}
@@ -437,6 +438,7 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
                 ...(sat ? { color: '#457B9D' } : {}),
               }}
             >
+              {isSelected && <div style={styles.calSelectedBar} />}
               <span style={styles.calDayNum}>{day}</span>
               {info && (
                 <>
@@ -2198,7 +2200,8 @@ const styles = {
   calWeekLabel: { textAlign: 'center', fontSize: 11, color: '#A5A59C' },
   calGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
   calCellEmpty: { height: 58 },
-  calCell: { height: 58, border: '1px solid #F0EFE9', borderRadius: 8, background: '#FBFAF7', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12, gap: 2, padding: '4px 2px', outline: 'none', WebkitTapHighlightColor: 'transparent' },
+  calCell: { height: 58, border: '1px solid #F0EFE9', borderRadius: 8, background: '#FBFAF7', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12, gap: 2, padding: '4px 2px', outline: 'none', WebkitTapHighlightColor: 'transparent', position: 'relative' },
+  calSelectedBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: '#2A9D8F', borderRadius: '7px 7px 0 0' },
   calDotRow: { display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center', minHeight: 8, maxWidth: 44 },
   calDot: { width: 6, height: 6, borderRadius: '50%', display: 'inline-block' },
   calDotMore: { fontSize: 8, color: '#A5A59C' },
