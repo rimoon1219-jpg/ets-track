@@ -434,7 +434,6 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
               onClick={() => onPickDate(dateStr)}
               style={{
                 ...styles.calCell,
-                ...(dateStr === selectedDate ? styles.calCellActive : {}),
                 ...(sat ? { color: '#457B9D' } : {}),
               }}
             >
@@ -2203,7 +2202,7 @@ const styles = {
   calDotRow: { display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center', minHeight: 8, maxWidth: 44 },
   calDot: { width: 6, height: 6, borderRadius: '50%', display: 'inline-block' },
   calDotMore: { fontSize: 8, color: '#A5A59C' },
-  calCellActive: { background: '#232320', color: '#fff', borderColor: '#232320' },
+  calCellActive: { background: '#232320', color: '#fff', border: '1px solid #232320' },
   calDayNum: { fontWeight: 700 },
   calCount: { fontSize: 8.5, color: '#8A8A83', fontWeight: 700 },
   // dispatch
