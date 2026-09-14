@@ -841,6 +841,8 @@ function GenbaTracker() {
     setDispatchLoaded(true);
   }
 
+  const dispatchSaveChainRef = useRef(Promise.resolve());
+
   async function saveDispatch(nextAssignments, nextRegular, nextKei, nextDump, nextExtra, nextCollectNote, nextDumpNote) {
     const payload = {
       regularTruckCount: nextRegular,
@@ -851,7 +853,11 @@ function GenbaTracker() {
       collectNote: nextCollectNote !== undefined ? nextCollectNote : collectNote,
       dumpNote: nextDumpNote !== undefined ? nextDumpNote : dumpNote,
     };
-    await storage.set(`dispatch:${dispatchDate}`, JSON.stringify(payload), true);
+    const date = dispatchDate;
+    // 保存が重なった時に古い内容が後から上書きしてしまわないよう、必ず送った順番で保存する
+    const run = dispatchSaveChainRef.current.catch(() => {}).then(() => storage.set(`dispatch:${date}`, JSON.stringify(payload), true));
+    dispatchSaveChainRef.current = run;
+    await run;
   }
 
   function setAssignment(siteId, truckId) {
@@ -892,11 +898,14 @@ function GenbaTracker() {
     Object.values(assignments).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
 
     // 地域ごとにまとめる（並び順は現場が出てきた順＝なるべく近い地域が固まっている前提）
+    // 住所不明で地域が分からない現場（未分類）は、誤った割り振りを避けるため自動割り振りの対象外にする
     const areaOrder = [];
     const areas = {};
+    let skippedUnknown = 0;
     daySites.forEach((s) => {
       if (assignments[s.id]) return; // すでに割り振り済みはそのまま
       const area = s.area || extractArea(s.address) || '未分類';
+      if (area === '未分類') { skippedUnknown++; return; } // 場所が分からないので対象外
       if (!areas[area]) { areas[area] = []; areaOrder.push(area); }
       areas[area].push(s);
     });
@@ -919,7 +928,9 @@ function GenbaTracker() {
 
     setAssignments(next);
     saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
-    showToast('地域のまとまりを優先して割り振りました（手動でも調整できます）');
+    showToast(skippedUnknown > 0
+      ? `地域のまとまりを優先して割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
+      : '地域のまとまりを優先して割り振りました（手動でも調整できます）');
   }
 
   function saveCollectNote(value) {
@@ -1322,6 +1333,33 @@ function GenbaTracker() {
     if (!window.confirm(`「${name}」をリストから削除しますか？（過去のデータは残ります）`)) return;
     const next = kumitenList.filter((_, i) => i !== index);
     await saveKumitenList(next);
+  }
+
+  // 工務店名を正式名称などに変更。過去にその工務店名で登録された現場も一括で新しい名前に更新する
+  async function renameKumiten(index) {
+    const oldName = kumitenList[index];
+    const input = window.prompt(`「${oldName}」の新しい名前を入力してください（正式名称など）`, oldName);
+    if (!input || !input.trim() || input.trim() === oldName) return;
+    const newName = input.trim();
+    if (kumitenList.includes(newName)) { showToast('すでに同じ名前があります'); return; }
+    const affected = [...schedRecords, ...mgmtRecords].filter((r) => r.kumiten === oldName);
+    if (affected.length > 0 && !window.confirm(`「${oldName}」で登録済みの現場が${affected.length}件あります。すべて「${newName}」に変更しますか？`)) return;
+    setLoading(true);
+    try {
+      for (const r of schedRecords.filter((r) => r.kumiten === oldName)) {
+        await storage.set(`sched:${r.id}`, JSON.stringify({ ...r, kumiten: newName }));
+      }
+      for (const r of mgmtRecords.filter((r) => r.kumiten === oldName)) {
+        await storage.set(`mgmt:${r.id}`, JSON.stringify({ ...r, kumiten: newName }));
+      }
+      const next = kumitenList.map((k, i) => (i === index ? newName : k));
+      await saveKumitenList(next);
+      showToast(`「${oldName}」を「${newName}」に変更しました（${affected.length}件更新）`);
+    } catch (e) {
+      console.error(e);
+      showToast('変更に失敗しました');
+    }
+    await load();
   }
 
   const activeList = tab === 'sched' ? schedRecords : mgmtRecords;
@@ -2116,6 +2154,7 @@ function GenbaTracker() {
                 <div style={styles.kumitenEditBtns}>
                   <button style={styles.kumitenArrowBtn} onClick={() => moveKumiten(i, -1)} disabled={i === 0}>▲</button>
                   <button style={styles.kumitenArrowBtn} onClick={() => moveKumiten(i, 1)} disabled={i === kumitenList.length - 1}>▼</button>
+                  <button style={styles.kumitenDeleteBtn} onClick={() => renameKumiten(i)}>改名</button>
                   <button style={styles.kumitenDeleteBtn} onClick={() => removeKumiten(i)}>削除</button>
                 </div>
               </div>
