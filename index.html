@@ -335,6 +335,17 @@ function mapUrl(address) {
 }
 
 // 住所文字列から「市」「区」レベルの地域名を自動抽出する（配車のグループ分け用）
+// 工務店ごとのガラ袋の基本方針（オープンハウス系・一般・その他は対象外）
+const GARA_DEFAULT_EXCLUDE = ['OHA', 'OHD', '一般', 'その他'];
+const GARA_RECYCLE_OK = ['成也', 'ひかり'];
+
+// 新しく実装した機能を、次に開いた時にTODOへ自動で追加して動作確認を促す（機能を追加するたびにここへ足していく）
+const FEATURE_CHECKLIST = [
+  { key: 'feature-todo-tab', text: 'TODOタブ：新機能の動作確認をしてね' },
+  { key: 'feature-gara-default', text: '工務店選択でガラ袋のデフォルトが自動で切り替わるか確認してね' },
+  { key: 'feature-mgmt-tab', text: '管理表タブ：まだ動作確認していません。一通り触ってみてね' },
+];
+
 function extractArea(address) {
   if (!address) return '未分類';
   let s = address.trim();
@@ -639,6 +650,7 @@ function GenbaTracker() {
   const [assignments, setAssignments] = useState({}); // siteId -> truck id string ('R1','KEI','D1'...) or '' for unassigned
   const [extraSiteIds, setExtraSiteIds] = useState([]); // 他の日の予定から追加した現場ID
   const [showAddExtraSite, setShowAddExtraSite] = useState(false);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [extraSiteSearch, setExtraSiteSearch] = useState('');
   const [collectNote, setCollectNote] = useState('');
   const [dumpNote, setDumpNote] = useState('');
@@ -662,6 +674,11 @@ function GenbaTracker() {
   const [ganttKumitenFilter, setGanttKumitenFilter] = useState('全て');
   const [ganttMonthOffset, setGanttMonthOffset] = useState(-1); // 表示開始位置（今月からのズレ）
   const [kumitenList, setKumitenList] = useState(DEFAULT_KUMITEN);
+  const [todos, setTodos] = useState([]);
+  const [todoText, setTodoText] = useState('');
+  const [todoSiteName, setTodoSiteName] = useState('');
+  const [todoDate, setTodoDate] = useState('');
+  const [todoQuickTags, setTodoQuickTags] = useState([]);
   const [showKumitenEditor, setShowKumitenEditor] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkImportText, setBulkImportText] = useState('');
@@ -801,9 +818,146 @@ function GenbaTracker() {
       mItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setMgmtRecords(mItems);
 
+      const tList = await storage.list('todo:', true);
+      const tItems = (await Promise.all(
+        ((tList && tList.keys) || []).map(async (k) => {
+          try {
+            const r = await storage.get(k, true);
+            return r && r.value ? JSON.parse(r.value) : null;
+          } catch (e) { return null; }
+        })
+      )).filter(Boolean);
+      tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      setTodos(tItems);
+      await syncAutoTodos(sItems, tItems);
+
       setCachedRecords(sItems, mItems, list);
     } catch (e) { console.error(e); }
     setLoading(false);
+  }
+
+  async function addTodo() {
+    const text = todoText.trim();
+    if (!text) return;
+    const record = {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      text,
+      siteName: todoSiteName.trim() || '',
+      date: todoDate || '',
+      staff: getDeviceStaff(),
+      createdAt: new Date().toISOString(),
+    };
+    await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
+    setTodos((prev) => [record, ...prev]);
+    setTodoText(''); setTodoSiteName(''); setTodoDate('');
+  }
+
+  const QUICK_TODO_TAGS = ['工程表画像添付', '監督連絡', '社長連絡'];
+
+  async function addTodo(overrides) {
+    const text = (overrides && overrides.text) || todoText.trim();
+    if (!text) return;
+    const record = {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      text,
+      siteName: (overrides && overrides.siteName) || todoSiteName.trim() || '',
+      siteId: (overrides && overrides.siteId) || '',
+      date: (overrides && overrides.date) || todoDate || '',
+      staff: (overrides && overrides.auto) ? '自動検出' : getDeviceStaff(),
+      auto: !!(overrides && overrides.auto),
+      createdAt: new Date().toISOString(),
+    };
+    await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
+    setTodos((prev) => [record, ...prev]);
+    if (!overrides) { setTodoText(''); setTodoSiteName(''); setTodoDate(''); }
+    return record;
+  }
+
+  // 座標だけが入っていて、ちゃんとした住所になっていないものを検出（例：35.331,139.445 など）
+  function isCoordOnlyAddress(address) {
+    const a = (address || '').trim();
+    if (!a) return false;
+    return /^-?\d{1,3}\.\d+\s*[,、]\s*-?\d{1,3}\.\d+$/.test(a);
+  }
+
+  // 住所が未入力の現場を自動でTODOに追加する（すでに追加済みのものは重複させない／埋まったものは自動で消す）
+  async function syncAutoTodos(sItems, tItems) {
+    const already = new Set(tItems.filter((t) => t.auto && t.checkType === 'address' && t.siteId).map((t) => t.siteId));
+    const missing = sItems.filter((r) => (!((r.address || '').trim()) || isCoordOnlyAddress(r.address)) && !already.has(r.id));
+    for (const r of missing) {
+      const label = isCoordOnlyAddress(r.address) ? `住所が座標のみ：${r.name}` : `住所が未入力：${r.name}`;
+      await addTodo({ text: label, siteName: r.name, siteId: r.id, date: r.date, auto: true, checkType: 'address' });
+    }
+    // 住所がちゃんと埋まった・現場自体が消えた自動TODOは片付ける
+    const byId = {};
+    sItems.forEach((r) => { byId[r.id] = r; });
+    const resolved = tItems.filter((t) => t.auto && t.checkType === 'address' && t.siteId && (!byId[t.siteId] || ((byId[t.siteId].address || '').trim() && !isCoordOnlyAddress(byId[t.siteId].address))));
+    for (const t of resolved) {
+      await completeTodo(t.id);
+    }
+
+    // 監督名・電話番号・ハウスNoの抜け（今日以降の現場だけ対象。後回しにされがちなので拾う）
+    const already2 = new Set(tItems.filter((t) => t.auto && t.checkType === 'info' && t.siteId).map((t) => t.siteId));
+    const today = todayStr();
+    const infoMissing = sItems.filter((r) => r.date >= today && !already2.has(r.id) && !byId2Skip(r));
+    function byId2Skip(r) {
+      return (r.supervisorName || '').trim() && (r.supervisorPhone || '').trim() && (r.houseNumber || '').trim();
+    }
+    for (const r of infoMissing) {
+      const gaps = [];
+      if (!(r.supervisorName || '').trim()) gaps.push('監督名');
+      if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
+      if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
+      if (gaps.length === 0) continue;
+      await addTodo({ text: `${gaps.join('・')}が未入力：${r.name}`, siteName: r.name, siteId: r.id, date: r.date, auto: true, checkType: 'info' });
+    }
+    const resolvedInfo = tItems.filter((t) => t.auto && t.checkType === 'info' && t.siteId && byId[t.siteId] && byId2Skip(byId[t.siteId]));
+    for (const t of resolvedInfo) {
+      await completeTodo(t.id);
+    }
+
+    // 新しく追加された機能の動作確認タスク（機能ごとに1回だけ）
+    const existingFeatureKeys = new Set(tItems.filter((t) => t.checkType === 'feature').map((t) => t.featureKey));
+    for (const f of FEATURE_CHECKLIST) {
+      if (!existingFeatureKeys.has(f.key)) {
+        await addTodo({ text: f.text, auto: true, checkType: 'feature', featureKey: f.key });
+      }
+    }
+  }
+
+  async function completeTodo(id) {
+    setTodos((prev) => prev.filter((t) => t.id !== id));
+    try { await storage.delete(`todo:${id}`, true); } catch (e) { console.error(e); }
+  }
+
+  function toggleQuickTag(tag) {
+    setTodoQuickTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  }
+
+  async function addQuickTodos() {
+    const tags = todoQuickTags.length > 0 ? todoQuickTags : (todoText.trim() ? [todoText.trim()] : []);
+    for (const tag of tags) {
+      await addTodo({ text: tag, siteName: todoSiteName.trim(), date: todoDate });
+    }
+    setTodoQuickTags([]); setTodoText(''); setTodoSiteName(''); setTodoDate('');
+  }
+
+  // 対応中マークの切り替え（他の人が同じタスクに重複して手を付けないように）
+  async function toggleInProgress(t) {
+    const next = t.inProgress ? { ...t, inProgress: false, inProgressBy: '' } : { ...t, inProgress: true, inProgressBy: getDeviceStaff() || '担当者未設定' };
+    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+  }
+
+  // TODOから該当の現場を開く（予定表タブに切り替えて編集画面を出す）
+  function openTodoSite(t) {
+    if (!t.siteName && !t.siteId) return;
+    const match = (t.siteId && schedRecords.find((r) => r.id === t.siteId))
+      || schedRecords.find((r) => r.name === t.siteName && (!t.date || r.date === t.date))
+      || schedRecords.find((r) => r.name === t.siteName);
+    setTab('sched');
+    setSearch(t.siteName || '');
+    if (match) openEdit(match);
   }
 
   async function loadDispatch(date) {
@@ -1043,6 +1197,17 @@ function autoAssignTrucks() {
     setEditingId(null);
     setPendingPhotos([]);
     setShowForm(true);
+  }
+
+  // 同じ現場名・同じ日付の重複登録がないかチェック（一括入力と手入力が重なった時用）
+  function findDuplicateGroups() {
+    const map = {};
+    schedRecords.forEach((r) => {
+      const key = `${r.date}__${normalizeSiteName(r.name)}`;
+      if (!map[key]) map[key] = [];
+      map[key].push(r);
+    });
+    return Object.values(map).filter((g) => g.length > 1);
   }
 
   function openEdit(r) {
@@ -1494,7 +1659,7 @@ function autoAssignTrucks() {
           <div style={styles.brand}>ETS TRACK</div>
           <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
           <div style={styles.brandSub}>
-            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
+            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'todo' ? 'TODO・伝達（新規入力スタッフ用）' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
@@ -1513,11 +1678,20 @@ function autoAssignTrucks() {
         <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
+        <button onClick={() => setTab('todo')} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
+          TODO{todos.length > 0 ? `(${todos.length})` : ''}
+        </button>
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
         )}
         <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">🔒</button>
       </div>
+
+      {findDuplicateGroups().length > 0 && (
+        <div style={styles.dupWarningBar} onClick={() => setShowDuplicateModal(true)}>
+          ⚠️ 同じ現場・同じ日付の重複登録の可能性が{findDuplicateGroups().length}件あります（タップで確認）
+        </div>
+      )}
 
       {tab !== 'dispatch' && (
         <>
@@ -1779,6 +1953,72 @@ function autoAssignTrucks() {
         );
       })()}
 
+      {tab === 'todo' && (
+        <div style={{ padding: '0 16px' }}>
+          <div style={styles.todoAddBox}>
+            <textarea
+              style={{ ...styles.input, minHeight: 54, resize: 'vertical' }}
+              placeholder="例：9/25 ○○現場の住所が未入力／PDFまだ、など"
+              value={todoText}
+              onChange={(e) => setTodoText(e.target.value)}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                placeholder="関連する現場名（任意）"
+                list="siteNameOptions"
+                value={todoSiteName}
+                onChange={(e) => setTodoSiteName(e.target.value)}
+              />
+              <input
+                type="date"
+                style={{ ...styles.input, width: 140 }}
+                value={todoDate}
+                onChange={(e) => setTodoDate(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {QUICK_TODO_TAGS.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => toggleQuickTag(tag)}
+                  style={{ ...styles.quickTagBtn, ...(todoQuickTags.includes(tag) ? styles.quickTagBtnActive : {}) }}
+                >
+                  {todoQuickTags.includes(tag) ? '✓ ' : ''}{tag}
+                </button>
+              ))}
+            </div>
+            <button style={{ ...styles.addBtn, marginTop: 8 }} onClick={addQuickTodos}>
+              ＋ 追加{todoQuickTags.length > 0 ? `（${todoQuickTags.length}件）` : ''}
+            </button>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            {todos.length === 0 && <div style={{ color: '#8A8A83', fontSize: 13, padding: '20px 4px' }}>今はTODOはありません</div>}
+            {todos.map((t) => (
+              <div key={t.id} style={styles.todoRow}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                    {t.checkType === 'feature' ? <span style={styles.featureTag}>動作確認</span> : t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
+                  </div>
+                  {(t.siteName || t.date) && (
+                    <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
+                      📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
+                    </div>
+                  )}
+                  {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
+                  <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>{t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}</div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                  <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
+                  <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {tab === 'invoice' && (
         <div>
           {!ryubeiUnlocked ? (
@@ -1992,7 +2232,15 @@ function autoAssignTrucks() {
             <label style={styles.label}>工務店</label>
             <div style={styles.statusGrid}>
               {kumitenList.map((k) => (
-                <button key={k} onClick={() => setForm({ ...form, kumiten: k })} style={{ ...styles.statusOption, borderColor: form.kumiten === k ? '#2A9D8F' : '#E5E3DC', background: form.kumiten === k ? '#2A9D8F1A' : '#fff' }}>{k}</button>
+                <button
+                  key={k}
+                  onClick={() => setForm((f) => ({
+                    ...f,
+                    kumiten: k,
+                    garaRequired: editingId ? f.garaRequired : !GARA_DEFAULT_EXCLUDE.includes(k),
+                  }))}
+                  style={{ ...styles.statusOption, borderColor: form.kumiten === k ? '#2A9D8F' : '#E5E3DC', background: form.kumiten === k ? '#2A9D8F1A' : '#fff' }}
+                >{k}</button>
               ))}
               <button type="button" onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
             </div>
@@ -2042,6 +2290,9 @@ function autoAssignTrucks() {
                     >
                       {form.garaRequired ? '✅ 必須' : '不要（タップで必須に）'}
                     </button>
+                    {GARA_RECYCLE_OK.includes(form.kumiten) && (
+                      <div style={styles.recycleHint}>♻️ {form.kumiten}は再生ガラ袋でもOK</div>
+                    )}
                   </div>
                   <div style={{ width: 92 }}>
                     <label style={styles.label}>想定回数</label>
@@ -2216,6 +2467,36 @@ function autoAssignTrucks() {
         </div>
       )}
 
+      {showDuplicateModal && (
+        <div style={styles.overlay} onClick={() => setShowDuplicateModal(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>重複登録の可能性がある現場</div>
+              <button style={styles.closeBtn} onClick={() => setShowDuplicateModal(false)}>✕</button>
+            </div>
+            <div style={{ marginTop: 4, maxHeight: 420, overflowY: 'auto' }}>
+              {findDuplicateGroups().length === 0 && (
+                <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>今は重複はなさそうです</div>
+              )}
+              {findDuplicateGroups().map((group, gi) => (
+                <div key={gi} style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #EFEDE6' }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>{group[0].date}／{group[0].name}（{group.length}件）</div>
+                  {group.map((r) => (
+                    <div key={r.id} style={styles.extraPickRow}>
+                      <div>
+                        <div style={{ fontSize: 12.5 }}>{r.kumiten || '工務店未設定'}／担当：{r.staff || '不明'}</div>
+                        <div style={{ fontSize: 11.5, color: '#8A8A83' }}>監督：{r.supervisorName || '未入力'}／住所：{r.address || '未入力'}</div>
+                      </div>
+                      <button style={styles.pickTempBtn} onClick={() => { setShowDuplicateModal(false); openEdit(r); }}>開く</button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddExtraSite && (
         <div style={styles.overlay} onClick={() => setShowAddExtraSite(false)}>
           <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
@@ -2352,6 +2633,17 @@ const styles = {
   lockIconBtn: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, width: 40, fontSize: 14, cursor: 'pointer' },
   staffChip: { background: 'none', border: 'none', color: '#457B9D', fontSize: 11.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
   pendingBadge: { fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '2px 7px', fontWeight: 700 },
+  dupWarningBar: { background: '#FDECEA', color: '#B3261E', fontSize: 13, fontWeight: 700, padding: '10px 14px', margin: '0 16px 8px', borderRadius: 8, cursor: 'pointer' },
+  todoAddBox: { background: '#F7F6F1', borderRadius: 10, padding: 12, marginTop: 10 },
+  todoRow: { display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fff', border: '1px solid #EFEDE6', borderRadius: 10, padding: 12, marginBottom: 10 },
+  todoMeta: { fontSize: 12, color: '#2A9D8F', marginTop: 4, cursor: 'pointer', fontWeight: 600 },
+  todoDoneBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
+  autoTag: { fontSize: 10, background: '#FFE8A3', color: '#8A6D00', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
+  featureTag: { fontSize: 10, background: '#D6E9FF', color: '#0B5FB3', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
+  quickTagBtn: { fontSize: 12.5, padding: '6px 12px', borderRadius: 16, border: '1px solid #D8D6CC', background: '#fff', cursor: 'pointer' },
+  quickTagBtnActive: { background: '#2A9D8F', color: '#fff', borderColor: '#2A9D8F' },
+  inProgressTag: { fontSize: 11.5, color: '#B3610E', fontWeight: 700, marginTop: 4 },
+  inProgressBtn: { fontSize: 11, padding: '5px 10px', borderRadius: 8, border: '1px solid #D8D6CC', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   searchBox: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 12, padding: 12, marginBottom: 10 },
   searchInput: { width: '100%', border: '1px solid #E5E3DC', borderRadius: 8, padding: '9px 11px', fontSize: 14, marginBottom: 8, background: '#FBFAF7' },
   searchRow2: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 },
@@ -2464,6 +2756,7 @@ const styles = {
   lineItemTotal: { textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#232320', marginTop: 6 },
   autofillHint: { fontSize: 11, color: '#8A8A83', marginTop: 4 },
   garaToggle: { width: '100%', textAlign: 'left', border: '2px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, background: '#fff', color: '#8A8A83', cursor: 'pointer' },
+  recycleHint: { fontSize: 11, color: '#2A9D8F', fontWeight: 700, marginTop: 4 },
   garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
   garaBadge: { fontSize: 11.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
   visitBadge: { fontSize: 11, color: '#6B6B63', fontWeight: 700, background: '#F0EFE9', borderRadius: 6, padding: '2px 6px' },
