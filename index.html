@@ -33,7 +33,21 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyQEs0L_0WLHnQNSak-OlZl
 const GOOGLE_MAPS_API_KEY = 'AIzaSyBqEAhpt-XVjaoKAiKxKkmfdLJ7IzKKi0g';
 // ▲▲▲ ここまで ▲▲▲
 
+// ---- 現場名の表記ゆれ対策 ----
 const DEVICE_STAFF_KEY = 'genbaTracker_staffName';
+function normalizeSiteName(s) {
+  if (!s) return '';
+  let str = String(s);
+  // 全角英数字 → 半角
+  str = str.replace(/[Ａ-Ｚａ-ｚ０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  // 丸数字 → 数字
+  const circled = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+  str = str.replace(/[①-⑳]/g, (ch) => String(circled.indexOf(ch) + 1));
+  // 全角スペース・半角スペースを除去
+  str = str.replace(/[\s　]/g, '');
+  return str;
+}
+
 function getDeviceStaff() {
   try { return localStorage.getItem(DEVICE_STAFF_KEY) || ''; } catch (e) { return ''; }
 }
@@ -237,7 +251,7 @@ const storage = {
 const RYUBEI_PASSWORD = '8989';
 
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
-const TRUCK_COLORS = ['#E63946', '#457B9D', '#2A9D8F', '#FFB703', '#9B5DE5'];
+const TRUCK_COLORS = ['#E63946', '#457B9D', '#2A9D8F', '#FFB703', '#9B5DE5', '#F4A261', '#606C38', '#FF6F91', '#3A86FF', '#8D5524'];
 
 const SCHED_STATUSES = [
   { key: '新規', color: '#E63946' },
@@ -377,6 +391,15 @@ async function geocodeAddress(address) {
       }
     });
   });
+}
+
+// 地図表示用：住所末尾の「2棟」「①」などの表記を取り除き、位置特定の精度を上げる
+function geocodeQuery(address) {
+  if (!address) return address;
+  return address
+    .replace(/\s*[0-9０-９]*\s*(号棟|棟|号地|号室)\s*$/g, '')
+    .replace(/[①-⑳]\s*$/g, '')
+    .trim();
 }
 
 function markerIcon(color) {
@@ -712,7 +735,7 @@ function GenbaTracker() {
       let placed = 0;
       for (const s of daySites) {
         if (!s.address) continue;
-        const loc = await geocodeAddress(s.address);
+        const loc = await geocodeAddress(geocodeQuery(s.address));
         if (cancelled) return;
         if (!loc) continue;
         const truckId = assignments[s.id];
@@ -936,6 +959,24 @@ function GenbaTracker() {
   }
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2500); }
+
+  // 似た現場名（表記ゆれ違い）が既にあれば返す
+  function findSimilarSiteName(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return null;
+    const norm = normalizeSiteName(trimmed);
+    const allNames = new Set([...schedRecords.map((r) => r.name), ...mgmtRecords.map((r) => r.name)]);
+    for (const existing of allNames) {
+      if (existing === trimmed) return null; // 完全一致は問題なし
+      if (normalizeSiteName(existing) === norm) return existing;
+    }
+    return null;
+  }
+
+  function siteNameOptions() {
+    const set = new Set([...schedRecords.map((r) => r.name), ...mgmtRecords.map((r) => r.name)]);
+    return Array.from(set).filter(Boolean).sort();
+  }
 
   function fillFromExistingSite(name) {
     if (editingId) return; // 既存の編集中は上書きしない
@@ -1872,10 +1913,25 @@ function GenbaTracker() {
             <input
               style={styles.input}
               value={form.name}
+              list="siteNameOptions"
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              onBlur={(e) => tab === 'sched' && fillFromExistingSite(e.target.value)}
+              onBlur={(e) => {
+                const val = e.target.value;
+                if (!editingId) {
+                  const similar = findSimilarSiteName(val);
+                  if (similar && window.confirm(`「${similar}」という似た現場名が既にあります。表記を合わせますか？`)) {
+                    setForm((f) => ({ ...f, name: similar }));
+                    if (tab === 'sched') fillFromExistingSite(similar);
+                    return;
+                  }
+                }
+                if (tab === 'sched') fillFromExistingSite(val);
+              }}
               placeholder="例：南林間604①"
             />
+            <datalist id="siteNameOptions">
+              {siteNameOptions().map((n) => <option key={n} value={n} />)}
+            </datalist>
             {tab === 'sched' && !editingId && <div style={styles.autofillHint}>同じ現場名を入力すると、監督名・電話番号・ガラ必須などが自動で入ります</div>}
 
             <label style={styles.label}>工務店</label>
