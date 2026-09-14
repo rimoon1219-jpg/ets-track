@@ -890,24 +890,40 @@ function GenbaTracker() {
     saveDispatch(nextAssign, regularTruckCount, includeKei, dumpOnlyCount, next);
   }
 
-  function autoAssignTrucks() {
+  // 曜日ごとに「まとめて回りたいエリア」の考え方（洋子さんの配車ルールに準拠）
+// 月・木＝川崎～横浜北部～東京方面／火・金＝相模原～県央～西湘方面／水・土＝横浜南部～横須賀～鎌倉～藤沢南方面
+// 寒川・茅ヶ崎・藤沢北側・平塚近場などの境界エリアはどこにも固定せず、バランスを見て割り振る
+const ZONE_RULES = [
+  { days: [1, 4], name: '月木エリア（川崎・横浜北部・東京方面）', keywords: ['川崎', '青葉区', '横浜市緑区', '港北区', '神奈川区', '鶴見区', '旭区', '東京'] },
+  { days: [2, 5], name: '火金エリア（相模原・県央・西湘方面）', keywords: ['相模原', '町田', '大和', '座間', '海老名', '厚木', '秦野', '足柄', '小田原', '大磯', '八王子', '平塚'] },
+  { days: [3, 6], name: '水土エリア（横浜南部・横須賀・鎌倉・藤沢方面）', keywords: ['磯子区', '横浜市南区', '西区', '中区', '保土ヶ谷区', '横須賀', '葉山', '逗子', '鎌倉', '藤沢'] },
+];
+function zoneRuleForDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return ZONE_RULES.find((r) => r.days.includes(d.getDay())) || null;
+}
+
+function autoAssignTrucks() {
     const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
     if (opts.length === 0) { showToast('トラックがありません'); return; }
     const counts = {};
     opts.forEach((o) => { counts[o.id] = 0; });
     Object.values(assignments).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
 
-    // 地域ごとにまとめる（並び順は現場が出てきた順＝なるべく近い地域が固まっている前提）
+    // 地域ごとにまとめる（曜日のエリアルールに合うものは、細かい地域名が違っても同じゾーンとしてまとめる）
     // 住所不明で地域が分からない現場（未分類）は、誤った割り振りを避けるため自動割り振りの対象外にする
+    const zoneRule = zoneRuleForDate(dispatchDate);
     const areaOrder = [];
     const areas = {};
     let skippedUnknown = 0;
     daySites.forEach((s) => {
       if (assignments[s.id]) return; // すでに割り振り済みはそのまま
-      const area = s.area || extractArea(s.address) || '未分類';
-      if (area === '未分類') { skippedUnknown++; return; } // 場所が分からないので対象外
-      if (!areas[area]) { areas[area] = []; areaOrder.push(area); }
-      areas[area].push(s);
+      const rawArea = s.area || extractArea(s.address) || '未分類';
+      if (rawArea === '未分類') { skippedUnknown++; return; } // 場所が分からないので対象外
+      const zoneMatch = zoneRule && zoneRule.keywords.find((kw) => rawArea.includes(kw));
+      const groupKey = zoneMatch ? zoneRule.name : rawArea;
+      if (!areas[groupKey]) { areas[groupKey] = []; areaOrder.push(groupKey); }
+      areas[groupKey].push(s);
     });
 
     const unassignedTotal = areaOrder.reduce((sum, a) => sum + areas[a].length, 0);
@@ -928,9 +944,10 @@ function GenbaTracker() {
 
     setAssignments(next);
     saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
+    const zoneLabel = zoneRule ? `${zoneRule.name}の考え方に沿って` : '地域のまとまりを優先して';
     showToast(skippedUnknown > 0
-      ? `地域のまとまりを優先して割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
-      : '地域のまとまりを優先して割り振りました（手動でも調整できます）');
+      ? `${zoneLabel}割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
+      : `${zoneLabel}割り振りました（手動でも調整できます）`);
   }
 
   function saveCollectNote(value) {
