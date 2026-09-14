@@ -704,11 +704,11 @@ function GenbaTracker() {
   }
 
   const emptySched = () => ({
-    name: '', kumiten: 'OHA', address: '', area: '', status: '新規', staff: deviceStaff, note: '', date: todayStr(),
+    name: '', kumiten: '', address: '', area: '', status: '新規', staff: deviceStaff, note: '', date: todayStr(),
     time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, expectedVisits: '12', photos: [],
   });
   const emptyMgmt = () => ({
-    name: '', kumiten: 'OHA', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [],
+    name: '', kumiten: '', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [],
   });
   const [form, setForm] = useState(emptySched());
   const [pendingPhotos, setPendingPhotos] = useState([]);
@@ -901,10 +901,11 @@ function GenbaTracker() {
     const today = todayStr();
     const infoMissing = sItems.filter((r) => r.date >= today && !already2.has(r.id) && !byId2Skip(r));
     function byId2Skip(r) {
-      return (r.supervisorName || '').trim() && (r.supervisorPhone || '').trim() && (r.houseNumber || '').trim();
+      return (r.kumiten || '').trim() && (r.supervisorName || '').trim() && (r.supervisorPhone || '').trim() && (r.houseNumber || '').trim();
     }
     for (const r of infoMissing) {
       const gaps = [];
+      if (!(r.kumiten || '').trim()) gaps.push('工務店');
       if (!(r.supervisorName || '').trim()) gaps.push('監督名');
       if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
       if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
