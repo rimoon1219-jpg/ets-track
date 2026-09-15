@@ -920,6 +920,7 @@ function GenbaTracker() {
         if (r.date >= today) {
           if (!(r.kumiten || '').trim()) gaps.push('工務店');
           if (!(r.supervisorName || '').trim()) gaps.push('監督名');
+          if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
           if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
         }
         return { r, gaps };
@@ -2104,7 +2105,7 @@ function autoAssignTrucks() {
           {infoGapSites().length > 0 && (
             <div style={styles.gapSummaryCard}>
               <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
-                <span>📋 情報不足の現場（工務店・監督名・ハウスNo・住所）：{infoGapSites().length}件</span>
+                <span>📋 情報不足の現場（工務店・監督名・電話番号・ハウスNo・住所）：{infoGapSites().length}件</span>
                 <span>{showInfoGaps ? '▲閉じる' : '▼見る'}</span>
               </div>
               {showInfoGaps && (
