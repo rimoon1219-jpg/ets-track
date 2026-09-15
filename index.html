@@ -907,6 +907,13 @@ function GenbaTracker() {
     const legacyGapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
     await runWithLimit(legacyGapTodos, 6, async (t) => { await completeTodo(t.id); });
 
+    // 完了済み（やった済み）の動作確認は、二度と作り直さない
+    let dismissedFeatures = [];
+    try {
+      const r = await storage.get('meta:dismissedFeatures', true);
+      if (r && r.value) dismissedFeatures = JSON.parse(r.value);
+    } catch (e) { dismissedFeatures = []; }
+
     // 機能の動作確認タスクは、テキストが一致するものをまとめて「1つだけ残して重複は削除」にする
     // （過去にcheckType/featureKeyが保存されずに何度も複製されてしまった分の後片付けも兼ねる）
     const featureTexts = new Set(FEATURE_CHECKLIST.map((f) => f.text));
@@ -922,8 +929,9 @@ function GenbaTracker() {
       });
     await runWithLimit(featureDupes, 6, async (t) => { await completeTodo(t.id); });
 
-    // まだ一度も追加されていない機能があれば追加する。既存の生き残りがcheckType未設定の古いデータなら補完する
+    // まだ一度も追加されておらず、完了済みでもない機能があれば追加する。既存の生き残りがcheckType未設定の古いデータなら補完する
     for (const f of FEATURE_CHECKLIST) {
+      if (dismissedFeatures.includes(f.key)) continue;
       if (!seenFeatureText.has(f.text)) {
         await addTodo({ text: f.text, auto: true, checkType: 'feature', featureKey: f.key });
       } else {
@@ -996,8 +1004,27 @@ function GenbaTracker() {
   }
 
   async function completeTodo(id) {
+    const target = todos.find((t) => t.id === id);
     setTodos((prev) => prev.filter((t) => t.id !== id));
     try { await storage.delete(`todo:${id}`, true); } catch (e) { console.error(e); }
+    // 動作確認タスクは、完了したことを覚えておかないと次の読み込みでまた作られてしまうので、完了済みリストに記録する
+    if (target && target.checkType === 'feature' && target.featureKey) {
+      await markFeatureDismissed(target.featureKey);
+    }
+  }
+
+  async function markFeatureDismissed(featureKey) {
+    try {
+      let list = [];
+      try {
+        const r = await storage.get('meta:dismissedFeatures', true);
+        if (r && r.value) list = JSON.parse(r.value);
+      } catch (e) { list = []; }
+      if (!list.includes(featureKey)) {
+        list.push(featureKey);
+        await storage.set('meta:dismissedFeatures', JSON.stringify(list), true);
+      }
+    } catch (e) { console.error(e); }
   }
 
   function toggleQuickTag(tag) {
