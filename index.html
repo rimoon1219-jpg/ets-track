@@ -212,6 +212,29 @@ setInterval(retryPhotoQueue, 30000);
 window.addEventListener('online', retryPhotoQueue);
 setTimeout(retryPhotoQueue, 2500);
 
+// 同時アクセスしすぎてサーバー側が詰まらないよう、少しずつ順番に処理する（取得にも後片付けにも使う汎用版）
+async function runWithLimit(items, limit, fn) {
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      try { await fn(items[idx], idx); } catch (e) { /* ここでのエラーは無視して次へ */ }
+    }
+  }
+  const workers = [];
+  for (let w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
+  await Promise.all(workers);
+}
+
+async function fetchWithLimit(keys, limit) {
+  const results = [];
+  await runWithLimit(keys, limit, async (k, idx) => {
+    const r = await storage.get(k, true);
+    results[idx] = r && r.value ? JSON.parse(r.value) : null;
+  });
+  return results.filter(Boolean);
+}
+
 const storage = {
   async get(key) {
     const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(key)}`);
@@ -659,6 +682,8 @@ function GenbaTracker() {
   const [trashItems, setTrashItems] = useState([]);
   const [renameHistory, setRenameHistory] = useState([]);
   const [showRenameHistory, setShowRenameHistory] = useState(false);
+  const [showInfoGaps, setShowInfoGaps] = useState(false);
+  const [showPhoneGaps, setShowPhoneGaps] = useState(false);
   const [extraSiteSearch, setExtraSiteSearch] = useState('');
   const [collectNote, setCollectNote] = useState('');
   const [dumpNote, setDumpNote] = useState('');
@@ -804,38 +829,17 @@ function GenbaTracker() {
       } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
 
       const sList = await storage.list('sched:', true);
-      const sItems = (await Promise.all(
-        ((sList && sList.keys) || []).map(async (k) => {
-          try {
-            const r = await storage.get(k, true);
-            return r && r.value ? JSON.parse(r.value) : null;
-          } catch (e) { return null; }
-        })
-      )).filter(Boolean);
+      const sItems = await fetchWithLimit((sList && sList.keys) || [], 8);
       sItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setSchedRecords(sItems);
 
       const mList = await storage.list('mgmt:', true);
-      const mItems = (await Promise.all(
-        ((mList && mList.keys) || []).map(async (k) => {
-          try {
-            const r = await storage.get(k, true);
-            return r && r.value ? JSON.parse(r.value) : null;
-          } catch (e) { return null; }
-        })
-      )).filter(Boolean);
+      const mItems = await fetchWithLimit((mList && mList.keys) || [], 8);
       mItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setMgmtRecords(mItems);
 
       const tList = await storage.list('todo:', true);
-      const tItems = (await Promise.all(
-        ((tList && tList.keys) || []).map(async (k) => {
-          try {
-            const r = await storage.get(k, true);
-            return r && r.value ? JSON.parse(r.value) : null;
-          } catch (e) { return null; }
-        })
-      )).filter(Boolean);
+      const tItems = await fetchWithLimit((tList && tList.keys) || [], 8);
       tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       setTodos(tItems);
       syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
@@ -889,64 +893,11 @@ function GenbaTracker() {
     return /^-?\d{1,3}\.\d+\s*[,、]\s*-?\d{1,3}\.\d+$/.test(a);
   }
 
-  // 現場ごとの不足項目を自動でTODOに反映する（1現場=1件のTODOに統一。既にあれば内容だけ更新、埋まったら自動で消える）
-  // 過去にバグで重複が積み重なっていた分も、ここで一緒に片付ける
+  // 機能の動作確認タスクを追加しつつ、過去にバグで溜まった「現場ごとの不足項目」TODO（自動生成・重複含む）を一括で片付ける。
+  // 不足項目チェックは、以後はTODOに保存せず、その場で計算して表示する方式に変更（詳しくはinfoGapSites参照）
   async function syncAutoTodos(sItems, tItems) {
-    const today = todayStr();
-    const byId = {};
-    sItems.forEach((r) => { byId[r.id] = r; });
-
-    // 現場につき1件になるよう、siteIdごとに最新（createdAtが新しい）ものだけ残し、残りは重複として削除する
-    const gapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
-    const bySite = {};
-    const dupes = [];
-    gapTodos.forEach((t) => {
-      const cur = bySite[t.siteId];
-      if (!cur || (t.createdAt || '') > (cur.createdAt || '')) {
-        if (cur) dupes.push(cur);
-        bySite[t.siteId] = t;
-      } else {
-        dupes.push(t);
-      }
-    });
-    for (const d of dupes) {
-      await completeTodo(d.id);
-    }
-
-    function gapsFor(r) {
-      const gaps = [];
-      if (isCoordOnlyAddress(r.address)) gaps.push('住所(座標のみ)');
-      else if (!(r.address || '').trim()) gaps.push('住所');
-      if (r.date >= today) {
-        if (!(r.kumiten || '').trim()) gaps.push('工務店');
-        if (!(r.supervisorName || '').trim()) gaps.push('監督名');
-        if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
-        if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
-      }
-      return gaps;
-    }
-
-    for (const r of sItems) {
-      const gaps = gapsFor(r);
-      const existing = bySite[r.id];
-      if (gaps.length === 0) {
-        if (existing) await completeTodo(existing.id);
-        continue;
-      }
-      const text = `${gaps.join('・')}が未入力：${r.name}`;
-      if (!existing) {
-        await addTodo({ text, siteName: r.name, siteId: r.id, date: r.date, auto: true, checkType: 'gap' });
-      } else if (existing.text !== text) {
-        const updated = { ...existing, text };
-        await storage.set(`todo:${existing.id}`, JSON.stringify(updated), true);
-        setTodos((prev) => prev.map((t) => (t.id === existing.id ? updated : t)));
-      }
-    }
-
-    // 現場自体が削除された分のTODOも片付ける
-    for (const siteId of Object.keys(bySite)) {
-      if (!byId[siteId]) await completeTodo(bySite[siteId].id);
-    }
+    const legacyGapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
+    await runWithLimit(legacyGapTodos, 6, async (t) => { await completeTodo(t.id); });
 
     // 新しく追加された機能の動作確認タスク（機能ごとに1回だけ）
     const existingFeatureKeys = new Set(tItems.filter((t) => t.checkType === 'feature').map((t) => t.featureKey));
@@ -955,6 +906,25 @@ function GenbaTracker() {
         await addTodo({ text: f.text, auto: true, checkType: 'feature', featureKey: f.key });
       }
     }
+  }
+
+  // マニフェストに必要な項目（工務店・監督名・ハウスNo、今日以降の現場のみ）と、住所の抜け（全期間）をその場で計算する。
+  // 電話番号はマニフェストに不要なため対象外。保存はしない（重複しようがない）
+  function infoGapSites() {
+    const today = todayStr();
+    return schedRecords
+      .map((r) => {
+        const gaps = [];
+        if (isCoordOnlyAddress(r.address)) gaps.push('住所(座標のみ)');
+        else if (!(r.address || '').trim()) gaps.push('住所');
+        if (r.date >= today) {
+          if (!(r.kumiten || '').trim()) gaps.push('工務店');
+          if (!(r.supervisorName || '').trim()) gaps.push('監督名');
+          if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
+        }
+        return { r, gaps };
+      })
+      .filter((x) => x.gaps.length > 0);
   }
 
   async function completeTodo(id) {
@@ -1240,6 +1210,20 @@ function autoAssignTrucks() {
       map[key].push(r);
     });
     return Object.values(map).filter((g) => g.length > 1);
+  }
+
+  // 電話番号が未入力の現場を、工務店ごとにまとめる（今日以降の現場のみ）。保存はしない
+  function phoneGapsByKumiten() {
+    const today = todayStr();
+    const groups = {};
+    schedRecords
+      .filter((r) => r.date >= today && !(r.supervisorPhone || '').trim())
+      .forEach((r) => {
+        const k = r.kumiten || '工務店未設定';
+        if (!groups[k]) groups[k] = [];
+        groups[k].push(r);
+      });
+    return groups;
   }
 
   function openEdit(r) {
@@ -1839,7 +1823,7 @@ function autoAssignTrucks() {
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
         <button onClick={() => setTab('todo')} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
-          TODO{todos.length > 0 ? `(${todos.length})` : ''}
+          TODO{(todos.length + infoGapSites().length) > 0 ? `(${todos.length + infoGapSites().length})` : ''}
         </button>
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
@@ -2117,6 +2101,55 @@ function autoAssignTrucks() {
 
       {tab === 'todo' && (
         <div style={{ padding: '0 16px' }}>
+          {infoGapSites().length > 0 && (
+            <div style={styles.gapSummaryCard}>
+              <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
+                <span>📋 情報不足の現場（工務店・監督名・ハウスNo・住所）：{infoGapSites().length}件</span>
+                <span>{showInfoGaps ? '▲閉じる' : '▼見る'}</span>
+              </div>
+              {showInfoGaps && (
+                <div style={{ marginTop: 8 }}>
+                  {infoGapSites().map(({ r, gaps }) => (
+                    <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
+                        <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.date}／{gaps.join('・')}が未入力</div>
+                      </div>
+                      <span style={{ fontSize: 12, color: '#2A9D8F' }}>開く</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {Object.keys(phoneGapsByKumiten()).length > 0 && (
+            <div style={{ ...styles.gapSummaryCard, background: '#EAF2FB', borderColor: '#BFD9F2' }}>
+              <div style={{ ...styles.gapSummaryHeader, color: '#1B5FA8' }} onClick={() => setShowPhoneGaps((v) => !v)}>
+                <span>📞 電話番号が未入力（工務店ごと）：{Object.values(phoneGapsByKumiten()).reduce((s, arr) => s + arr.length, 0)}件</span>
+                <span>{showPhoneGaps ? '▲閉じる' : '▼見る'}</span>
+              </div>
+              {showPhoneGaps && (
+                <div style={{ marginTop: 8 }}>
+                  {Object.entries(phoneGapsByKumiten()).map(([kumitenName, sites]) => (
+                    <div key={kumitenName} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#1B5FA8', marginBottom: 4 }}>{kumitenName}（{sites.length}件）</div>
+                      {sites.map((r) => (
+                        <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
+                            <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.date}{r.supervisorName ? `／監督：${r.supervisorName}` : ''}</div>
+                          </div>
+                          <span style={{ fontSize: 12, color: '#2A9D8F' }}>開く</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={styles.todoAddBox}>
             <textarea
               style={{ ...styles.input, minHeight: 54, resize: 'vertical' }}
@@ -2438,6 +2471,7 @@ function autoAssignTrucks() {
                     <input style={styles.input} value={form.supervisorPhone || ''} onChange={(e) => setForm({ ...form, supervisorPhone: e.target.value })} placeholder="090-1234-5678" inputMode="tel" />
                   </div>
                 </div>
+                {!form.supervisorPhone && <div style={styles.phoneHint}>💡 新規登録の時点で電話番号も確認しておくと安心です（現場で改めて聞くと「資料見てないの？」と思われることもあるので、登録時にまとめて確認するのがおすすめです）</div>}
 
                 <label style={styles.label}>ハウスNo／事業場コード</label>
                 <input style={styles.input} value={form.houseNumber || ''} onChange={(e) => setForm({ ...form, houseNumber: e.target.value })} placeholder="例：262441" />
@@ -2851,6 +2885,9 @@ const styles = {
   todoMeta: { fontSize: 12, color: '#2A9D8F', marginTop: 4, cursor: 'pointer', fontWeight: 600 },
   todoDoneBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
   autoTag: { fontSize: 10, background: '#FFE8A3', color: '#8A6D00', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
+  gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
+  gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
+  gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
   featureTag: { fontSize: 10, background: '#D6E9FF', color: '#0B5FB3', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   quickTagBtn: { fontSize: 12.5, padding: '6px 12px', borderRadius: 16, border: '1px solid #D8D6CC', background: '#fff', cursor: 'pointer' },
   quickTagBtnActive: { background: '#2A9D8F', color: '#fff', borderColor: '#2A9D8F' },
@@ -2970,6 +3007,7 @@ const styles = {
   autofillHint: { fontSize: 11, color: '#8A8A83', marginTop: 4 },
   garaToggle: { width: '100%', textAlign: 'left', border: '2px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, background: '#fff', color: '#8A8A83', cursor: 'pointer' },
   recycleHint: { fontSize: 11, color: '#2A9D8F', fontWeight: 700, marginTop: 4 },
+  phoneHint: { fontSize: 11.5, color: '#6B7A99', marginTop: 6, marginBottom: 10 },
   garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
   garaBadge: { fontSize: 11.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
   recycleBadge: { fontSize: 11.5, background: '#DFF2E1', color: '#1E6B2E', borderRadius: 6, padding: '3px 8px', fontWeight: 800, marginLeft: 6 },
