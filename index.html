@@ -2205,11 +2205,10 @@ function autoAssignTrucks() {
           </div>
 
           <div style={{ marginTop: 14 }}>
-            {todos.length === 0 && <div style={{ color: '#8A8A83', fontSize: 13, padding: '20px 4px' }}>今はTODOはありません</div>}
-
+            <div style={styles.todoSectionTitle}>伝達・タスク</div>
+            {sortedTodos().length === 0 && <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>今はありません</div>}
             {sortedTodos().length > 0 && (
               <>
-                <div style={styles.todoSectionTitle}>伝達・タスク</div>
                 {sortedTodos().map((t) => (
                   <div key={t.id} style={styles.todoRow}>
                     <div style={{ flex: 1 }}>
