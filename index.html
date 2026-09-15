@@ -835,7 +835,7 @@ function GenbaTracker() {
       )).filter(Boolean);
       tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       setTodos(tItems);
-      await syncAutoTodos(sItems, tItems);
+      syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
 
       setCachedRecords(sItems, mItems, list);
     } catch (e) { console.error(e); }
@@ -886,41 +886,63 @@ function GenbaTracker() {
     return /^-?\d{1,3}\.\d+\s*[,、]\s*-?\d{1,3}\.\d+$/.test(a);
   }
 
-  // 住所が未入力の現場を自動でTODOに追加する（すでに追加済みのものは重複させない／埋まったものは自動で消す）
+  // 現場ごとの不足項目を自動でTODOに反映する（1現場=1件のTODOに統一。既にあれば内容だけ更新、埋まったら自動で消える）
+  // 過去にバグで重複が積み重なっていた分も、ここで一緒に片付ける
   async function syncAutoTodos(sItems, tItems) {
-    const already = new Set(tItems.filter((t) => t.auto && t.checkType === 'address' && t.siteId).map((t) => t.siteId));
-    const missing = sItems.filter((r) => (!((r.address || '').trim()) || isCoordOnlyAddress(r.address)) && !already.has(r.id));
-    for (const r of missing) {
-      const label = isCoordOnlyAddress(r.address) ? `住所が座標のみ：${r.name}` : `住所が未入力：${r.name}`;
-      await addTodo({ text: label, siteName: r.name, siteId: r.id, date: r.date, auto: true, checkType: 'address' });
-    }
-    // 住所がちゃんと埋まった・現場自体が消えた自動TODOは片付ける
+    const today = todayStr();
     const byId = {};
     sItems.forEach((r) => { byId[r.id] = r; });
-    const resolved = tItems.filter((t) => t.auto && t.checkType === 'address' && t.siteId && (!byId[t.siteId] || ((byId[t.siteId].address || '').trim() && !isCoordOnlyAddress(byId[t.siteId].address))));
-    for (const t of resolved) {
-      await completeTodo(t.id);
+
+    // 現場につき1件になるよう、siteIdごとに最新（createdAtが新しい）ものだけ残し、残りは重複として削除する
+    const gapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
+    const bySite = {};
+    const dupes = [];
+    gapTodos.forEach((t) => {
+      const cur = bySite[t.siteId];
+      if (!cur || (t.createdAt || '') > (cur.createdAt || '')) {
+        if (cur) dupes.push(cur);
+        bySite[t.siteId] = t;
+      } else {
+        dupes.push(t);
+      }
+    });
+    for (const d of dupes) {
+      await completeTodo(d.id);
     }
 
-    // 監督名・電話番号・ハウスNoの抜け（今日以降の現場だけ対象。後回しにされがちなので拾う）
-    const already2 = new Set(tItems.filter((t) => t.auto && t.checkType === 'info' && t.siteId).map((t) => t.siteId));
-    const today = todayStr();
-    const infoMissing = sItems.filter((r) => r.date >= today && !already2.has(r.id) && !byId2Skip(r));
-    function byId2Skip(r) {
-      return (r.kumiten || '').trim() && (r.supervisorName || '').trim() && (r.supervisorPhone || '').trim() && (r.houseNumber || '').trim();
-    }
-    for (const r of infoMissing) {
+    function gapsFor(r) {
       const gaps = [];
-      if (!(r.kumiten || '').trim()) gaps.push('工務店');
-      if (!(r.supervisorName || '').trim()) gaps.push('監督名');
-      if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
-      if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
-      if (gaps.length === 0) continue;
-      await addTodo({ text: `${gaps.join('・')}が未入力：${r.name}`, siteName: r.name, siteId: r.id, date: r.date, auto: true, checkType: 'info' });
+      if (isCoordOnlyAddress(r.address)) gaps.push('住所(座標のみ)');
+      else if (!(r.address || '').trim()) gaps.push('住所');
+      if (r.date >= today) {
+        if (!(r.kumiten || '').trim()) gaps.push('工務店');
+        if (!(r.supervisorName || '').trim()) gaps.push('監督名');
+        if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
+        if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
+      }
+      return gaps;
     }
-    const resolvedInfo = tItems.filter((t) => t.auto && t.checkType === 'info' && t.siteId && byId[t.siteId] && byId2Skip(byId[t.siteId]));
-    for (const t of resolvedInfo) {
-      await completeTodo(t.id);
+
+    for (const r of sItems) {
+      const gaps = gapsFor(r);
+      const existing = bySite[r.id];
+      if (gaps.length === 0) {
+        if (existing) await completeTodo(existing.id);
+        continue;
+      }
+      const text = `${gaps.join('・')}が未入力：${r.name}`;
+      if (!existing) {
+        await addTodo({ text, siteName: r.name, siteId: r.id, date: r.date, auto: true, checkType: 'gap' });
+      } else if (existing.text !== text) {
+        const updated = { ...existing, text };
+        await storage.set(`todo:${existing.id}`, JSON.stringify(updated), true);
+        setTodos((prev) => prev.map((t) => (t.id === existing.id ? updated : t)));
+      }
+    }
+
+    // 現場自体が削除された分のTODOも片付ける
+    for (const siteId of Object.keys(bySite)) {
+      if (!byId[siteId]) await completeTodo(bySite[siteId].id);
     }
 
     // 新しく追加された機能の動作確認タスク（機能ごとに1回だけ）
