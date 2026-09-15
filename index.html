@@ -338,6 +338,7 @@ function mapUrl(address) {
 // 工務店ごとのガラ袋の基本方針（オープンハウス系・一般・その他は対象外）
 const GARA_DEFAULT_EXCLUDE = ['OHA', 'OHD', '一般', 'その他'];
 const GARA_RECYCLE_OK = ['成也', 'ひかり'];
+const GARA_RECYCLE_HINT = '♻️ リサイクルガラ袋を優先で使ってください（経費削減になります）';
 
 // 新しく実装した機能を、次に開いた時にTODOへ自動で追加して動作確認を促す（機能を追加するたびにここへ足していく）
 const FEATURE_CHECKLIST = [
@@ -651,6 +652,10 @@ function GenbaTracker() {
   const [extraSiteIds, setExtraSiteIds] = useState([]); // 他の日の予定から追加した現場ID
   const [showAddExtraSite, setShowAddExtraSite] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [trashItems, setTrashItems] = useState([]);
+  const [renameHistory, setRenameHistory] = useState([]);
+  const [showRenameHistory, setShowRenameHistory] = useState(false);
   const [extraSiteSearch, setExtraSiteSearch] = useState('');
   const [collectNote, setCollectNote] = useState('');
   const [dumpNote, setDumpNote] = useState('');
@@ -712,6 +717,7 @@ function GenbaTracker() {
   });
   const [form, setForm] = useState(emptySched());
   const [pendingPhotos, setPendingPhotos] = useState([]);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     // 起動直後、まず端末に保存済みの前回データを即表示（カレンダーのドットもすぐ出る）
@@ -1236,6 +1242,7 @@ function autoAssignTrucks() {
 
   async function saveRecord() {
     if (!form.name.trim()) { showToast('現場名を入力してください'); return; }
+    setSaving(true);
     const prefix = tab === 'sched' ? 'sched' : 'mgmt';
     const id = editingId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let record = { ...form, id, createdAt: form.createdAt || Date.now() };
@@ -1267,8 +1274,29 @@ function autoAssignTrucks() {
       setShowForm(false);
       setEditingId(null);
       setPendingPhotos([]);
-      load();
+      applyLocalRecordUpdate(prefix, record);
     } catch (e) { showToast('保存に失敗しました'); }
+    setSaving(false);
+  }
+
+  // 保存直後は全件を読み直さず、その場で一覧・カレンダーに反映する（サーバーへの再取得を待たない分、体感が速くなる）
+  function applyLocalRecordUpdate(prefix, record) {
+    if (prefix === 'sched') {
+      setSchedRecords((prev) => {
+        const next = [record, ...prev.filter((r) => r.id !== record.id)];
+        next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setCachedRecords(next, mgmtRecords, kumitenList);
+        syncAutoTodos(next, todos);
+        return next;
+      });
+    } else {
+      setMgmtRecords((prev) => {
+        const next = [record, ...prev.filter((r) => r.id !== record.id)];
+        next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        setCachedRecords(schedRecords, next, kumitenList);
+        return next;
+      });
+    }
   }
 
   async function runBulkImport() {
@@ -1351,11 +1379,58 @@ function autoAssignTrucks() {
 
   async function deleteRecord(id) {
     const prefix = tab === 'sched' ? 'sched' : 'mgmt';
+    const source = tab === 'sched' ? schedRecords : mgmtRecords;
+    const record = source.find((r) => r.id === id);
+    if (!window.confirm(`「${record ? record.name : 'この現場'}」を削除しますか？（あとでゴミ箱から復元できます）`)) return;
     try {
+      if (record) {
+        await storage.set(`trash:${id}`, JSON.stringify({ ...record, _type: prefix, deletedAt: new Date().toISOString() }), true);
+      }
       const result = await storage.delete(`${prefix}:${id}`, true);
-      showToast(result.queued ? '削除を保留しました。電波が戻り次第、自動的に反映されます' : '削除しました');
-      load();
+      showToast(result.queued ? '削除を保留しました。電波が戻り次第、自動的に反映されます' : '削除しました（ゴミ箱に30日間残ります）');
+      if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
+      else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
     } catch (e) { showToast('削除に失敗しました'); }
+  }
+
+  async function loadTrash() {
+    const list = await storage.list('trash:', true);
+    const items = (await Promise.all(
+      ((list && list.keys) || []).map(async (k) => {
+        try {
+          const r = await storage.get(k, true);
+          return r && r.value ? JSON.parse(r.value) : null;
+        } catch (e) { return null; }
+      })
+    )).filter(Boolean);
+    items.sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
+    // 30日を過ぎたゴミ箱の中身は自動で完全削除する
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const fresh = [];
+    for (const item of items) {
+      const t = item.deletedAt ? new Date(item.deletedAt).getTime() : 0;
+      if (t && t < cutoff) {
+        try { await storage.delete(`trash:${item.id}`, true); } catch (e) { /* ignore */ }
+      } else {
+        fresh.push(item);
+      }
+    }
+    setTrashItems(fresh);
+  }
+
+  async function restoreFromTrash(item) {
+    const { _type, deletedAt, ...rest } = item;
+    await storage.set(`${_type}:${item.id}`, JSON.stringify(rest), true);
+    await storage.delete(`trash:${item.id}`, true);
+    showToast(`「${item.name}」を復元しました`);
+    setTrashItems((prev) => prev.filter((t) => t.id !== item.id));
+    load();
+  }
+
+  async function purgeTrash(item) {
+    if (!window.confirm(`「${item.name}」を完全に削除します。元に戻せません。よろしいですか？`)) return;
+    await storage.delete(`trash:${item.id}`, true);
+    setTrashItems((prev) => prev.filter((t) => t.id !== item.id));
   }
 
   async function bulkDelete() {
@@ -1364,8 +1439,11 @@ function autoAssignTrucks() {
     const source = tab === 'sched' ? schedRecords : mgmtRecords;
     const targets = source.filter((r) => r.date >= bulkFrom && r.date <= bulkTo);
     if (targets.length === 0) { showToast('対象がありません'); return; }
-    if (!window.confirm(`${targets.length}件を削除します。よろしいですか？`)) return;
-    for (const r of targets) await storage.delete(`${prefix}:${r.id}`, true);
+    if (!window.confirm(`${targets.length}件を削除します。よろしいですか？（ゴミ箱に30日間残ります）`)) return;
+    for (const r of targets) {
+      await storage.set(`trash:${r.id}`, JSON.stringify({ ...r, _type: prefix, deletedAt: new Date().toISOString() }), true);
+      await storage.delete(`${prefix}:${r.id}`, true);
+    }
     showToast(`${targets.length}件削除しました`);
     setShowBulkDelete(false);
     setBulkFrom(''); setBulkTo('');
@@ -1525,22 +1603,78 @@ function autoAssignTrucks() {
     if (!input || !input.trim() || input.trim() === oldName) return;
     const newName = input.trim();
     if (kumitenList.includes(newName)) { showToast('すでに同じ名前があります'); return; }
-    const affected = [...schedRecords, ...mgmtRecords].filter((r) => r.kumiten === oldName);
+    const affectedSched = schedRecords.filter((r) => r.kumiten === oldName);
+    const affectedMgmt = mgmtRecords.filter((r) => r.kumiten === oldName);
+    const affected = [...affectedSched, ...affectedMgmt];
     if (affected.length > 0 && !window.confirm(`「${oldName}」で登録済みの現場が${affected.length}件あります。すべて「${newName}」に変更しますか？`)) return;
     setLoading(true);
     try {
-      for (const r of schedRecords.filter((r) => r.kumiten === oldName)) {
+      for (const r of affectedSched) {
         await storage.set(`sched:${r.id}`, JSON.stringify({ ...r, kumiten: newName }));
       }
-      for (const r of mgmtRecords.filter((r) => r.kumiten === oldName)) {
+      for (const r of affectedMgmt) {
         await storage.set(`mgmt:${r.id}`, JSON.stringify({ ...r, kumiten: newName }));
       }
       const next = kumitenList.map((k, i) => (i === index ? newName : k));
       await saveKumitenList(next);
+      // あとで元に戻せるよう、変更履歴を残しておく
+      const logId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      await storage.set(`kumitenRenameLog:${logId}`, JSON.stringify({
+        id: logId, oldName, newName,
+        schedIds: affectedSched.map((r) => r.id),
+        mgmtIds: affectedMgmt.map((r) => r.id),
+        at: new Date().toISOString(),
+      }), true);
       showToast(`「${oldName}」を「${newName}」に変更しました（${affected.length}件更新）`);
     } catch (e) {
       console.error(e);
       showToast('変更に失敗しました');
+    }
+    await load();
+  }
+
+  async function loadRenameHistory() {
+    const list = await storage.list('kumitenRenameLog:', true);
+    const items = (await Promise.all(
+      ((list && list.keys) || []).map(async (k) => {
+        try {
+          const r = await storage.get(k, true);
+          return r && r.value ? JSON.parse(r.value) : null;
+        } catch (e) { return null; }
+      })
+    )).filter(Boolean);
+    items.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+    setRenameHistory(items.slice(0, 10));
+  }
+
+  async function undoRename(entry) {
+    if (!window.confirm(`「${entry.newName}」を「${entry.oldName}」に戻します。よろしいですか？`)) return;
+    setLoading(true);
+    try {
+      if (kumitenList.includes(entry.newName)) {
+        const next = kumitenList.map((k) => (k === entry.newName ? entry.oldName : k));
+        await saveKumitenList(next);
+      }
+      for (const id of entry.schedIds || []) {
+        const r = await storage.get(`sched:${id}`, true);
+        if (r && r.value) {
+          const rec = JSON.parse(r.value);
+          if (rec.kumiten === entry.newName) await storage.set(`sched:${id}`, JSON.stringify({ ...rec, kumiten: entry.oldName }), true);
+        }
+      }
+      for (const id of entry.mgmtIds || []) {
+        const r = await storage.get(`mgmt:${id}`, true);
+        if (r && r.value) {
+          const rec = JSON.parse(r.value);
+          if (rec.kumiten === entry.newName) await storage.set(`mgmt:${id}`, JSON.stringify({ ...rec, kumiten: entry.oldName }), true);
+        }
+      }
+      await storage.delete(`kumitenRenameLog:${entry.id}`, true);
+      showToast(`「${entry.oldName}」に戻しました`);
+      setRenameHistory((prev) => prev.filter((h) => h.id !== entry.id));
+    } catch (e) {
+      console.error(e);
+      showToast('元に戻すのに失敗しました');
     }
     await load();
   }
@@ -1704,6 +1838,7 @@ function autoAssignTrucks() {
               <input type="date" style={styles.dateInput} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(''); setDateTo(''); }}>全期間を表示</button>
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>今日</button>
+              <button style={styles.linkBtnSmall} onClick={() => { setShowTrash(true); loadTrash(); }}>🗑 ゴミ箱</button>
             </div>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
@@ -1746,6 +1881,7 @@ function autoAssignTrucks() {
                   <div style={styles.cardTop}>
                     {tab === 'sched' && r.time && <span style={styles.timeBadge}>⏰ {r.time}</span>}
                     {tab === 'sched' && r.garaRequired && <span style={styles.garaBadge}>🧺 ガラ袋必須</span>}
+                    {tab === 'sched' && GARA_RECYCLE_OK.includes(r.kumiten) && <span style={styles.recycleBadge}>♻️ リサイクルガラ袋</span>}
                     {tab === 'sched' && (() => {
                       const count = mgmtRecords.filter((m) => m.name.trim() === r.name.trim()).length;
                       const isSingle = r.status === '単発';
@@ -2292,7 +2428,7 @@ function autoAssignTrucks() {
                       {form.garaRequired ? '✅ 必須' : '不要（タップで必須に）'}
                     </button>
                     {GARA_RECYCLE_OK.includes(form.kumiten) && (
-                      <div style={styles.recycleHint}>♻️ {form.kumiten}は再生ガラ袋でもOK</div>
+                      <div style={styles.recycleHint}>{GARA_RECYCLE_HINT}</div>
                     )}
                   </div>
                   <div style={{ width: 92 }}>
@@ -2404,7 +2540,7 @@ function autoAssignTrucks() {
 
             <div style={styles.sheetActions}>
               {editingId && <button style={styles.deleteBtn} onClick={() => { deleteRecord(editingId); setShowForm(false); }}>削除</button>}
-              <button style={styles.saveBtn} onClick={saveRecord}>保存</button>
+              <button style={{ ...styles.saveBtn, ...(saving ? styles.saveBtnDisabled : {}) }} onClick={saveRecord} disabled={saving}>{saving ? '保存中…' : '保存'}</button>
             </div>
           </div>
         </div>
@@ -2429,6 +2565,30 @@ function autoAssignTrucks() {
               </div>
             ))}
             <button style={{ ...styles.saveBtn, marginTop: 14 }} onClick={addKumitenName}>＋ 新しい工務店を追加</button>
+            <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => { setShowRenameHistory(true); loadRenameHistory(); }}>🕘 改名の履歴（元に戻す）</button>
+          </div>
+        </div>
+      )}
+
+      {showRenameHistory && (
+        <div style={styles.overlay} onClick={() => setShowRenameHistory(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>工務店名の改名履歴</div>
+              <button style={styles.closeBtn} onClick={() => setShowRenameHistory(false)}>✕</button>
+            </div>
+            <div style={{ marginTop: 4, maxHeight: 420, overflowY: 'auto' }}>
+              {renameHistory.length === 0 && <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>履歴はありません</div>}
+              {renameHistory.map((h) => (
+                <div key={h.id} style={styles.extraPickRow}>
+                  <div>
+                    <div style={{ fontSize: 13 }}>{h.oldName} → {h.newName}</div>
+                    <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{(h.at || '').slice(0, 10)}／{(h.schedIds || []).length + (h.mgmtIds || []).length}件更新</div>
+                  </div>
+                  <button style={styles.pickTempBtn} onClick={() => undoRename(h)}>元に戻す</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -2464,6 +2624,32 @@ function autoAssignTrucks() {
                 </span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showTrash && (
+        <div style={styles.overlay} onClick={() => setShowTrash(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>ゴミ箱（削除から30日間残ります）</div>
+              <button style={styles.closeBtn} onClick={() => setShowTrash(false)}>✕</button>
+            </div>
+            <div style={{ marginTop: 4, maxHeight: 420, overflowY: 'auto' }}>
+              {trashItems.length === 0 && <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>ゴミ箱は空です</div>}
+              {trashItems.map((item) => (
+                <div key={item.id} style={styles.extraPickRow}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{item.name}</div>
+                    <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.date}／{item._type === 'sched' ? '予定表' : '管理表'}／削除:{(item.deletedAt || '').slice(0, 10)}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button style={styles.pickTempBtn} onClick={() => restoreFromTrash(item)}>復元</button>
+                    <button style={styles.kumitenDeleteBtn} onClick={() => purgeTrash(item)}>完全削除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -2698,6 +2884,7 @@ const styles = {
   row2: { display: 'flex', gap: 10 },
   sheetActions: { display: 'flex', gap: 10, marginTop: 20 },
   saveBtn: { flex: 1, background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 10, padding: '12px', fontSize: 15, fontWeight: 700, cursor: 'pointer' },
+  saveBtnDisabled: { background: '#9FCFC7', cursor: 'default' },
   deleteBtn: { background: '#fff', color: '#E63946', border: '1px solid #E63946', borderRadius: 10, padding: '12px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   toast: { position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: '#232320', color: '#fff', padding: '10px 18px', borderRadius: 999, fontSize: 13.5, zIndex: 100 },
   footerNote: { textAlign: 'center', fontSize: 11.5, color: '#B0B0A6', marginTop: 24 },
@@ -2760,6 +2947,7 @@ const styles = {
   recycleHint: { fontSize: 11, color: '#2A9D8F', fontWeight: 700, marginTop: 4 },
   garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
   garaBadge: { fontSize: 11.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
+  recycleBadge: { fontSize: 11.5, background: '#DFF2E1', color: '#1E6B2E', borderRadius: 6, padding: '3px 8px', fontWeight: 800, marginLeft: 6 },
   visitBadge: { fontSize: 11, color: '#6B6B63', fontWeight: 700, background: '#F0EFE9', borderRadius: 6, padding: '2px 6px' },
   visitBadgeOver: { color: '#fff', background: '#E63946' },
   dispatchVisitCount: { fontSize: 11, color: '#8A8A83' },
