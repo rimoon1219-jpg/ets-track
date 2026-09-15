@@ -948,15 +948,21 @@ function GenbaTracker() {
 
   // 工程表画像添付を最優先、その次は現場の日付が近い順（日付が無いものは後ろ）
   function sortedTodos() {
-    return [...todos].sort((a, b) => {
-      const aGantt = a.text.includes('工程表画像添付') ? 0 : 1;
-      const bGantt = b.text.includes('工程表画像添付') ? 0 : 1;
-      if (aGantt !== bGantt) return aGantt - bGantt;
-      const aDate = a.date || '9999-99-99';
-      const bDate = b.date || '9999-99-99';
-      if (aDate !== bDate) return aDate.localeCompare(bDate);
-      return (b.createdAt || '').localeCompare(a.createdAt || '');
-    });
+    return [...todos]
+      .filter((t) => t.checkType !== 'feature')
+      .sort((a, b) => {
+        const aGantt = a.text.includes('工程表画像添付') ? 0 : 1;
+        const bGantt = b.text.includes('工程表画像添付') ? 0 : 1;
+        if (aGantt !== bGantt) return aGantt - bGantt;
+        const aDate = a.date || '9999-99-99';
+        const bDate = b.date || '9999-99-99';
+        if (aDate !== bDate) return aDate.localeCompare(bDate);
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
+  }
+
+  function featureCheckTodos() {
+    return todos.filter((t) => t.checkType === 'feature').sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
   }
 
   async function completeTodo(id) {
@@ -2193,26 +2199,52 @@ function autoAssignTrucks() {
 
           <div style={{ marginTop: 14 }}>
             {todos.length === 0 && <div style={{ color: '#8A8A83', fontSize: 13, padding: '20px 4px' }}>今はTODOはありません</div>}
-            {sortedTodos().map((t) => (
-              <div key={t.id} style={styles.todoRow}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                    {t.checkType === 'feature' ? <span style={styles.featureTag}>動作確認</span> : t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
-                  </div>
-                  {(t.siteName || t.date) && (
-                    <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
-                      📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
+
+            {sortedTodos().length > 0 && (
+              <>
+                <div style={styles.todoSectionTitle}>伝達・タスク</div>
+                {sortedTodos().map((t) => (
+                  <div key={t.id} style={styles.todoRow}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                        {t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
+                      </div>
+                      {(t.siteName || t.date) && (
+                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
+                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
+                        </div>
+                      )}
+                      {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
+                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>{t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}</div>
                     </div>
-                  )}
-                  {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
-                  <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>{t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}</div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                  <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
-                  <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
-                </div>
-              </div>
-            ))}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                      <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
+                      <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {featureCheckTodos().length > 0 && (
+              <>
+                <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>動作確認（新機能）</div>
+                {featureCheckTodos().map((t) => (
+                  <div key={t.id} style={styles.todoRow}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                        <span style={styles.featureTag}>動作確認</span>{t.text}
+                      </div>
+                      {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                      <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
+                      <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -2892,6 +2924,7 @@ const styles = {
   gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
   gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
   gapUrgent: { color: '#B3261E', fontWeight: 700 },
+  todoSectionTitle: { fontSize: 12.5, fontWeight: 700, color: '#8A8A83', marginBottom: 8, marginTop: 4 },
   featureTag: { fontSize: 10, background: '#D6E9FF', color: '#0B5FB3', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   quickTagBtn: { fontSize: 12.5, padding: '6px 12px', borderRadius: 16, border: '1px solid #D8D6CC', background: '#fff', cursor: 'pointer' },
   quickTagBtnActive: { background: '#2A9D8F', color: '#fff', borderColor: '#2A9D8F' },
