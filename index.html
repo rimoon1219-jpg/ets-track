@@ -275,6 +275,7 @@ const storage = {
 
 // 立米数（請求書関連）を編集するための合言葉。後で洋子さんの希望のものに変更します。
 const RYUBEI_PASSWORD = '8989';
+const TODO_PASSWORD = '4455';
 
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
 const TRUCK_COLORS = ['#E63946', '#457B9D', '#2A9D8F', '#FFB703', '#9B5DE5', '#F4A261', '#606C38', '#FF6F91', '#3A86FF', '#8D5524'];
@@ -668,6 +669,7 @@ function GenbaTracker() {
   const [showExport, setShowExport] = useState(false);
   const [exportText, setExportText] = useState('');
   const [ryubeiUnlocked, setRyubeiUnlocked] = useState(false);
+  const [todoUnlocked, setTodoUnlocked] = useState(false);
 
   // dispatch state
   const [dispatchDate, setDispatchDate] = useState(todayStr());
@@ -1605,6 +1607,19 @@ function autoAssignTrucks() {
     }
   }
 
+  function tryUnlockTodoTab() {
+    if (todoUnlocked) { setTab('todo'); return; }
+    const input = window.prompt('TODOタブを開くには合言葉を入力してください');
+    if (input === null) return;
+    if (input === TODO_PASSWORD) {
+      setTodoUnlocked(true);
+      setTab('todo');
+      showToast('ロック解除しました');
+    } else {
+      showToast('合言葉が違います');
+    }
+  }
+
   async function saveKumitenList(next) {
     setKumitenList(next);
     await storage.set('meta:kumiten', JSON.stringify(next), true);
@@ -1853,8 +1868,8 @@ function autoAssignTrucks() {
         <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
-        <button onClick={() => setTab('todo')} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
-          TODO{(todos.length + infoGapSites().length) > 0 ? `(${todos.length + infoGapSites().length})` : ''}
+        <button onClick={tryUnlockTodoTab} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
+          🔒TODO{todoUnlocked && (todos.length + infoGapSites().length) > 0 ? `(${todos.length + infoGapSites().length})` : ''}
         </button>
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
