@@ -762,6 +762,27 @@ function GenbaTracker() {
   }, []);
   useEffect(() => { if (tab === 'dispatch') loadDispatch(dispatchDate); }, [tab, dispatchDate]);
 
+  // 他のアプリ・タブに切り替えて、またこの画面に戻ってきた時に自動で最新データを取り直す
+  // （フォームを開いて入力中のときは邪魔しないよう対象外。短時間の連続実行は間引く）
+  const lastAutoRefreshRef = useRef(Date.now());
+  useEffect(() => {
+    function handleVisible() {
+      if (document.visibilityState !== 'visible') return;
+      if (showForm) return; // 入力中は割り込まない
+      const now = Date.now();
+      if (now - lastAutoRefreshRef.current < 15000) return; // 15秒以内の再実行は間引く
+      lastAutoRefreshRef.current = now;
+      load();
+      if (tab === 'dispatch') loadDispatch(dispatchDate);
+    }
+    document.addEventListener('visibilitychange', handleVisible);
+    window.addEventListener('focus', handleVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisible);
+      window.removeEventListener('focus', handleVisible);
+    };
+  }, [showForm, tab, dispatchDate]);
+
   useEffect(() => {
     if (!showDispatchMap) return;
     let cancelled = false;
