@@ -63,8 +63,8 @@ const RECORDS_CACHE_KEY = 'etsTrackRecordsCache_v1';
 function getCachedRecords() {
   try { return JSON.parse(localStorage.getItem(RECORDS_CACHE_KEY) || 'null'); } catch (e) { return null; }
 }
-function setCachedRecords(sched, mgmt, kumiten) {
-  try { localStorage.setItem(RECORDS_CACHE_KEY, JSON.stringify({ sched, mgmt, kumiten, savedAt: Date.now() })); } catch (e) {}
+function setCachedRecords(sched, mgmt, kumiten, todos) {
+  try { localStorage.setItem(RECORDS_CACHE_KEY, JSON.stringify({ sched, mgmt, kumiten, todos, savedAt: Date.now() })); } catch (e) {}
 }
 
 
@@ -755,6 +755,7 @@ function GenbaTracker() {
       setSchedRecords(cached.sched || []);
       setMgmtRecords(cached.mgmt || []);
       if (cached.kumiten) setKumitenList(cached.kumiten);
+      if (cached.todos) setTodos(cached.todos);
       setLoading(false);
     }
     // 裏側で最新データを取りに行き、取れ次第差し替える
@@ -869,7 +870,7 @@ function GenbaTracker() {
       setTodos(tItems);
       syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
 
-      setCachedRecords(sItems, mItems, list);
+      setCachedRecords(sItems, mItems, list, tItems);
     } catch (e) { console.error(e); }
     setLoading(false);
   }
@@ -1378,7 +1379,7 @@ function autoAssignTrucks() {
       setSchedRecords((prev) => {
         const next = [record, ...prev.filter((r) => r.id !== record.id)];
         next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setCachedRecords(next, mgmtRecords, kumitenList);
+        setCachedRecords(next, mgmtRecords, kumitenList, todos);
         syncAutoTodos(next, todos);
         return next;
       });
@@ -1386,7 +1387,7 @@ function autoAssignTrucks() {
       setMgmtRecords((prev) => {
         const next = [record, ...prev.filter((r) => r.id !== record.id)];
         next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setCachedRecords(schedRecords, next, kumitenList);
+        setCachedRecords(schedRecords, next, kumitenList, todos);
         return next;
       });
     }
@@ -2272,7 +2273,11 @@ function autoAssignTrucks() {
 
           <div style={{ marginTop: 14 }}>
             <div style={styles.todoSectionTitle}>伝達・タスク</div>
-            {sortedTodos().length === 0 && <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>今はありません</div>}
+            {sortedTodos().length === 0 && (
+              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
+                {loading ? '読み込み中…' : '今はありません'}
+              </div>
+            )}
             {sortedTodos().length > 0 && (
               <>
                 {sortedTodos().map((t) => (
