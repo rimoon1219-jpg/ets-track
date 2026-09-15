@@ -683,7 +683,6 @@ function GenbaTracker() {
   const [renameHistory, setRenameHistory] = useState([]);
   const [showRenameHistory, setShowRenameHistory] = useState(false);
   const [showInfoGaps, setShowInfoGaps] = useState(false);
-  const [showPhoneGaps, setShowPhoneGaps] = useState(false);
   const [extraSiteSearch, setExtraSiteSearch] = useState('');
   const [collectNote, setCollectNote] = useState('');
   const [dumpNote, setDumpNote] = useState('');
@@ -933,6 +932,18 @@ function GenbaTracker() {
         if (aAddr !== bAddr) return aAddr - bAddr;
         return (a.r.date || '').localeCompare(b.r.date || '');
       });
+  }
+
+  // 情報不足の現場を工務店ごとにグループ化する（工務店が空の分は「工務店未設定」としてまとめる）
+  function infoGapsByKumiten() {
+    const groups = {};
+    const order = [];
+    infoGapSites().forEach((x) => {
+      const k = x.r.kumiten || '工務店未設定';
+      if (!groups[k]) { groups[k] = []; order.push(k); }
+      groups[k].push(x);
+    });
+    return order.map((k) => ({ kumiten: k, items: groups[k] }));
   }
 
   // 工程表画像添付を最優先、その次は現場の日付が近い順（日付が無いものは後ろ）
@@ -1231,20 +1242,6 @@ function autoAssignTrucks() {
       map[key].push(r);
     });
     return Object.values(map).filter((g) => g.length > 1);
-  }
-
-  // 電話番号が未入力の現場を、工務店ごとにまとめる（今日以降の現場のみ）。保存はしない
-  function phoneGapsByKumiten() {
-    const today = todayStr();
-    const groups = {};
-    schedRecords
-      .filter((r) => r.date >= today && !(r.supervisorPhone || '').trim())
-      .forEach((r) => {
-        const k = r.kumiten || '工務店未設定';
-        if (!groups[k]) groups[k] = [];
-        groups[k].push(r);
-      });
-    return groups;
   }
 
   function openEdit(r) {
@@ -2125,45 +2122,30 @@ function autoAssignTrucks() {
           {infoGapSites().length > 0 && (
             <div style={styles.gapSummaryCard}>
               <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
-                <span>📋 情報不足の現場（工務店・監督名・電話番号・ハウスNo・住所）：{infoGapSites().length}件</span>
+                <span>📋 情報不足の現場（工務店ごと）：{infoGapSites().length}件</span>
                 <span>{showInfoGaps ? '▲閉じる' : '▼見る'}</span>
               </div>
               {showInfoGaps && (
                 <div style={{ marginTop: 8 }}>
-                  {infoGapSites().map(({ r, gaps }) => (
-                    <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
-                        <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.date}／{gaps.join('・')}が未入力</div>
-                      </div>
-                      <span style={{ fontSize: 12, color: '#2A9D8F' }}>開く</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {Object.keys(phoneGapsByKumiten()).length > 0 && (
-            <div style={{ ...styles.gapSummaryCard, background: '#EAF2FB', borderColor: '#BFD9F2' }}>
-              <div style={{ ...styles.gapSummaryHeader, color: '#1B5FA8' }} onClick={() => setShowPhoneGaps((v) => !v)}>
-                <span>📞 電話番号が未入力（工務店ごと）：{Object.values(phoneGapsByKumiten()).reduce((s, arr) => s + arr.length, 0)}件</span>
-                <span>{showPhoneGaps ? '▲閉じる' : '▼見る'}</span>
-              </div>
-              {showPhoneGaps && (
-                <div style={{ marginTop: 8 }}>
-                  {Object.entries(phoneGapsByKumiten()).map(([kumitenName, sites]) => (
-                    <div key={kumitenName} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#1B5FA8', marginBottom: 4 }}>{kumitenName}（{sites.length}件）</div>
-                      {sites.map((r) => (
-                        <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
-                            <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.date}{r.supervisorName ? `／監督：${r.supervisorName}` : ''}</div>
+                  {infoGapsByKumiten().map(({ kumiten, items }) => (
+                    <div key={kumiten} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件）</div>
+                      {items.map(({ r, gaps }) => {
+                        const hasAddr = gaps.some((g) => g.startsWith('住所'));
+                        return (
+                          <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
+                              <div style={{ fontSize: 11.5, color: '#8A8A83' }}>
+                                {r.date}／{gaps.map((g, i) => (
+                                  <span key={g} style={g.startsWith('住所') ? styles.gapUrgent : undefined}>{i > 0 ? '・' : ''}{g}</span>
+                                ))}が未入力
+                              </div>
+                            </div>
+                            <span style={{ fontSize: 12, color: hasAddr ? '#B3261E' : '#2A9D8F', fontWeight: hasAddr ? 700 : 400 }}>開く</span>
                           </div>
-                          <span style={{ fontSize: 12, color: '#2A9D8F' }}>開く</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
@@ -2909,6 +2891,7 @@ const styles = {
   gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
   gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
   gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
+  gapUrgent: { color: '#B3261E', fontWeight: 700 },
   featureTag: { fontSize: 10, background: '#D6E9FF', color: '#0B5FB3', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   quickTagBtn: { fontSize: 12.5, padding: '6px 12px', borderRadius: 16, border: '1px solid #D8D6CC', background: '#fff', cursor: 'pointer' },
   quickTagBtnActive: { background: '#2A9D8F', color: '#fff', borderColor: '#2A9D8F' },
