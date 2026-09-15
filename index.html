@@ -848,22 +848,6 @@ function GenbaTracker() {
     setLoading(false);
   }
 
-  async function addTodo() {
-    const text = todoText.trim();
-    if (!text) return;
-    const record = {
-      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-      text,
-      siteName: todoSiteName.trim() || '',
-      date: todoDate || '',
-      staff: getDeviceStaff(),
-      createdAt: new Date().toISOString(),
-    };
-    await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
-    setTodos((prev) => [record, ...prev]);
-    setTodoText(''); setTodoSiteName(''); setTodoDate('');
-  }
-
   const QUICK_TODO_TAGS = ['工程表画像添付', '監督連絡', '社長連絡'];
 
   async function addTodo(overrides) {
@@ -877,6 +861,8 @@ function GenbaTracker() {
       date: (overrides && overrides.date) || todoDate || '',
       staff: (overrides && overrides.auto) ? '自動検出' : getDeviceStaff(),
       auto: !!(overrides && overrides.auto),
+      checkType: (overrides && overrides.checkType) || '',
+      featureKey: (overrides && overrides.featureKey) || '',
       createdAt: new Date().toISOString(),
     };
     await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
@@ -898,11 +884,32 @@ function GenbaTracker() {
     const legacyGapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
     await runWithLimit(legacyGapTodos, 6, async (t) => { await completeTodo(t.id); });
 
-    // 新しく追加された機能の動作確認タスク（機能ごとに1回だけ）
-    const existingFeatureKeys = new Set(tItems.filter((t) => t.checkType === 'feature').map((t) => t.featureKey));
+    // 機能の動作確認タスクは、テキストが一致するものをまとめて「1つだけ残して重複は削除」にする
+    // （過去にcheckType/featureKeyが保存されずに何度も複製されてしまった分の後片付けも兼ねる）
+    const featureTexts = new Set(FEATURE_CHECKLIST.map((f) => f.text));
+    const featureLikeTodos = tItems.filter((t) => featureTexts.has(t.text));
+    const seenFeatureText = new Set();
+    const featureDupes = [];
+    featureLikeTodos
+      .slice()
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')) // 新しい順
+      .forEach((t) => {
+        if (seenFeatureText.has(t.text)) featureDupes.push(t);
+        else seenFeatureText.add(t.text);
+      });
+    await runWithLimit(featureDupes, 6, async (t) => { await completeTodo(t.id); });
+
+    // まだ一度も追加されていない機能があれば追加する。既存の生き残りがcheckType未設定の古いデータなら補完する
     for (const f of FEATURE_CHECKLIST) {
-      if (!existingFeatureKeys.has(f.key)) {
+      if (!seenFeatureText.has(f.text)) {
         await addTodo({ text: f.text, auto: true, checkType: 'feature', featureKey: f.key });
+      } else {
+        const survivor = featureLikeTodos.find((t) => t.text === f.text && !featureDupes.includes(t));
+        if (survivor && survivor.checkType !== 'feature') {
+          const updated = { ...survivor, auto: true, checkType: 'feature', featureKey: f.key };
+          await storage.set(`todo:${survivor.id}`, JSON.stringify(updated), true);
+          setTodos((prev) => prev.map((t) => (t.id === survivor.id ? updated : t)));
+        }
       }
     }
   }
