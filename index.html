@@ -925,7 +925,27 @@ function GenbaTracker() {
         }
         return { r, gaps };
       })
-      .filter((x) => x.gaps.length > 0);
+      .filter((x) => x.gaps.length > 0)
+      // 住所の抜けを最優先。次に現場の日付が近い順（現場が始まるまでに必ず要る情報を上に出す）
+      .sort((a, b) => {
+        const aAddr = a.gaps.some((g) => g.startsWith('住所')) ? 0 : 1;
+        const bAddr = b.gaps.some((g) => g.startsWith('住所')) ? 0 : 1;
+        if (aAddr !== bAddr) return aAddr - bAddr;
+        return (a.r.date || '').localeCompare(b.r.date || '');
+      });
+  }
+
+  // 工程表画像添付を最優先、その次は現場の日付が近い順（日付が無いものは後ろ）
+  function sortedTodos() {
+    return [...todos].sort((a, b) => {
+      const aGantt = a.text.includes('工程表画像添付') ? 0 : 1;
+      const bGantt = b.text.includes('工程表画像添付') ? 0 : 1;
+      if (aGantt !== bGantt) return aGantt - bGantt;
+      const aDate = a.date || '9999-99-99';
+      const bDate = b.date || '9999-99-99';
+      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
   }
 
   async function completeTodo(id) {
@@ -2191,7 +2211,7 @@ function autoAssignTrucks() {
 
           <div style={{ marginTop: 14 }}>
             {todos.length === 0 && <div style={{ color: '#8A8A83', fontSize: 13, padding: '20px 4px' }}>今はTODOはありません</div>}
-            {todos.map((t) => (
+            {sortedTodos().map((t) => (
               <div key={t.id} style={styles.todoRow}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
