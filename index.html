@@ -850,18 +850,21 @@ function GenbaTracker() {
         setKumitenList(list);
       } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
 
-      const sList = await storage.list('sched:', true);
-      const sItems = await fetchWithLimit((sList && sList.keys) || [], 8);
+      async function fetchGroup(prefix) {
+        const listRes = await storage.list(`${prefix}:`, true);
+        return fetchWithLimit((listRes && listRes.keys) || [], 8);
+      }
+      const [sItems, mItems, tItems] = await Promise.all([
+        fetchGroup('sched'),
+        fetchGroup('mgmt'),
+        fetchGroup('todo'),
+      ]);
       sItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setSchedRecords(sItems);
 
-      const mList = await storage.list('mgmt:', true);
-      const mItems = await fetchWithLimit((mList && mList.keys) || [], 8);
       mItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setMgmtRecords(mItems);
 
-      const tList = await storage.list('todo:', true);
-      const tItems = await fetchWithLimit((tList && tList.keys) || [], 8);
       tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       setTodos(tItems);
       syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
