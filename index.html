@@ -2513,7 +2513,7 @@ function autoAssignTrucks() {
                     <input style={styles.input} value={form.supervisorPhone || ''} onChange={(e) => setForm({ ...form, supervisorPhone: e.target.value })} placeholder="090-1234-5678" inputMode="tel" />
                   </div>
                 </div>
-                {!form.supervisorPhone && <div style={styles.phoneHint}>💡 新規登録の時点で電話番号も確認しておくと安心です（現場で改めて聞くと「資料見てないの？」と思われることもあるので、登録時にまとめて確認するのがおすすめです）</div>}
+
 
                 <label style={styles.label}>ハウスNo／事業場コード</label>
                 <input style={styles.input} value={form.houseNumber || ''} onChange={(e) => setForm({ ...form, houseNumber: e.target.value })} placeholder="例：262441" />
@@ -3051,7 +3051,6 @@ const styles = {
   autofillHint: { fontSize: 11, color: '#8A8A83', marginTop: 4 },
   garaToggle: { width: '100%', textAlign: 'left', border: '2px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, background: '#fff', color: '#8A8A83', cursor: 'pointer' },
   recycleHint: { fontSize: 11, color: '#2A9D8F', fontWeight: 700, marginTop: 4 },
-  phoneHint: { fontSize: 11.5, color: '#6B7A99', marginTop: 6, marginBottom: 10 },
   garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
   garaBadge: { fontSize: 11.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
   recycleBadge: { fontSize: 11.5, background: '#DFF2E1', color: '#1E6B2E', borderRadius: 6, padding: '3px 8px', fontWeight: 800, marginLeft: 6 },
