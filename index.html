@@ -890,6 +890,7 @@ function GenbaTracker() {
       auto: !!(overrides && overrides.auto),
       checkType: (overrides && overrides.checkType) || '',
       featureKey: (overrides && overrides.featureKey) || '',
+      seenBy: (overrides && overrides.auto) ? [] : [getDeviceStaff()].filter(Boolean),
       createdAt: new Date().toISOString(),
     };
     await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
@@ -1001,6 +1002,16 @@ function GenbaTracker() {
         if (aDate !== bDate) return aDate.localeCompare(bDate);
         return (b.createdAt || '').localeCompare(a.createdAt || '');
       });
+  }
+
+  // 「見た」ボタンを押した人（端末の担当者名）を記録する
+  async function markSeenBy(t) {
+    const me = getDeviceStaff();
+    if (!me) { showToast('先に右上で担当者名を設定してください'); return; }
+    if ((t.seenBy || []).includes(me)) return;
+    const updated = { ...t, seenBy: [...(t.seenBy || []), me] };
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
   }
 
   function featureCheckTodos() {
@@ -2280,10 +2291,14 @@ function autoAssignTrucks() {
             )}
             {sortedTodos().length > 0 && (
               <>
-                {sortedTodos().map((t) => (
-                  <div key={t.id} style={styles.todoRow}>
+                {sortedTodos().map((t) => {
+                  const me = getDeviceStaff();
+                  const iSaw = me && (t.seenBy || []).includes(me);
+                  return (
+                  <div key={t.id} style={{ ...styles.todoRow, ...(iSaw ? {} : styles.todoRowUnseen) }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                        {!iSaw && <span style={styles.newTag}>未確認</span>}
                         {t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
                       </div>
                       {(t.siteName || t.date) && (
@@ -2292,14 +2307,19 @@ function autoAssignTrucks() {
                         </div>
                       )}
                       {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
-                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>{t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}</div>
+                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>
+                        {t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}
+                        {(t.seenBy || []).length > 0 ? `／見た：${t.seenBy.join('・')}` : '／まだ誰も見ていません'}
+                      </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                       <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
                       <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                      {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </>
             )}
 
@@ -2997,6 +3017,9 @@ const styles = {
   todoMeta: { fontSize: 12, color: '#2A9D8F', marginTop: 4, cursor: 'pointer', fontWeight: 600 },
   todoDoneBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
   autoTag: { fontSize: 10, background: '#FFE8A3', color: '#8A6D00', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
+  newTag: { fontSize: 10, background: '#E63946', color: '#fff', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
+  todoRowUnseen: { borderLeft: '3px solid #E63946', background: '#FFF7F5' },
+  seenBtn: { fontSize: 11, padding: '5px 10px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
   gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
   gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
