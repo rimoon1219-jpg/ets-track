@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-09';
+  window.__APP_VERSION__ = '2026-09-17-11';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -2102,7 +2102,13 @@ function autoAssignTrucks() {
       {tab !== 'dispatch' && (
         <>
           <div style={styles.searchBox}>
-            <input style={styles.searchInput} placeholder="現場名で検索" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <SiteNameAutocomplete
+              style={styles.searchInput}
+              placeholder="現場名で検索"
+              value={search}
+              options={siteNameOptions()}
+              onChange={(v) => setSearch(v)}
+            />
             <div style={styles.searchRow2}>
               <input type="date" style={styles.dateInput} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
               <span style={{ color: '#B0B0A6', fontSize: 12 }}>〜</span>
@@ -2110,10 +2116,14 @@ function autoAssignTrucks() {
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(''); setDateTo(''); }}>全期間を表示</button>
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>今日</button>
               <button style={styles.linkBtnSmall} onClick={() => { setShowTrash(true); setTrashSelected([]); loadTrash(); }}>🗑 ゴミ箱</button>
-              {(search || dateFrom || dateTo || kumitenFilter !== '全て' || showUncollectedOnly) && (
+              {(search || dateFrom || dateTo || kumitenFilter !== '全て' || summaryKumitenFilter !== '全て' || ganttKumitenFilter !== '全て' || showUncollectedOnly) && (
                 <button
                   style={{ ...styles.linkBtnSmall, color: '#E63946' }}
-                  onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setKumitenFilter('全て'); setShowUncollectedOnly(false); }}
+                  onClick={() => {
+                    setSearch(''); setDateFrom(''); setDateTo('');
+                    setKumitenFilter('全て'); setSummaryKumitenFilter('全て'); setGanttKumitenFilter('全て');
+                    setShowUncollectedOnly(false);
+                  }}
                 >
                   🔄 検索条件を全部リセット
                 </button>
