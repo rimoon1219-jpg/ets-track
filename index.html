@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-02';
+  window.__APP_VERSION__ = '2026-09-17-03';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -777,6 +777,7 @@ function GenbaTracker() {
   const [todoSiteName, setTodoSiteName] = useState('');
   const [todoDate, setTodoDate] = useState('');
   const [todoQuickTags, setTodoQuickTags] = useState([]);
+  const [todoImportant, setTodoImportant] = useState(false);
   const [todoType, setTodoType] = useState('task');
   const [showKumitenEditor, setShowKumitenEditor] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -963,6 +964,7 @@ function GenbaTracker() {
       checkType: (overrides && overrides.checkType) || '',
       featureKey: (overrides && overrides.featureKey) || '',
       todoType: (overrides && overrides.todoType) || 'task',
+      important: !!(overrides && overrides.important),
       seenBy: (overrides && overrides.auto) ? [] : [getDeviceStaff()].filter(Boolean),
       createdAt: new Date().toISOString(),
     };
@@ -970,6 +972,13 @@ function GenbaTracker() {
     setTodos((prev) => [record, ...prev]);
     if (!overrides) { setTodoText(''); setTodoSiteName(''); setTodoDate(''); }
     return record;
+  }
+
+  // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
+  async function toggleImportant(t) {
+    const next = { ...t, important: !t.important };
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
   }
 
   // 座標だけが入っていて、ちゃんとした住所になっていないものを検出（例：35.331,139.445 など）
@@ -1073,6 +1082,9 @@ function GenbaTracker() {
     return [...todos]
       .filter((t) => t.checkType !== 'feature')
       .sort((a, b) => {
+        const aImp = a.important ? 0 : 1;
+        const bImp = b.important ? 0 : 1;
+        if (aImp !== bImp) return aImp - bImp;
         const aGantt = a.text.includes('工程表画像添付') ? 0 : 1;
         const bGantt = b.text.includes('工程表画像添付') ? 0 : 1;
         if (aGantt !== bGantt) return aGantt - bGantt;
@@ -1131,9 +1143,9 @@ function GenbaTracker() {
         await addTodo({ text: tag, siteName: todoSiteName.trim(), date: todoDate, todoType: 'task' });
       }
     } else if (todoText.trim()) {
-      await addTodo({ text: todoText.trim(), siteName: todoSiteName.trim(), date: todoDate, todoType });
+      await addTodo({ text: todoText.trim(), siteName: todoSiteName.trim(), date: todoDate, todoType, important: todoImportant });
     }
-    setTodoQuickTags([]); setTodoText(''); setTodoSiteName(''); setTodoDate('');
+    setTodoQuickTags([]); setTodoText(''); setTodoSiteName(''); setTodoDate(''); setTodoImportant(false);
   }
 
   // 対応中マークの切り替え（他の人が同じタスクに重複して手を付けないように）
@@ -2406,6 +2418,12 @@ function autoAssignTrucks() {
               ))}
             </div>
             <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 4 }}>※ワンタップの3つは常にタスク扱いになります</div>
+            <button
+              style={{ ...styles.quickTagBtn, marginTop: 8, ...(todoImportant ? styles.importantBtnActive : {}) }}
+              onClick={() => setTodoImportant((v) => !v)}
+            >
+              {todoImportant ? '⚠️ 重要としてマーク中' : '⚠️ 重要にする'}
+            </button>
             <button style={{ ...styles.addBtn, marginTop: 8 }} onClick={addQuickTodos}>
               ＋ 追加{todoQuickTags.length > 0 ? `（${todoQuickTags.length}件）` : ''}
             </button>
@@ -2424,10 +2442,10 @@ function autoAssignTrucks() {
                   const me = getDeviceStaff();
                   const iSaw = me && (t.seenBy || []).includes(me);
                   return (
-                  <div key={t.id} style={styles.todoRow}>
+                  <div key={t.id} style={{ ...styles.todoRow, ...(t.important ? styles.todoRowImportant : {}) }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                        {t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
+                        {t.important && <span style={styles.importantTag}>⚠️重要</span>}{t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
                       </div>
                       {(t.siteName || t.date) && (
                         <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
@@ -2441,6 +2459,7 @@ function autoAssignTrucks() {
                       <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
                       <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
                       <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
+                      <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
                     </div>
                   </div>
                   );
@@ -2460,10 +2479,10 @@ function autoAssignTrucks() {
                   const me = getDeviceStaff();
                   const iSaw = me && (t.seenBy || []).includes(me);
                   return (
-                  <div key={t.id} style={{ ...styles.todoRow, ...(iSaw ? {} : styles.todoRowUnseen) }}>
+                  <div key={t.id} style={{ ...styles.todoRow, ...(iSaw ? {} : styles.todoRowUnseen), ...(t.important ? styles.todoRowImportant : {}) }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                        {!iSaw && <span style={styles.newTag}>未確認</span>}{t.text}
+                        {t.important && <span style={styles.importantTag}>⚠️重要</span>}{!iSaw && <span style={styles.newTag}>未確認</span>}{t.text}
                       </div>
                       {(t.siteName || t.date) && (
                         <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
@@ -2479,6 +2498,7 @@ function autoAssignTrucks() {
                       {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
                       <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>片付ける</button>
                       <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
+                      <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
                     </div>
                   </div>
                   );
@@ -3201,6 +3221,9 @@ const styles = {
   autoTag: { fontSize: 10, background: '#FFE8A3', color: '#8A6D00', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   newTag: { fontSize: 10, background: '#E63946', color: '#fff', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   todoRowUnseen: { borderLeft: '3px solid #E63946', background: '#FFF7F5' },
+  importantTag: { fontSize: 10, background: '#E63946', color: '#fff', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
+  todoRowImportant: { borderLeft: '4px solid #E63946', background: '#FFF4F0', boxShadow: '0 0 0 1px #F3C6C0 inset' },
+  importantBtnActive: { background: '#E63946', color: '#fff', borderColor: '#E63946' },
   seenBtn: { fontSize: 11, padding: '5px 10px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   switchTypeBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #D8D6CC', color: '#8A8A83', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
