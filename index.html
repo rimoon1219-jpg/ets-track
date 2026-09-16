@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-07';
+  window.__APP_VERSION__ = '2026-09-17-09';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -2110,6 +2110,14 @@ function autoAssignTrucks() {
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(''); setDateTo(''); }}>全期間を表示</button>
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>今日</button>
               <button style={styles.linkBtnSmall} onClick={() => { setShowTrash(true); setTrashSelected([]); loadTrash(); }}>🗑 ゴミ箱</button>
+              {(search || dateFrom || dateTo || kumitenFilter !== '全て' || showUncollectedOnly) && (
+                <button
+                  style={{ ...styles.linkBtnSmall, color: '#E63946' }}
+                  onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setKumitenFilter('全て'); setShowUncollectedOnly(false); }}
+                >
+                  🔄 検索条件を全部リセット
+                </button>
+              )}
             </div>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
@@ -2172,7 +2180,10 @@ function autoAssignTrucks() {
                   </div>
                   <div style={styles.cardName}>{r.name}</div>
                   {tab === 'sched' && r.address && (
-                    <a href={mapUrl(r.address)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={styles.addrLink}>📍 {r.address}</a>
+                    <div style={styles.addrRow} onClick={(e) => e.stopPropagation()}>
+                      <span style={styles.addrText}>📍 {r.address}</span>
+                      <a href={mapUrl(r.address)} target="_blank" rel="noreferrer" style={styles.mapOpenBtn}>🗺 地図</a>
+                    </div>
                   )}
                   {tab === 'sched' && (r.supervisorName || r.supervisorPhone) && (
                     <div style={styles.supervisorRow} onClick={(e) => e.stopPropagation()}>
@@ -3283,6 +3294,9 @@ const styles = {
   staffInline: { fontSize: 12, color: '#A5A59C' },
   cardName: { fontSize: 16, fontWeight: 700, marginBottom: 4 },
   addrLink: { fontSize: 13, color: '#457B9D', display: 'block', marginBottom: 4, textDecoration: 'none' },
+  addrRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
+  addrText: { fontSize: 13, color: '#5A5A54' },
+  mapOpenBtn: { fontSize: 12, color: '#457B9D', textDecoration: 'none', border: '1px solid #C7DCE5', borderRadius: 6, padding: '4px 9px', background: '#F3F9FB', flexShrink: 0, whiteSpace: 'nowrap' },
   supervisorRow: { display: 'flex', gap: 12, alignItems: 'center', marginBottom: 6 },
   supervisorName: { fontSize: 12.5, color: '#5A5A54' },
   phoneLink: { fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, textDecoration: 'none' },
