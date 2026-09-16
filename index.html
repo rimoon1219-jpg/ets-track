@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-05';
+  window.__APP_VERSION__ = '2026-09-17-07';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -2040,6 +2040,11 @@ function autoAssignTrucks() {
         * { box-sizing: border-box; }
         input, select, button, textarea { font-family: inherit; }
         input::placeholder, textarea::placeholder { color: #9A9A94; }
+        @keyframes todoBadgePulse {
+          0% { box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.55); }
+          70% { box-shadow: 0 0 0 6px rgba(230, 57, 70, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(230, 57, 70, 0); }
+        }
       `}</style>
 
       <div style={styles.header}>
@@ -2067,7 +2072,20 @@ function autoAssignTrucks() {
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
         <button onClick={tryUnlockTodoTab} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
-          🔒TODO{todoUnlocked && (todos.length + infoGapSites().length) > 0 ? `(${todos.length + infoGapSites().length})` : ''}
+          🔒TODO
+          {todoUnlocked && (() => {
+            // タスク・伝達（スタッフが対応するもの）だけをバッジ件数にする。
+            // 情報不足の現場（住所・監督名など、マニフェスト用に洋子さんが確認する項目）はここに混ぜない。
+            // 混ぜると常に大きい数字になってしまい、本当に大事なタスク・伝達が増えても気づきにくくなるため
+            const total = todos.filter((t) => t.checkType !== 'feature').length;
+            if (total === 0) return null;
+            const hasImportant = todos.some((t) => t.important && t.checkType !== 'feature');
+            return (
+              <span style={{ ...styles.todoTabBadge, ...(hasImportant ? styles.todoTabBadgeImportant : {}) }}>
+                {hasImportant ? '⚠️' : ''}{total}
+              </span>
+            );
+          })()}
         </button>
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
@@ -3212,6 +3230,8 @@ const styles = {
   tabRow: { display: 'flex', gap: 8, marginBottom: 14 },
   tabBtn: { flex: 1, background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px', fontSize: 14, fontWeight: 600, color: '#8A8A83', cursor: 'pointer' },
   tabBtnActive: { background: '#232320', color: '#fff', borderColor: '#232320' },
+  todoTabBadge: { display: 'inline-block', marginLeft: 5, background: '#8A8A83', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700, verticalAlign: 2 },
+  todoTabBadgeImportant: { background: '#E63946', animation: 'todoBadgePulse 1.6s infinite' },
   lockIconBtn: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, width: 40, fontSize: 14, cursor: 'pointer' },
   staffChip: { background: 'none', border: 'none', color: '#457B9D', fontSize: 11.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
   pendingBadge: { fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '2px 7px', fontWeight: 700 },
