@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-16-02';
+  window.__APP_VERSION__ = '2026-09-17-02';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -58,6 +58,45 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbyQEs0L_0WLHnQNSak-OlZl
 const GOOGLE_MAPS_API_KEY = 'AIzaSyBqEAhpt-XVjaoKAiKxKkmfdLJ7IzKKi0g';
 // ▲▲▲ ここまで ▲▲▲
 
+// ---- 現場名の候補入力（○/〇なども含めて、どこに入力しても候補に出るように） ----
+function SiteNameAutocomplete({ value, onChange, onSelect, onBlurExtra, options, placeholder, style }) {
+  const [open, setOpen] = useState(false);
+  const norm = (s) => (s || '').replace(/[〇○]/g, '○').toLowerCase();
+  const query = norm(value);
+  const matches = query
+    ? (options || []).filter((o) => norm(o).includes(query)).slice(0, 30)
+    : [];
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        style={style}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={(e) => {
+          const evt = e;
+          setTimeout(() => setOpen(false), 150);
+          if (onBlurExtra) onBlurExtra(evt);
+        }}
+      />
+      {open && matches.length > 0 && (
+        <div style={styles.siteSuggestBox}>
+          {matches.map((m) => (
+            <div
+              key={m}
+              style={styles.siteSuggestItem}
+              onMouseDown={() => { onChange(m); if (onSelect) onSelect(m); setOpen(false); }}
+            >
+              {m}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- 現場名の表記ゆれ対策 ----
 const DEVICE_STAFF_KEY = 'genbaTracker_staffName';
 function normalizeSiteName(s) {
@@ -70,6 +109,8 @@ function normalizeSiteName(s) {
   str = str.replace(/[①-⑳]/g, (ch) => String(circled.indexOf(ch) + 1));
   // 全角スペース・半角スペースを除去
   str = str.replace(/[\s　]/g, '');
+  // ○（丸記号）の表記ゆれを統一（〇=漢数字のゼロ と ○=図形の丸、どちらで入力されても同じ扱いに）
+  str = str.replace(/[〇○]/g, '○');
   return str;
 }
 
@@ -704,6 +745,7 @@ function GenbaTracker() {
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [trashItems, setTrashItems] = useState([]);
+  const [trashSelected, setTrashSelected] = useState([]);
   const [renameHistory, setRenameHistory] = useState([]);
   const [showRenameHistory, setShowRenameHistory] = useState(false);
   const [showInfoGaps, setShowInfoGaps] = useState(false);
@@ -1584,6 +1626,37 @@ function autoAssignTrucks() {
     if (!window.confirm(`「${item.name}」を完全に削除します。元に戻せません。よろしいですか？`)) return;
     await storage.delete(`trash:${item.id}`, true);
     setTrashItems((prev) => prev.filter((t) => t.id !== item.id));
+    setTrashSelected((prev) => prev.filter((id) => id !== item.id));
+  }
+
+  function toggleTrashSelected(id) {
+    setTrashSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleTrashSelectAll() {
+    setTrashSelected((prev) => (prev.length === trashItems.length ? [] : trashItems.map((t) => t.id)));
+  }
+
+  async function purgeSelectedTrash() {
+    if (trashSelected.length === 0) { showToast('選択されていません'); return; }
+    if (!window.confirm(`選択した${trashSelected.length}件を完全に削除します。元に戻せません。よろしいですか？`)) return;
+    for (const id of trashSelected) {
+      try { await storage.delete(`trash:${id}`, true); } catch (e) { /* ignore */ }
+    }
+    setTrashItems((prev) => prev.filter((t) => !trashSelected.includes(t.id)));
+    setTrashSelected([]);
+    showToast('完全に削除しました');
+  }
+
+  async function purgeAllTrash() {
+    if (trashItems.length === 0) return;
+    if (!window.confirm(`ゴミ箱の${trashItems.length}件を全て完全に削除します。元に戻せません。よろしいですか？`)) return;
+    for (const item of trashItems) {
+      try { await storage.delete(`trash:${item.id}`, true); } catch (e) { /* ignore */ }
+    }
+    setTrashItems([]);
+    setTrashSelected([]);
+    showToast('ゴミ箱を空にしました');
   }
 
   async function bulkDelete() {
@@ -2004,7 +2077,7 @@ function autoAssignTrucks() {
               <input type="date" style={styles.dateInput} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(''); setDateTo(''); }}>全期間を表示</button>
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>今日</button>
-              <button style={styles.linkBtnSmall} onClick={() => { setShowTrash(true); loadTrash(); }}>🗑 ゴミ箱</button>
+              <button style={styles.linkBtnSmall} onClick={() => { setShowTrash(true); setTrashSelected([]); loadTrash(); }}>🗑 ゴミ箱</button>
             </div>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
@@ -2305,13 +2378,15 @@ function autoAssignTrucks() {
               onChange={(e) => setTodoText(e.target.value)}
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <input
-                style={{ ...styles.input, flex: 1 }}
-                placeholder="関連する現場名（任意）"
-                list="siteNameOptions"
-                value={todoSiteName}
-                onChange={(e) => setTodoSiteName(e.target.value)}
-              />
+              <div style={{ flex: 1 }}>
+                <SiteNameAutocomplete
+                  style={{ ...styles.input, width: '100%' }}
+                  placeholder="関連する現場名（任意）"
+                  value={todoSiteName}
+                  options={siteNameOptions()}
+                  onChange={(v) => setTodoSiteName(v)}
+                />
+              </div>
               <input
                 type="date"
                 style={{ ...styles.input, width: 140 }}
@@ -2620,12 +2695,15 @@ function autoAssignTrucks() {
             </div>
 
             <label style={styles.label}>現場名</label>
-            <input
+            <SiteNameAutocomplete
               style={styles.input}
               value={form.name}
-              list="siteNameOptions"
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              onBlur={(e) => {
+              options={siteNameOptions()}
+              onChange={(v) => setForm({ ...form, name: v })}
+              onSelect={(name) => {
+                if (tab === 'sched') fillFromExistingSite(name);
+              }}
+              onBlurExtra={(e) => {
                 const val = e.target.value;
                 if (!editingId) {
                   const similar = findSimilarSiteName(val);
@@ -2639,9 +2717,6 @@ function autoAssignTrucks() {
               }}
               placeholder="例：南林間604①"
             />
-            <datalist id="siteNameOptions">
-              {siteNameOptions().map((n) => <option key={n} value={n} />)}
-            </datalist>
             {tab === 'sched' && !editingId && <div style={styles.autofillHint}>同じ現場名を入力すると、監督名・電話番号・ガラ必須などが自動で入ります</div>}
 
             <label style={styles.label}>工務店</label>
@@ -2914,13 +2989,32 @@ function autoAssignTrucks() {
               <div style={styles.sheetTitle}>ゴミ箱（削除から30日間残ります）</div>
               <button style={styles.closeBtn} onClick={() => setShowTrash(false)}>✕</button>
             </div>
+            {trashItems.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '8px 0', flexWrap: 'wrap' }}>
+                <button style={styles.linkBtnSmall} onClick={toggleTrashSelectAll}>
+                  {trashSelected.length === trashItems.length ? '全解除' : `全選択（${trashItems.length}件）`}
+                </button>
+                {trashSelected.length > 0 && (
+                  <button style={styles.kumitenDeleteBtn} onClick={purgeSelectedTrash}>選択した{trashSelected.length}件を完全削除</button>
+                )}
+                <button style={{ ...styles.kumitenDeleteBtn, marginLeft: 'auto' }} onClick={purgeAllTrash}>全て完全削除</button>
+              </div>
+            )}
             <div style={{ marginTop: 4, maxHeight: 420, overflowY: 'auto' }}>
               {trashItems.length === 0 && <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>ゴミ箱は空です</div>}
               {trashItems.map((item) => (
                 <div key={item.id} style={styles.extraPickRow}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 700 }}>{item.name}</div>
-                    <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.date}／{item._type === 'sched' ? '予定表' : '管理表'}／削除:{(item.deletedAt || '').slice(0, 10)}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={trashSelected.includes(item.id)}
+                      onChange={() => toggleTrashSelected(item.id)}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{item.name}</div>
+                      <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.date}／{item._type === 'sched' ? '予定表' : '管理表'}／削除:{(item.deletedAt || '').slice(0, 10)}</div>
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button style={styles.pickTempBtn} onClick={() => restoreFromTrash(item)}>復元</button>
@@ -3231,6 +3325,8 @@ const styles = {
   lineItemRemove: { background: 'none', border: 'none', color: '#E63946', fontSize: 14, cursor: 'pointer', padding: '0 2px' },
   lineItemTotal: { textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#232320', marginTop: 6 },
   autofillHint: { fontSize: 11, color: '#8A8A83', marginTop: 4 },
+  siteSuggestBox: { position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 50, background: '#fff', border: '1px solid #E5E3DC', borderRadius: 8, marginTop: 2, maxHeight: 220, overflowY: 'auto', boxShadow: '0 4px 10px rgba(0,0,0,0.08)' },
+  siteSuggestItem: { padding: '9px 12px', fontSize: 13.5, color: '#232320', borderBottom: '1px solid #F1F0EA', cursor: 'pointer' },
   garaToggle: { width: '100%', textAlign: 'left', border: '2px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, background: '#fff', color: '#8A8A83', cursor: 'pointer' },
   recycleHint: { fontSize: 11, color: '#2A9D8F', fontWeight: 700, marginTop: 4 },
   garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
