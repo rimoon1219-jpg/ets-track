@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-11';
+  window.__APP_VERSION__ = '2026-09-17-12';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -2190,15 +2190,28 @@ function autoAssignTrucks() {
                   </div>
                   <div style={styles.cardName}>{r.name}</div>
                   {tab === 'sched' && r.address && (
-                    <div style={styles.addrRow} onClick={(e) => e.stopPropagation()}>
+                    <div style={styles.addrRow}>
                       <span style={styles.addrText}>📍 {r.address}</span>
-                      <a href={mapUrl(r.address)} target="_blank" rel="noreferrer" style={styles.mapOpenBtn}>🗺 地図</a>
+                      {isCoordOnlyAddress(r.address) && <span style={styles.coordWarnTag}>⚠️座標のみ・住所要確認</span>}
+                      <a
+                        href={mapUrl(r.address)}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={styles.mapOpenBtn}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        🗺 地図
+                      </a>
                     </div>
                   )}
                   {tab === 'sched' && (r.supervisorName || r.supervisorPhone) && (
-                    <div style={styles.supervisorRow} onClick={(e) => e.stopPropagation()}>
+                    <div style={styles.supervisorRow}>
                       {r.supervisorName && <span style={styles.supervisorName}>監督：{r.supervisorName}</span>}
-                      {r.supervisorPhone && <a href={`tel:${r.supervisorPhone}`} style={styles.phoneLink}>📞 {r.supervisorPhone}</a>}
+                      {r.supervisorPhone && (
+                        <a href={`tel:${r.supervisorPhone}`} style={styles.phoneLink} onClick={(e) => e.stopPropagation()}>
+                          📞 {r.supervisorPhone}
+                        </a>
+                      )}
                     </div>
                   )}
 
@@ -2206,6 +2219,7 @@ function autoAssignTrucks() {
                   {tab === 'mgmt' && r.items && <div style={styles.noteText}>{r.items}</div>}
 
                   <div style={styles.actionRow} onClick={(e) => e.stopPropagation()}>
+                    <button style={styles.editOpenBtn} onClick={() => openEdit(r)}>✏️ 開いて編集</button>
                     {tab === 'sched' && <button style={styles.handoffBtn} onClick={() => handoffToMgmt(r)}>→ 今日の管理表を作成</button>}
                     <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 複製（1週間後）</button>
                     <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 複製（連棟・数日後）</button>
@@ -3306,6 +3320,7 @@ const styles = {
   addrLink: { fontSize: 13, color: '#457B9D', display: 'block', marginBottom: 4, textDecoration: 'none' },
   addrRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
   addrText: { fontSize: 13, color: '#5A5A54' },
+  coordWarnTag: { fontSize: 11.5, color: '#B5680A', background: '#FDF1DE', border: '1px solid #EFD4A2', borderRadius: 6, padding: '2px 7px', fontWeight: 700, whiteSpace: 'nowrap' },
   mapOpenBtn: { fontSize: 12, color: '#457B9D', textDecoration: 'none', border: '1px solid #C7DCE5', borderRadius: 6, padding: '4px 9px', background: '#F3F9FB', flexShrink: 0, whiteSpace: 'nowrap' },
   supervisorRow: { display: 'flex', gap: 12, alignItems: 'center', marginBottom: 6 },
   supervisorName: { fontSize: 12.5, color: '#5A5A54' },
@@ -3316,6 +3331,7 @@ const styles = {
   m3Value: { fontSize: 12.5, color: '#5A5A54', fontWeight: 700 },
   lockBtn: { background: '#F6F1E7', border: '1px dashed #D8C9A3', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: '#8A6D3B', cursor: 'pointer' },
   handoffBtn: { background: '#232320', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  editOpenBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   actionRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   dupBtn: { background: '#fff', color: '#457B9D', border: '1px solid #C7D7E0', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
   photoThread: { display: 'flex', gap: 8, padding: '0 14px 12px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid #F0EFE9', paddingTop: 10 },
