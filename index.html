@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-15-05';
+  window.__APP_VERSION__ = '2026-09-16-02';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -832,7 +832,14 @@ function GenbaTracker() {
       let placed = 0;
       for (const s of daySites) {
         if (!s.address) continue;
-        const loc = await geocodeAddress(geocodeQuery(s.address));
+        let loc = null;
+        if (isCoordOnlyAddress(s.address)) {
+          // 座標だけが分かっている現場は、Googleに問い合わせず座標をそのまま使う
+          const [latStr, lngStr] = s.address.split(/[,、]/);
+          loc = { lat: parseFloat(latStr), lng: parseFloat(lngStr) };
+        } else {
+          loc = await geocodeAddress(geocodeQuery(s.address));
+        }
         if (cancelled) return;
         if (!loc) continue;
         const truckId = assignments[s.id];
@@ -842,7 +849,7 @@ function GenbaTracker() {
           position: loc,
           map,
           icon: markerIcon(color),
-          title: `${s.name}${truckId ? '（' + (opts.find((o) => o.id === truckId) || {}).label + '）' : '（未割当）'}`,
+          title: `${s.name}${isCoordOnlyAddress(s.address) ? '（座標のみ・住所要確認）' : ''}${truckId ? '（' + (opts.find((o) => o.id === truckId) || {}).label + '）' : '（未割当）'}`,
         });
         mapMarkersRef.current.push(marker);
         bounds.extend(loc);
@@ -1092,6 +1099,14 @@ function GenbaTracker() {
     const next = t.inProgress ? { ...t, inProgress: false, inProgressBy: '' } : { ...t, inProgress: true, inProgressBy: getDeviceStaff() || '担当者未設定' };
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+  }
+
+  // タスク⇔伝達を後から入れ替える（振り分けを間違えた時用）
+  async function switchTodoType(t) {
+    const next = { ...t, todoType: (t.todoType === 'memo') ? 'task' : 'memo' };
+    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+    showToast(next.todoType === 'memo' ? '伝達に移動しました' : 'タスクに移動しました');
   }
 
   // TODOから該当の現場を開く（予定表タブに切り替えて編集画面を出す）
@@ -2278,18 +2293,17 @@ function autoAssignTrucks() {
           )}
 
           <div style={styles.todoAddBox}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#8A8A83', marginBottom: 6 }}>下の自由入力欄に書く内容はどちら？</div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'task' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('task')}>✅ タスク（やった管理）</button>
+              <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'memo' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('memo')}>📢 伝達（見た管理）</button>
+            </div>
             <textarea
               style={{ ...styles.input, minHeight: 54, resize: 'vertical' }}
               placeholder="例：9/25 ○○現場の住所が未入力／PDFまだ、など"
               value={todoText}
               onChange={(e) => setTodoText(e.target.value)}
             />
-            {!todoQuickTags.length && todoText.trim() && (
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <button style={{ ...styles.quickTagBtn, ...(todoType === 'task' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('task')}>✅ タスク（やった管理）</button>
-                <button style={{ ...styles.quickTagBtn, ...(todoType === 'memo' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('memo')}>📢 伝達（見た管理）</button>
-              </div>
-            )}
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <input
                 style={{ ...styles.input, flex: 1 }}
@@ -2351,6 +2365,7 @@ function autoAssignTrucks() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                       <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
                       <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                      <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
                     </div>
                   </div>
                   );
@@ -2388,6 +2403,7 @@ function autoAssignTrucks() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                       {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
                       <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>片付ける</button>
+                      <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
                     </div>
                   </div>
                   );
@@ -3092,6 +3108,7 @@ const styles = {
   newTag: { fontSize: 10, background: '#E63946', color: '#fff', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   todoRowUnseen: { borderLeft: '3px solid #E63946', background: '#FFF7F5' },
   seenBtn: { fontSize: 11, padding: '5px 10px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  switchTypeBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #D8D6CC', color: '#8A8A83', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
   gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
   gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
