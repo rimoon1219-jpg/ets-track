@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-03';
+  window.__APP_VERSION__ = '2026-09-17-05';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -1039,6 +1039,8 @@ function GenbaTracker() {
     return schedRecords
       .map((r) => {
         const gaps = [];
+        // 座標のみの住所は地図には出せるが、マニフェスト等では正式住所が必要なため一覧には残す。
+        // ただし地図が使えない「完全に空欄」ほど急ぎではないので、赤字の緊急表示・並び順の最優先からは外す
         if (isCoordOnlyAddress(r.address)) gaps.push('住所(座標のみ)');
         else if (!(r.address || '').trim()) gaps.push('住所');
         if (r.date >= today) {
@@ -1050,10 +1052,10 @@ function GenbaTracker() {
         return { r, gaps };
       })
       .filter((x) => x.gaps.length > 0)
-      // 住所の抜けを最優先。次に現場の日付が近い順（現場が始まるまでに必ず要る情報を上に出す）
+      // 住所が完全に空欄のものを最優先（地図に出せず一番困る）。座標のみは地図は使えるので通常優先度。次に現場の日付が近い順
       .sort((a, b) => {
-        const aAddr = a.gaps.some((g) => g.startsWith('住所')) ? 0 : 1;
-        const bAddr = b.gaps.some((g) => g.startsWith('住所')) ? 0 : 1;
+        const aAddr = a.gaps.includes('住所') ? 0 : 1;
+        const bAddr = b.gaps.includes('住所') ? 0 : 1;
         if (aAddr !== bAddr) return aAddr - bAddr;
         return (a.r.date || '').localeCompare(b.r.date || '');
       });
@@ -2355,14 +2357,14 @@ function autoAssignTrucks() {
                     <div key={kumiten} style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件）</div>
                       {items.map(({ r, gaps }) => {
-                        const hasAddr = gaps.some((g) => g.startsWith('住所'));
+                        const hasAddr = gaps.includes('住所');
                         return (
                           <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
                             <div>
                               <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
                               <div style={{ fontSize: 11.5, color: '#8A8A83' }}>
                                 {r.date}／{gaps.map((g, i) => (
-                                  <span key={g} style={g.startsWith('住所') ? styles.gapUrgent : undefined}>{i > 0 ? '・' : ''}{g}</span>
+                                  <span key={g} style={g === '住所' ? styles.gapUrgent : undefined}>{i > 0 ? '・' : ''}{g}</span>
                                 ))}が未入力
                               </div>
                             </div>
