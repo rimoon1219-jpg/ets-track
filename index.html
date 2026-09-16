@@ -6,6 +6,28 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
+  // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
+  window.__APP_VERSION__ = '2026-09-15-05';
+  (function () {
+    try {
+      if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
+      fetch('./index.html?check=' + Date.now(), { cache: 'no-store' })
+        .then((res) => res.text())
+        .then((text) => {
+          const m = text.match(/__APP_VERSION__\s*=\s*'([^']+)'/);
+          if (m && m[1] !== window.__APP_VERSION__) {
+            sessionStorage.removeItem('etsTrackVersionChecked');
+            window.location.href = window.location.pathname + '?v=' + Date.now();
+          } else {
+            sessionStorage.setItem('etsTrackVersionChecked', window.__APP_VERSION__);
+          }
+        })
+        .catch(() => {});
+    } catch (e) {}
+  })();
+</script>
 <title>ETS TRACK | Ecolotex Shonan Co., Ltd.</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
