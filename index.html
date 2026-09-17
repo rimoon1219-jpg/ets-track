@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-32';
+  window.__APP_VERSION__ = '2026-09-17-39';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -240,6 +240,17 @@ function savePhotoQueueToDisk(q) {
 }
 function photoQueueCount() { return getPhotoQueue().length; }
 
+// 写真アップロード失敗時の再送信スケジュール（通常の保存キュー用のscheduleRetry()とは別物。
+// 以前はここで誤って書き込み用のscheduleRetry()を呼んでいて、写真の再送だけがズレていた）
+let photoRetryTimer = null;
+function schedulePhotoRetry() {
+  if (photoRetryTimer) return;
+  photoRetryTimer = setTimeout(async () => {
+    photoRetryTimer = null;
+    await retryPhotoQueue();
+  }, 8000);
+}
+
 function removeFromPhotoQueue(id) {
   const q = getPhotoQueue().filter((i) => i.id !== id);
   savePhotoQueueToDisk(q);
@@ -340,7 +351,7 @@ const storage = {
       q.push({ id, dataUrl, filename, recordId, staff, recordPrefix: recordPrefix || 'mgmt', createdAt: Date.now() });
       savePhotoQueueToDisk(q);
       notifyPendingChange();
-      scheduleRetry();
+      schedulePhotoRetry();
       return null; // 呼び出し側は「保留中」として扱う
     }
   },
@@ -353,6 +364,27 @@ const TODO_PASSWORD = '4455';
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
 // 電子マニフェストを使っている工務店（この4社だけは、ハウスNo・監督名が必須。今後増える可能性あり）
 const MANIFEST_KUMITEN = ['OHA', 'OHD', 'アオイ', 'メルディア'];
+
+// 管理表の「TimeTreeから一括インポート（管理表）」で、検索結果に出てくる表記から工務店（kumiten）を判定するための対応表。
+// 長い表記から先に判定するよう、あとでlengthの降順に並べ替えて使う。
+const MGMT_KUMITEN_PREFIXES = [
+  ['Aオープンハウス', 'OHA'], // オープンハウス・アーキテクト
+  ['Dオープンハウス', 'OHD'], // オープンハウス・ディベロップメント
+  ['メルディア', 'メルディア'],
+  ['アオイ', 'アオイ'],
+  ['ケイアイスター不動産', 'ケイアイ'],
+  ['ひかり建設', 'ひかり'],
+  ['アール', 'アール'],
+  ['一般', '一般'],
+  ['成也', '成也'],
+  ['レジェンド', 'レジェンド'],
+  ['ビルド', 'ビルド'],
+  ['ルークリア', 'ルークリア'],
+  ['グローバル', 'グローバル'],
+  ['根本', '根本'],
+  ['スキルド', 'スキルド'],
+  ['リムクラフト', 'リムクラフト'],
+].sort((a, b) => b[0].length - a[0].length);
 
 // オープンハウス・アーキテクト（OHA）の監督名簿。マニフェスト検索を楽にするため、
 // 現場ごとに監督名が入っていなくても、名前を選ぶだけで電話番号が自動で入るようにする初期データ
@@ -577,11 +609,28 @@ function addDays(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
+// 画像の読み込み・変換に失敗した時に何も起きないまま固まってしまうと、写真が1枚も
+// 上がらないのに原因が分からなくなるため、必ずresolveかrejectのどちらかで終わるようにする
+// （reader/imgのエラー時にreject、念のためのタイムアウトも用意）。
 function compressImage(file, maxSize = 640, quality = 0.55) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('画像の処理がタイムアウトしました。もう一度お試しください'));
+    }, 20000);
+    const finish = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(val);
+    };
     const reader = new FileReader();
+    reader.onerror = () => finish(reject, new Error('画像の読み込みに失敗しました'));
     reader.onload = (e) => {
       const img = new Image();
+      img.onerror = () => finish(reject, new Error('画像を開けませんでした（対応していない形式の可能性があります）'));
       img.onload = () => {
         let { width, height } = img;
         if (width > height && width > maxSize) {
@@ -595,7 +644,7 @@ function compressImage(file, maxSize = 640, quality = 0.55) {
         canvas.width = width;
         canvas.height = height;
         canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
+        finish(resolve, canvas.toDataURL('image/jpeg', quality));
       };
       img.src = e.target.result;
     };
@@ -990,6 +1039,10 @@ function GenbaTracker() {
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkImportText, setBulkImportText] = useState('');
   const [bulkImportBusy, setBulkImportBusy] = useState(false);
+  const [showMgmtBulkImport, setShowMgmtBulkImport] = useState(false);
+  const [mgmtBulkImportText, setMgmtBulkImportText] = useState('');
+  const [mgmtBulkImportBusy, setMgmtBulkImportBusy] = useState(false);
+  const [mgmtBulkImportPreview, setMgmtBulkImportPreview] = useState(null);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [bulkUpdateText, setBulkUpdateText] = useState('');
   const [deviceStaff, setDeviceStaffState] = useState(getDeviceStaff());
@@ -1015,7 +1068,7 @@ function GenbaTracker() {
     time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, expectedVisits: '12', photos: [],
   });
   const emptyMgmt = () => ({
-    name: '', kumiten: '', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [],
+    name: '', kumiten: '', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [], supervisorName: '',
   });
   const [form, setForm] = useState(emptySched());
   const [pendingPhotos, setPendingPhotos] = useState([]);
@@ -1723,19 +1776,35 @@ function autoAssignTrucks() {
   }
 
   function handoffToMgmt(schedRecord) {
-    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr() });
+    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '' });
     setEditingId(null);
     setPendingPhotos([]);
     setTab('mgmt');
     setShowForm(true);
   }
 
+  // 「移動」＝新しい日付の予定を作って保存した時点で、元の予定は自動的にゴミ箱行き（30日間は復元可能）にする。
+  // form の _moveFromId に元のレコードIDを覚えておき、saveRecord() 側で保存成功後に処理する。
   function duplicateRecord(r, dayOffset = 7) {
     const { id, createdAt, photos, ...rest } = r;
-    setForm({ ...rest, date: addDays(r.date, dayOffset), photos: [] });
+    setForm({ ...rest, date: addDays(r.date, dayOffset), photos: [], _moveFromId: r.id });
     setEditingId(null);
     setPendingPhotos([]);
     setShowForm(true);
+  }
+
+  // duplicateRecord() で開いた「移動」のフォームを保存した後、元のレコードをゴミ箱に移してから削除する
+  async function moveOriginalToTrash(prefix, id) {
+    const source = prefix === 'sched' ? schedRecords : mgmtRecords;
+    const record = source.find((r) => r.id === id);
+    try {
+      if (record) {
+        await storage.set(`trash:${id}`, JSON.stringify({ ...record, _type: prefix, deletedAt: new Date().toISOString() }), true);
+      }
+      await storage.delete(`${prefix}:${id}`, true);
+      if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
+      else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) { console.error(e); }
   }
 
   async function saveRecord() {
@@ -1743,7 +1812,8 @@ function autoAssignTrucks() {
     setSaving(true);
     const prefix = tab === 'sched' ? 'sched' : 'mgmt';
     const id = editingId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    let record = { ...form, id, createdAt: form.createdAt || Date.now() };
+    const { _moveFromId, ...formRest } = form;
+    let record = { ...formRest, id, createdAt: form.createdAt || Date.now() };
     if (tab === 'sched' && record.address && !record.area) {
       record = { ...record, area: extractArea(record.address) };
     }
@@ -1768,7 +1838,12 @@ function autoAssignTrucks() {
     }
     try {
       const result = await storage.set(`${prefix}:${id}`, JSON.stringify(record), true);
-      showToast(result.queued ? '保存を保留しました。電波が戻り次第、自動的に送信されます' : '保存しました');
+      if (_moveFromId && _moveFromId !== id) {
+        await moveOriginalToTrash(prefix, _moveFromId);
+        showToast(result.queued ? '移動を保留しました。電波が戻り次第、自動的に送信されます' : '移動しました（元の予定はゴミ箱へ）');
+      } else {
+        showToast(result.queued ? '保存を保留しました。電波が戻り次第、自動的に送信されます' : '保存しました');
+      }
       setShowForm(false);
       setEditingId(null);
       setPendingPhotos([]);
@@ -1838,6 +1913,92 @@ function autoAssignTrucks() {
   function copyUpdateTemplate() {
     const header = '現場名\t監督名\t監督電話\tハウスNo・事業場コード';
     navigator.clipboard.writeText(header).then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'));
+  }
+
+  // Googleカレンダーの「予定を検索」結果画面のテキストをそのまま貼り付けて、管理表（回収実績）に
+  // 一括登録するためのパーサー。日付見出し（例：2026年9月1日(火)）→ タイトル行 → 内訳の行、という並びを想定。
+  // 「不明」は監督名不明という意味の注記なので、現場名からは自動で取り除く（洋子さんの指示通り）。
+  function parseMgmtBulkText(text) {
+    const rawLines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    const entries = [];
+    const unmatchedKumiten = [];
+    let currentDate = null;
+    let pendingTitle = null;
+    rawLines.forEach((line) => {
+      const dateMatch = line.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+      if (dateMatch) {
+        currentDate = `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, '0')}-${String(dateMatch[3]).padStart(2, '0')}`;
+        pendingTitle = null;
+        return;
+      }
+      if (/件の予定/.test(line)) return;
+      if (/検索結果をカレンダーで表示する/.test(line)) return;
+      if (pendingTitle === null) {
+        pendingTitle = line;
+        return;
+      }
+      // ここが内訳の行（例：「終日、木1.2 断熱材0.7 プラ0.4 段ボール0.3 混廃0.2」）
+      // 「終日、」だけでなく「10:00〜11:00、」のような時間指定の予定にも対応。それ以外の内容
+      // （数量以外のメモが付いていても）はそのままメモ欄に丸ごと残す
+      const itemsText = line.replace(/^(終日|\d{1,2}:\d{2}\s*[~〜～]\s*\d{1,2}:\d{2}|\d{1,2}:\d{2})[、,]?\s*/, '').trim();
+      const prefixEntry = MGMT_KUMITEN_PREFIXES.find(([prefix]) => pendingTitle.startsWith(prefix));
+      const kumiten = prefixEntry ? prefixEntry[1] : 'その他';
+      let siteName = prefixEntry ? pendingTitle.slice(prefixEntry[0].length).trim() : pendingTitle.trim();
+      siteName = siteName.replace(/\s*不明\s*$/, '').trim();
+      // メルディアは現場名の後ろに「◯◯さん」の形で監督名が付くことがある。
+      // 「さん」付きの末尾語だけを監督名として切り出す（それ以外は現場名として一切いじらない＝推測しない）
+      let supervisorName = '';
+      if (kumiten === 'メルディア') {
+        const supMatch = siteName.match(/^(.+?)[\s　]+([^\s　]+?)さん$/);
+        if (supMatch) {
+          siteName = supMatch[1].trim();
+          supervisorName = supMatch[2].trim();
+        }
+      }
+      if (!prefixEntry) unmatchedKumiten.push(pendingTitle);
+      entries.push({ date: currentDate, kumiten, name: siteName, items: itemsText, rawTitle: pendingTitle, supervisorName });
+      pendingTitle = null;
+    });
+    return { entries, unmatchedKumiten };
+  }
+
+  function previewMgmtBulkImport() {
+    if (!mgmtBulkImportText.trim()) { showToast('貼り付ける内容がありません'); return; }
+    const { entries, unmatchedKumiten } = parseMgmtBulkText(mgmtBulkImportText);
+    if (entries.length === 0) { showToast('内容を読み取れませんでした。カレンダーの検索結果をそのまま貼り付けてください'); return; }
+    setMgmtBulkImportPreview({ entries, unmatchedKumiten });
+  }
+
+  async function runMgmtBulkImport() {
+    if (!mgmtBulkImportPreview || mgmtBulkImportPreview.entries.length === 0) return;
+    setMgmtBulkImportBusy(true);
+    let count = 0;
+    for (const e of mgmtBulkImportPreview.entries) {
+      if (!e.name || !e.date) continue;
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const record = {
+        id, createdAt: Date.now(),
+        name: e.name,
+        kumiten: e.kumiten,
+        date: e.date,
+        status: 'クロス',
+        staff: deviceStaff || '',
+        items: e.items,
+        supervisorName: e.supervisorName || '',
+        lineItems: [],
+        photos: [],
+      };
+      try {
+        await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
+        count++;
+      } catch (err) { console.error(err); }
+    }
+    setMgmtBulkImportBusy(false);
+    showToast(`${count}件、管理表に登録しました`);
+    setShowMgmtBulkImport(false);
+    setMgmtBulkImportText('');
+    setMgmtBulkImportPreview(null);
+    load();
   }
 
   async function runBulkUpdate() {
@@ -2712,6 +2873,7 @@ function autoAssignTrucks() {
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
+            {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
           </div>
 
           {!loading && filtered.length === 0 && <div style={styles.empty}>該当する現場がありません。</div>}
@@ -2768,6 +2930,11 @@ function autoAssignTrucks() {
                       )}
                     </div>
                   )}
+                  {tab === 'mgmt' && r.supervisorName && (
+                    <div style={styles.supervisorRow}>
+                      <span style={styles.supervisorName}>監督：{r.supervisorName}</span>
+                    </div>
+                  )}
 
                   {tab === 'sched' && r.note && <div style={styles.noteText}>{r.note}</div>}
                   {tab === 'mgmt' && r.items && <div style={styles.noteText}>{r.items}</div>}
@@ -2775,8 +2942,8 @@ function autoAssignTrucks() {
                   <div style={styles.actionRow} onClick={(e) => e.stopPropagation()}>
                     <button style={styles.editOpenBtn} onClick={() => openEdit(r)}>✏️ 開いて編集</button>
                     {tab === 'sched' && <button style={styles.handoffBtn} onClick={() => handoffToMgmt(r)}>→ 今日の管理表を作成</button>}
-                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 複製（1週間後）</button>
-                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 複製（連棟・数日後）</button>
+                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 移動（1週間後）</button>
+                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 移動（連棟・数日後）</button>
                   </div>
                 </div>
                 {(tab === 'sched' || tab === 'mgmt') && (
@@ -2789,6 +2956,7 @@ function autoAssignTrucks() {
                       <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
                         const file = e.target.files[0];
                         if (file) { const staffName = window.prompt('担当者名を入力してください', deviceStaff || r.staff || ''); if (staffName !== null) addPhotoToMgmt(r.id, staffName, file); }
+                        e.target.value = '';
                       }} />
                     </label>
                   </div>
@@ -3568,6 +3736,9 @@ function autoAssignTrucks() {
 
             {tab === 'mgmt' && (
               <>
+                <label style={styles.label}>監督名（わかる場合のみ）</label>
+                <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} placeholder="例：岡田" />
+
                 <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
 
@@ -4020,6 +4191,57 @@ function autoAssignTrucks() {
                 {bulkImportBusy ? '取り込み中…' : '取り込む'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showMgmtBulkImport && (
+        <div style={styles.overlay} onClick={() => !mgmtBulkImportBusy && setShowMgmtBulkImport(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>TimeTreeから一括インポート（管理表）</div>
+              <button style={styles.closeBtn} onClick={() => setShowMgmtBulkImport(false)}>✕</button>
+            </div>
+            <div style={styles.exportHint}>
+              Googleカレンダーの「予定を検索」の結果画面をそのまま（日付の見出しごと）コピーして、下に貼り付けてください。工務店名は自動で判定し、「不明」は監督名不明の注記として現場名から取り除きます。「終日、」より後ろの内訳はそのまま管理表のメモ欄に入ります。
+            </div>
+            <textarea
+              style={{ ...styles.input, minHeight: 200, fontSize: 12 }}
+              value={mgmtBulkImportText}
+              onChange={(e) => { setMgmtBulkImportText(e.target.value); setMgmtBulkImportPreview(null); }}
+              placeholder={'例：\n2026年9月1日(火)\nメルディア藤沢市羽鳥202 4棟 不明\n終日、木1.2 断熱材0.7 プラ0.4 段ボール0.3 混廃0.2'}
+            />
+            {!mgmtBulkImportPreview && (
+              <div style={styles.sheetActions}>
+                <button style={styles.saveBtn} onClick={previewMgmtBulkImport}>内容を確認する</button>
+              </div>
+            )}
+            {mgmtBulkImportPreview && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>この内容で{mgmtBulkImportPreview.entries.length}件登録します</div>
+                <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                  {mgmtBulkImportPreview.entries.map((e, i) => (
+                    <div key={i} style={{ fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid #F0EFE9' }}>
+                      <div style={{ fontWeight: 700 }}>{e.date}／{e.kumiten}／{e.name}{e.supervisorName ? `／監督：${e.supervisorName}` : ''}</div>
+                      <div style={{ color: '#8A8A83' }}>{e.items || '（内訳なし）'}</div>
+                    </div>
+                  ))}
+                </div>
+                {mgmtBulkImportPreview.unmatchedKumiten.length > 0 && (
+                  <div style={{ color: '#B8860B', fontSize: 12.5, marginTop: 8 }}>
+                    ⚠️工務店名が判定できず「その他」で登録される項目があります：
+                    {mgmtBulkImportPreview.unmatchedKumiten.map((t, i) => (<div key={i}>・{t}</div>))}
+                    （あとで一覧から工務店を直してください）
+                  </div>
+                )}
+                <div style={styles.sheetActions}>
+                  <button style={{ ...styles.linkBtn }} onClick={() => setMgmtBulkImportPreview(null)}>戻って直す</button>
+                  <button style={styles.saveBtn} onClick={runMgmtBulkImport} disabled={mgmtBulkImportBusy}>
+                    {mgmtBulkImportBusy ? '登録中…' : `✓ この内容で登録する（${mgmtBulkImportPreview.entries.length}件）`}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
