@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-26';
+  window.__APP_VERSION__ = '2026-09-17-30';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -406,7 +406,7 @@ const DEFAULT_SUPERVISORS = {
 const DEFAULT_IDENTIFIED_SITES = [
   { kumiten: 'OHA', siteName: '六角橋6丁目(松本邸)', houseNumber: '02623022', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/09' },
   { kumiten: 'OHA', siteName: '仲手原2丁目', houseNumber: '02623051', supervisorName: '寺坂太志', confirmedDate: '2026/09/09' },
-  { kumiten: 'OHA', siteName: '馬場2丁目2棟', houseNumber: '02623058・02623059', supervisorName: '松山竜也2', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '馬場2丁目2棟', houseNumber: '02623058・02623059', supervisorName: '松山竜也', confirmedDate: '2026/09/09' },
   { kumiten: 'OHA', siteName: '赤羽根(日比谷邸)', houseNumber: '02618013', supervisorName: '高野ひまわり', confirmedDate: '2026/09/09' },
   { kumiten: 'OHA', siteName: '茅ヶ崎市萩園', houseNumber: '02618001', supervisorName: '高野ひまわり', confirmedDate: '2026/09/09' },
   { kumiten: 'OHA', siteName: '双葉2丁目', houseNumber: '02619085', supervisorName: '森二葉', confirmedDate: '2026/09/09' },
@@ -423,14 +423,14 @@ const DEFAULT_IDENTIFIED_SITES = [
   { kumiten: 'OHA', siteName: '湯河原町宮上(大澤邸)(足柄下郡)', houseNumber: '02502055', supervisorName: '中村泰河', confirmedDate: '2026/09/09' },
   { kumiten: 'OHA', siteName: '常盤町AP(町田市)', houseNumber: '02520052', supervisorName: '堀内治男', confirmedDate: '2026/09/09' },
   { kumiten: 'OHA', siteName: '下瀬谷3丁目(瀬谷区)', houseNumber: '02501054', supervisorName: '山下琉花', confirmedDate: '2026/09/09' },
-  { kumiten: 'OHA', siteName: '戸塚区矢部町', houseNumber: '02632066', supervisorName: '松山竜也2', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '戸塚区矢部町', houseNumber: '02632066', supervisorName: '松山竜也', confirmedDate: '2026/09/11' },
   { kumiten: 'OHA', siteName: '佐野町1丁目(3号棟)(横須賀市)', houseNumber: '02623003', supervisorName: '福田真衣', confirmedDate: '2026/09/11' },
-  { kumiten: 'OHA', siteName: '佐野町1丁目(大津邸)(横須賀市)', houseNumber: '02623037', supervisorName: '福田真衣', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '佐野町1丁目(大津邸)(横須賀市)', houseNumber: '02623037', supervisorName: '松山竜也', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '横浜市南区六ッ川2丁目', houseNumber: '02618007', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/11' },
   { kumiten: 'OHA', siteName: '港南区日野2丁目', houseNumber: '02623010', supervisorName: '寺坂太志', confirmedDate: '2026/09/11' },
   { kumiten: 'OHA', siteName: '鵠沼松が岡416AP(藤沢市)', houseNumber: '02678010', supervisorName: '塚本哲也', confirmedDate: '2026/09/11' },
   { kumiten: 'OHA', siteName: '辻堂元町4丁目2棟(藤沢市)', houseNumber: '02602020・02602021', supervisorName: '久保志穂', confirmedDate: '2026/09/11' },
-  { kumiten: 'OHA', siteName: '下飯田町(熊坂邸)(横浜市泉区)', houseNumber: '02545016', supervisorName: '福田真衣', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '下飯田町(熊坂邸)(横浜市泉区)', houseNumber: '02545016', supervisorName: '松山竜也', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '本鵠沼1丁目(和田濱邸)(藤沢市)', houseNumber: '02618042', supervisorName: '久保志穂', confirmedDate: '2026/09/11' },
   { kumiten: 'OHA', siteName: '藤沢市高倉', houseNumber: '02345130', supervisorName: '家治涼聖', confirmedDate: '2026/09/11' },
   { kumiten: 'OHA', siteName: '港北高田 長屋', houseNumber: '02637024', supervisorName: '堀内治男', confirmedDate: '2026/09/11' },
@@ -451,6 +451,37 @@ const DEFAULT_IDENTIFIED_SITES = [
   { kumiten: 'OHA', siteName: '菅5丁目(川崎市多摩区)', houseNumber: '02619047', supervisorName: '小谷透生', confirmedDate: '2026/09/16' },
   { kumiten: 'OHA', siteName: '福田3619(大和市)', houseNumber: '02619057', supervisorName: '山下琉花', confirmedDate: '2026/09/16' },
   { kumiten: 'OHA', siteName: '大和市下鶴間', houseNumber: '02619089', supervisorName: '森二葉', confirmedDate: '2026/09/16' },
+  { kumiten: 'OHA', siteName: '横浜市南区永田山王台 川井邸 長屋', houseNumber: '02505072', supervisorName: '堀内治男', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '海老名市国分南3丁目 福岡邸', houseNumber: '02505080', supervisorName: '長谷川健人', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '扶桑 平塚市豊田 熊澤邸', houseNumber: '02518116', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'MTR 横浜市磯子区森6丁目 AP', houseNumber: '02519081', supervisorName: '堀内治男', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'Metsa 藤沢市小塚 戸建賃貸', houseNumber: '02544069', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: "Y'sエステート 茅ヶ崎市行谷 岡邸", houseNumber: '02545102', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'Reiz 横浜市泉区和泉町', houseNumber: '02545139', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '大和市渋谷4丁目 張ヶ谷邸', houseNumber: '02601077', supervisorName: '森二葉', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'トーヨーホーム 平塚市真田4丁目 AP', houseNumber: '02601090', supervisorName: '塚本哲也', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'BLISS COLTIO 横浜下瀬谷346', houseNumber: '02605011', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '平塚市西真土1丁目 小宮邸', houseNumber: '02618019', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'Live 横須賀市ハイランド4丁目 我妻邸', houseNumber: '02618028', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '藤沢市石川 野島邸', houseNumber: '02618029', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'エムズハウジング 秦野市堀西 池藤邸', houseNumber: '02618053', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'アメニティハウス 町田市金森東1丁目', houseNumber: '02618061', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '藤沢市円行 長野邸', houseNumber: '02618080', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '丸勇不動産 足柄上郡大井町上大井', houseNumber: '02619025', supervisorName: '西田涼乃', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'フレール ラック町田常盤町', houseNumber: '02619079', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'イーピーシーハウス 横浜市神奈川区羽沢町', houseNumber: '02619088', supervisorName: '草刈翔太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '齋藤不動産 中郡大磯町東小磯', houseNumber: '02620042', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'torio 横浜市港北区新吉田東6丁目', houseNumber: '02620043', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'Reiz 横浜市泉区下飯田町 B号棟', houseNumber: '02620051', supervisorName: '松山竜也', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜市南区永田北3丁目 中村邸', houseNumber: '02623017', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'ベストスマイル 茅ヶ崎市南湖3丁目 AP', houseNumber: '02623020', supervisorName: '塚本哲也', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'ティクトラスト 町田市小川2丁目', houseNumber: '02623082', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'フロンティアハウス PR辻堂元町 A棟', houseNumber: '02637050', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'フロンティアハウス PR辻堂元町 B棟', houseNumber: '02637051', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'フロンティアハウス PR辻堂元町 C棟', houseNumber: '02637052', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'イープラス 逗子市桜山6丁目 A号棟', houseNumber: '02645029', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'イープラス 逗子市桜山6丁目 B号棟', houseNumber: '02645030', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: 'アクセスホーム 鎌倉市山崎', houseNumber: '02648036', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '鎌倉市岩瀬1丁目 遠藤邸', houseNumber: '02518111', supervisorName: '高野ひまわり', confirmedDate: '' },
   { kumiten: 'OHA', siteName: '鎌倉市岩瀬1丁目 稲垣邸', houseNumber: '02518118', supervisorName: '高野ひまわり', confirmedDate: '' },
   { kumiten: 'OHD', siteName: '南林間604①', houseNumber: '262441', supervisorName: '須藤大樹', supervisorPhone: '07031221033', confirmedDate: '2026/09/08' },
@@ -2206,31 +2237,43 @@ function autoAssignTrucks() {
     if (skipped.length > 0) msg += `（読み取れなかった行：${skipped.length}件）`;
     showToast(msg);
   }
-  // 現場名が完全一致するものだけを候補にする（あいまい一致はしない：過去に間違った候補を出した反省から）
+  // 現場名が完全一致するものだけを候補にする（あいまい一致はしない：過去に間違った候補を出した反省から）。
+  // 「未登録を埋める」だけでなく、「すでに入っている監督名・ハウスNoと、特定済みデータの内容が違う」
+  // （担当替えなど）ケースも見つけて提案する。ただしこちらは上書きになるので、
+  // デフォルトではチェックを入れず、必ず確認してから反映してもらう。
   function findReconcileMatches() {
     const matches = [];
     schedRecords.forEach((r) => {
       if (!MANIFEST_KUMITEN.includes(r.kumiten)) return;
-      const needSupervisor = !(r.supervisorName || '').trim();
-      const needHouseNumber = !(r.houseNumber || '').trim();
-      if (!needSupervisor && !needHouseNumber) return;
       const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === r.name.trim());
       if (!site) return;
-      const newSupervisor = needSupervisor && (site.supervisorName || '').trim() ? site.supervisorName.trim() : '';
-      const newHouseNumber = needHouseNumber && (site.houseNumber || '').trim() ? site.houseNumber.trim() : '';
+      const currentSupervisor = (r.supervisorName || '').trim();
+      const currentHouseNumber = (r.houseNumber || '').trim();
+      const siteSupervisor = (site.supervisorName || '').trim();
+      const siteHouseNumber = (site.houseNumber || '').trim();
+
+      const fillSupervisor = !currentSupervisor && siteSupervisor ? siteSupervisor : '';
+      const fillHouseNumber = !currentHouseNumber && siteHouseNumber ? siteHouseNumber : '';
+      const changeSupervisor = currentSupervisor && siteSupervisor && currentSupervisor !== siteSupervisor ? siteSupervisor : '';
+      const changeHouseNumber = currentHouseNumber && siteHouseNumber && currentHouseNumber !== siteHouseNumber ? siteHouseNumber : '';
       const newPhone = !(r.supervisorPhone || '').trim() && (site.supervisorPhone || '').trim() ? site.supervisorPhone.trim() : '';
+
+      const newSupervisor = fillSupervisor || changeSupervisor;
+      const newHouseNumber = fillHouseNumber || changeHouseNumber;
       if (!newSupervisor && !newHouseNumber) return;
+      const isChange = !!changeSupervisor || !!changeHouseNumber;
       matches.push({
         recordId: r.id,
         siteName: r.name,
         kumiten: r.kumiten,
         date: r.date,
-        currentSupervisor: r.supervisorName || '',
-        currentHouseNumber: r.houseNumber || '',
+        currentSupervisor,
+        currentHouseNumber,
         newSupervisor,
         newHouseNumber,
         newPhone,
         confirmedDate: site.confirmedDate || '',
+        isChange,
       });
     });
     return matches;
@@ -2242,8 +2285,10 @@ function autoAssignTrucks() {
       return;
     }
     setReconcileMatches(matches);
+    // 未登録を埋めるだけのものは最初からチェック済みにするが、
+    // 既存の値を上書きする（担当替えなど）ものは、必ず自分の目で確認してもらうため未チェックにしておく
     const checked = {};
-    matches.forEach((m) => { checked[m.recordId] = true; });
+    matches.forEach((m) => { checked[m.recordId] = !m.isChange; });
     setReconcileChecked(checked);
     setShowReconcileModal(true);
   }
@@ -3641,10 +3686,11 @@ function autoAssignTrucks() {
             </div>
             <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
               チェックが入っている項目だけ反映します。内容を確認してから「反映する」を押してください。
+              「変更」は、すでに入っている内容を上書きするもの（担当替えなど）なので、念のため未チェックにしてあります。
             </div>
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
               {reconcileMatches.map((m) => (
-                <label key={m.recordId} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9' }}>
+                <label key={m.recordId} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9', background: m.isChange ? '#FFF7E8' : 'transparent' }}>
                   <input
                     type="checkbox"
                     checked={!!reconcileChecked[m.recordId]}
@@ -3652,7 +3698,10 @@ function autoAssignTrucks() {
                     style={{ marginTop: 3 }}
                   />
                   <div style={{ fontSize: 13 }}>
-                    <div style={{ fontWeight: 700 }}>{m.siteName}（{m.kumiten}／{m.date}）</div>
+                    <div style={{ fontWeight: 700 }}>
+                      {m.isChange && <span style={{ color: '#B8860B' }}>⚠️変更　</span>}
+                      {m.siteName}（{m.kumiten}／{m.date}）
+                    </div>
                     {m.newSupervisor && <div>監督名：{m.currentSupervisor || '（未登録）'} → {m.newSupervisor}</div>}
                     {m.newHouseNumber && <div>ハウスNo：{m.currentHouseNumber || '（未登録）'} → {m.newHouseNumber}</div>}
                     {m.confirmedDate && <div style={{ color: '#8A8A83' }}>確認日：{m.confirmedDate}</div>}
