@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-40';
+  window.__APP_VERSION__ = '2026-09-17-42';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -364,6 +364,11 @@ const TODO_PASSWORD = '4455';
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
 // 電子マニフェストを使っている工務店（この4社だけは、ハウスNo・監督名が必須。今後増える可能性あり）
 const MANIFEST_KUMITEN = ['OHA', 'OHD', 'アオイ', 'メルディア'];
+//↑のうち、実際にETS TRACK側でハウスNo・監督名を管理する必要があるのはこの3社だけ。
+// アオイは電子マニフェスト自体は使っているが、システムが複雑なため洋子さんが別途ご自身で
+// 対応しており、このアプリ側にハウスNoを持たせる必要がない。今後、対象工務店が増えたら
+// ここに追加する（例：新しく電子マニフェストに対応する工務店が増えた場合など）。
+const HOUSE_NUMBER_KUMITEN = ['OHA', 'OHD', 'メルディア'];
 
 // 管理表の「TimeTreeから一括インポート（管理表）」で、検索結果に出てくる表記から工務店（kumiten）を判定するための対応表。
 // 長い表記から先に判定するよう、あとでlengthの降順に並べ替えて使う。
@@ -1111,6 +1116,21 @@ function GenbaTracker() {
     };
   }, [showForm, tab, dispatchDate]);
 
+  // パソコンなど、画面を切り替えずにずっと開いたままにしている端末は、上のタブ切り替え・
+  // フォーカス時の更新だけでは他の端末で入力した内容がなかなか反映されない（スマホは他アプリと
+  // 行き来するので気付きにくいが、PCは開きっぱなしのことが多いため）。開いたままでも自動で
+  // 定期的に最新データを取りに行くようにする。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (showForm) return; // 入力中は割り込まない
+      lastAutoRefreshRef.current = Date.now();
+      load();
+      if (tab === 'dispatch') loadDispatch(dispatchDate);
+    }, 45000);
+    return () => clearInterval(timer);
+  }, [showForm, tab, dispatchDate]);
+
   useEffect(() => {
     if (!showDispatchMap) return;
     let cancelled = false;
@@ -1384,7 +1404,7 @@ function GenbaTracker() {
         else if (!(r.address || '').trim()) gaps.push('住所');
         if (r.date >= today) {
           if (!(r.kumiten || '').trim()) gaps.push('工務店');
-          else if (MANIFEST_KUMITEN.includes(r.kumiten)) {
+          else if (HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) {
             if (!(r.supervisorName || '').trim()) gaps.push('監督名');
             if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
           }
@@ -2417,7 +2437,7 @@ function autoAssignTrucks() {
   function findReconcileMatches() {
     const matches = [];
     schedRecords.forEach((r) => {
-      if (!MANIFEST_KUMITEN.includes(r.kumiten)) return;
+      if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
       const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === r.name.trim());
       if (!site) return;
       const currentSupervisor = (r.supervisorName || '').trim();
@@ -2457,7 +2477,7 @@ function autoAssignTrucks() {
     const matchedIds = new Set((exactMatches || []).map((m) => m.recordId));
     const near = [];
     schedRecords.forEach((r) => {
-      if (!MANIFEST_KUMITEN.includes(r.kumiten)) return;
+      if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
       if (matchedIds.has(r.id)) return;
       const needSupervisor = !(r.supervisorName || '').trim();
       const needHouseNumber = !(r.houseNumber || '').trim();
@@ -3649,7 +3669,18 @@ function autoAssignTrucks() {
 
 
                 <label style={styles.label}>ハウスNo／事業場コード</label>
-                <input style={styles.input} value={form.houseNumber || ''} onChange={(e) => setForm({ ...form, houseNumber: e.target.value })} placeholder="例：262441" />
+                {form.kumiten && !HOUSE_NUMBER_KUMITEN.includes(form.kumiten) ? (
+                  <div style={{
+                    ...styles.input,
+                    display: 'flex', alignItems: 'center',
+                    color: '#A8A69C',
+                    background: 'repeating-linear-gradient(135deg, #F5F4EF, #F5F4EF 8px, #E9E7DE 8px, #E9E7DE 9px)',
+                  }}>
+                    対象外（{form.kumiten}はハウスNo管理なし）
+                  </div>
+                ) : (
+                  <input style={styles.input} value={form.houseNumber || ''} onChange={(e) => setForm({ ...form, houseNumber: e.target.value })} placeholder="例：262441" />
+                )}
 
                 <div style={styles.row2}>
                   <div style={{ flex: 1 }}>
