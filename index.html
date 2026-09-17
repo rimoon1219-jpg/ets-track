@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-39';
+  window.__APP_VERSION__ = '2026-09-17-40';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1041,6 +1041,7 @@ function GenbaTracker() {
   const [bulkImportBusy, setBulkImportBusy] = useState(false);
   const [showMgmtBulkImport, setShowMgmtBulkImport] = useState(false);
   const [mgmtBulkImportText, setMgmtBulkImportText] = useState('');
+  const [mgmtBulkImportStatus, setMgmtBulkImportStatus] = useState('新規');
   const [mgmtBulkImportBusy, setMgmtBulkImportBusy] = useState(false);
   const [mgmtBulkImportPreview, setMgmtBulkImportPreview] = useState(null);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
@@ -1981,7 +1982,7 @@ function autoAssignTrucks() {
         name: e.name,
         kumiten: e.kumiten,
         date: e.date,
-        status: 'クロス',
+        status: mgmtBulkImportStatus || 'クロス',
         staff: deviceStaff || '',
         items: e.items,
         supervisorName: e.supervisorName || '',
@@ -2873,7 +2874,7 @@ function autoAssignTrucks() {
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
-            {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
+            {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
           </div>
 
           {!loading && filtered.length === 0 && <div style={styles.empty}>該当する現場がありません。</div>}
@@ -4205,6 +4206,19 @@ function autoAssignTrucks() {
             <div style={styles.exportHint}>
               Googleカレンダーの「予定を検索」の結果画面をそのまま（日付の見出しごと）コピーして、下に貼り付けてください。工務店名は自動で判定し、「不明」は監督名不明の注記として現場名から取り除きます。「終日、」より後ろの内訳はそのまま管理表のメモ欄に入ります。
             </div>
+            <label style={styles.label}>この内容にまとめて付けるゴミの種類タグ（貼り付ける内容が全部同じ種類の場合はこのまま。違う場合は登録後に一覧から個別に直してください）</label>
+            <div style={styles.statusGrid}>
+              {SCHED_STATUSES.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setMgmtBulkImportStatus(s.key)}
+                  style={{ ...styles.statusOption, borderColor: mgmtBulkImportStatus === s.key ? s.color : '#E5E3DC', background: mgmtBulkImportStatus === s.key ? `${s.color}1A` : '#fff' }}
+                >
+                  <span style={{ ...styles.dot, background: s.color }} />{s.key}
+                </button>
+              ))}
+            </div>
             <textarea
               style={{ ...styles.input, minHeight: 200, fontSize: 12 }}
               value={mgmtBulkImportText}
@@ -4218,7 +4232,7 @@ function autoAssignTrucks() {
             )}
             {mgmtBulkImportPreview && (
               <div style={{ marginTop: 10 }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>この内容で{mgmtBulkImportPreview.entries.length}件登録します</div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>この内容で{mgmtBulkImportPreview.entries.length}件登録します（種類タグ：{mgmtBulkImportStatus}）</div>
                 <div style={{ maxHeight: 260, overflowY: 'auto' }}>
                   {mgmtBulkImportPreview.entries.map((e, i) => (
                     <div key={i} style={{ fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid #F0EFE9' }}>
