@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-12';
+  window.__APP_VERSION__ = '2026-09-17-14';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -364,6 +364,29 @@ function statusColor(list, key) {
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// TODO/伝達の記入日時・確認日時を「9/17 14:20」のように短く表示する
+function formatDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return (iso || '').slice(0, 10);
+  const mm = d.getMonth() + 1;
+  const dd = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+// 伝達の「見た」記録は新形式 {name, at} だが、古いデータ（名前の文字列のみ）にも両対応させる
+function seenName(entry) {
+  return typeof entry === 'string' ? entry : ((entry && entry.name) || '');
+}
+function seenAt(entry) {
+  return typeof entry === 'string' ? '' : ((entry && entry.at) || '');
+}
+function seenIncludes(list, name) {
+  return (list || []).some((e) => seenName(e) === name);
 }
 
 function circledNumber(n) {
@@ -779,6 +802,8 @@ function GenbaTracker() {
   const [todoQuickTags, setTodoQuickTags] = useState([]);
   const [todoImportant, setTodoImportant] = useState(false);
   const [todoType, setTodoType] = useState('task');
+  const [editingTodoId, setEditingTodoId] = useState(null);
+  const [editingTodoText, setEditingTodoText] = useState('');
   const [showKumitenEditor, setShowKumitenEditor] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkImportText, setBulkImportText] = useState('');
@@ -965,7 +990,7 @@ function GenbaTracker() {
       featureKey: (overrides && overrides.featureKey) || '',
       todoType: (overrides && overrides.todoType) || 'task',
       important: !!(overrides && overrides.important),
-      seenBy: (overrides && overrides.auto) ? [] : [getDeviceStaff()].filter(Boolean),
+      seenBy: (overrides && overrides.auto) ? [] : (getDeviceStaff() ? [{ name: getDeviceStaff(), at: new Date().toISOString() }] : []),
       createdAt: new Date().toISOString(),
     };
     await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
@@ -979,6 +1004,26 @@ function GenbaTracker() {
     const next = { ...t, important: !t.important };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+  }
+
+  // タスク・伝達の本文を、送った後でも書き直せるようにする
+  function startEditTodo(t) {
+    setEditingTodoId(t.id);
+    setEditingTodoText(t.text);
+  }
+  function cancelEditTodo() {
+    setEditingTodoId(null);
+    setEditingTodoText('');
+  }
+  async function saveEditTodo(t) {
+    const text = editingTodoText.trim();
+    if (!text) { showToast('内容を入力してください'); return; }
+    const next = { ...t, text };
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    setEditingTodoId(null);
+    setEditingTodoText('');
+    showToast('修正しました');
   }
 
   // 座標だけが入っていて、ちゃんとした住所になっていないものを検出（例：35.331,139.445 など）
@@ -1097,12 +1142,12 @@ function GenbaTracker() {
       });
   }
 
-  // 「見た」ボタンを押した人（端末の担当者名）を記録する
+  // 「見た」ボタンを押した人（端末の担当者名）と、見た日時を記録する
   async function markSeenBy(t) {
     const me = getDeviceStaff();
     if (!me) { showToast('先に右上で担当者名を設定してください'); return; }
-    if ((t.seenBy || []).includes(me)) return;
-    const updated = { ...t, seenBy: [...(t.seenBy || []), me] };
+    if (seenIncludes(t.seenBy, me)) return;
+    const updated = { ...t, seenBy: [...(t.seenBy || []), { name: me, at: new Date().toISOString() }] };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
   }
@@ -2398,41 +2443,151 @@ function autoAssignTrucks() {
 
       {tab === 'todo' && (
         <div style={{ padding: '0 16px' }}>
-          {infoGapSites().length > 0 && (
-            <div style={styles.gapSummaryCard}>
-              <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
-                <span>📋 情報不足の現場（工務店ごと）：{infoGapSites().length}件</span>
-                <span>{showInfoGaps ? '▲閉じる' : '▼見る'}</span>
-              </div>
-              {showInfoGaps && (
-                <div style={{ marginTop: 8 }}>
-                  {infoGapsByKumiten().map(({ kumiten, items }) => (
-                    <div key={kumiten} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件）</div>
-                      {items.map(({ r, gaps }) => {
-                        const hasAddr = gaps.includes('住所');
-                        return (
-                          <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
-                              <div style={{ fontSize: 11.5, color: '#8A8A83' }}>
-                                {r.date}／{gaps.map((g, i) => (
-                                  <span key={g} style={g === '住所' ? styles.gapUrgent : undefined}>{i > 0 ? '・' : ''}{g}</span>
-                                ))}が未入力
-                              </div>
-                            </div>
-                            <span style={{ fontSize: 12, color: hasAddr ? '#B3261E' : '#2A9D8F', fontWeight: hasAddr ? 700 : 400 }}>開く</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
+          <div style={{ marginTop: 10 }}>
+            {(() => {
+              const unseenCount = sortedMemos().filter((t) => {
+                const me = getDeviceStaff();
+                return !(me && seenIncludes(t.seenBy, me));
+              }).length;
+              return (
+                <div style={styles.memoSectionBanner}>
+                  📢 伝達（見た管理）{unseenCount > 0 && <span style={styles.memoUnseenCountTag}>未確認 {unseenCount}件</span>}
                 </div>
-              )}
-            </div>
-          )}
+              );
+            })()}
+            {sortedMemos().length === 0 && (
+              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
+                {loading ? '読み込み中…' : '今はありません'}
+              </div>
+            )}
+            {sortedMemos().length > 0 && (
+              <>
+                {sortedMemos().map((t) => {
+                  const me = getDeviceStaff();
+                  const iSaw = me && seenIncludes(t.seenBy, me);
+                  return (
+                  <div key={t.id} style={{ ...styles.todoRow, ...(iSaw ? {} : styles.todoRowUnseen), ...(t.important ? styles.todoRowImportant : {}) }}>
+                    <div style={{ flex: 1 }}>
+                      {editingTodoId === t.id ? (
+                        <div>
+                          <textarea
+                            style={{ ...styles.input, minHeight: 54, resize: 'vertical', width: '100%' }}
+                            value={editingTodoText}
+                            onChange={(e) => setEditingTodoText(e.target.value)}
+                            autoFocus
+                          />
+                          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                            <button style={styles.todoDoneBtn} onClick={() => saveEditTodo(t)}>保存</button>
+                            <button style={styles.switchTypeBtn} onClick={cancelEditTodo}>キャンセル</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                          {t.important && <span style={styles.importantTag}>⚠️重要</span>}{!iSaw && <span style={styles.newTag}>未確認</span>}{t.text}
+                        </div>
+                      )}
+                      {(t.siteName || t.date) && (
+                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
+                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>
+                        {t.staff ? `${t.staff}／` : ''}{formatDateTime(t.createdAt)}
+                        {(t.seenBy || []).length > 0
+                          ? `／見た：${t.seenBy.map((e) => `${seenName(e)}${seenAt(e) ? `(${formatDateTime(seenAt(e))})` : ''}`).join('・')}`
+                          : '／まだ誰も見ていません'}
+                      </div>
+                    </div>
+                    {editingTodoId !== t.id && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                        {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
+                        <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>片付ける</button>
+                        <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>
+                        <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
+                        <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
+                      </div>
+                    )}
+                  </div>
+                  );
+                })}
+              </>
+            )}
 
-          <div style={styles.todoAddBox}>
+            <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>タスク（やった管理）</div>
+            {sortedTasks().length === 0 && (
+              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
+                {loading ? '読み込み中…' : '今はありません'}
+              </div>
+            )}
+            {sortedTasks().length > 0 && (
+              <>
+                {sortedTasks().map((t) => {
+                  return (
+                  <div key={t.id} style={{ ...styles.todoRow, ...(t.important ? styles.todoRowImportant : {}) }}>
+                    <div style={{ flex: 1 }}>
+                      {editingTodoId === t.id ? (
+                        <div>
+                          <textarea
+                            style={{ ...styles.input, minHeight: 54, resize: 'vertical', width: '100%' }}
+                            value={editingTodoText}
+                            onChange={(e) => setEditingTodoText(e.target.value)}
+                            autoFocus
+                          />
+                          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                            <button style={styles.todoDoneBtn} onClick={() => saveEditTodo(t)}>保存</button>
+                            <button style={styles.switchTypeBtn} onClick={cancelEditTodo}>キャンセル</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                          {t.important && <span style={styles.importantTag}>⚠️重要</span>}{t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
+                        </div>
+                      )}
+                      {(t.siteName || t.date) && (
+                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
+                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
+                        </div>
+                      )}
+                      {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
+                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>{t.staff ? `${t.staff}／` : ''}{formatDateTime(t.createdAt)}</div>
+                    </div>
+                    {editingTodoId !== t.id && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                        <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
+                        <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                        <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>
+                        <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
+                        <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
+                      </div>
+                    )}
+                  </div>
+                  );
+                })}
+              </>
+            )}
+
+            {featureCheckTodos().length > 0 && (
+              <>
+                <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>動作確認（新機能）</div>
+                {featureCheckTodos().map((t) => (
+                  <div key={t.id} style={styles.todoRow}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                        <span style={styles.featureTag}>動作確認</span>{t.text}
+                      </div>
+                      {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                      <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
+                      <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          <div style={{ ...styles.todoAddBox, marginTop: 18 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#8A8A83', marginBottom: 6 }}>下の自由入力欄に書く内容はどちら？</div>
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
               <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'task' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('task')}>✅ タスク（やった管理）</button>
@@ -2484,103 +2639,39 @@ function autoAssignTrucks() {
             </button>
           </div>
 
-          <div style={{ marginTop: 14 }}>
-            <div style={styles.todoSectionTitle}>タスク（やった管理）</div>
-            {sortedTasks().length === 0 && (
-              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
-                {loading ? '読み込み中…' : '今はありません'}
+          {infoGapSites().length > 0 && (
+            <div style={{ ...styles.gapSummaryCard, marginTop: 18 }}>
+              <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
+                <span>📋 情報不足の現場（工務店ごと）：{infoGapSites().length}件</span>
+                <span>{showInfoGaps ? '▲閉じる' : '▼見る'}</span>
               </div>
-            )}
-            {sortedTasks().length > 0 && (
-              <>
-                {sortedTasks().map((t) => {
-                  const me = getDeviceStaff();
-                  const iSaw = me && (t.seenBy || []).includes(me);
-                  return (
-                  <div key={t.id} style={{ ...styles.todoRow, ...(t.important ? styles.todoRowImportant : {}) }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                        {t.important && <span style={styles.importantTag}>⚠️重要</span>}{t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
-                      </div>
-                      {(t.siteName || t.date) && (
-                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
-                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
-                        </div>
-                      )}
-                      {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
-                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>{t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}</div>
+              {showInfoGaps && (
+                <div style={{ marginTop: 8 }}>
+                  {infoGapsByKumiten().map(({ kumiten, items }) => (
+                    <div key={kumiten} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件）</div>
+                      {items.map(({ r, gaps }) => {
+                        const hasAddr = gaps.includes('住所');
+                        return (
+                          <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
+                              <div style={{ fontSize: 11.5, color: '#8A8A83' }}>
+                                {r.date}／{gaps.map((g, i) => (
+                                  <span key={g} style={g === '住所' ? styles.gapUrgent : undefined}>{i > 0 ? '・' : ''}{g}</span>
+                                ))}が未入力
+                              </div>
+                            </div>
+                            <span style={{ fontSize: 12, color: hasAddr ? '#B3261E' : '#2A9D8F', fontWeight: hasAddr ? 700 : 400 }}>開く</span>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                      <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
-                      <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
-                      <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
-                      <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
-                    </div>
-                  </div>
-                  );
-                })}
-              </>
-            )}
-
-            <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>伝達（見た管理）</div>
-            {sortedMemos().length === 0 && (
-              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
-                {loading ? '読み込み中…' : '今はありません'}
-              </div>
-            )}
-            {sortedMemos().length > 0 && (
-              <>
-                {sortedMemos().map((t) => {
-                  const me = getDeviceStaff();
-                  const iSaw = me && (t.seenBy || []).includes(me);
-                  return (
-                  <div key={t.id} style={{ ...styles.todoRow, ...(iSaw ? {} : styles.todoRowUnseen), ...(t.important ? styles.todoRowImportant : {}) }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                        {t.important && <span style={styles.importantTag}>⚠️重要</span>}{!iSaw && <span style={styles.newTag}>未確認</span>}{t.text}
-                      </div>
-                      {(t.siteName || t.date) && (
-                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
-                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
-                        </div>
-                      )}
-                      <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>
-                        {t.staff ? `${t.staff}／` : ''}{(t.createdAt || '').slice(0, 10)}
-                        {(t.seenBy || []).length > 0 ? `／見た：${t.seenBy.join('・')}` : '／まだ誰も見ていません'}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                      {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
-                      <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>片付ける</button>
-                      <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
-                      <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
-                    </div>
-                  </div>
-                  );
-                })}
-              </>
-            )}
-
-            {featureCheckTodos().length > 0 && (
-              <>
-                <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>動作確認（新機能）</div>
-                {featureCheckTodos().map((t) => (
-                  <div key={t.id} style={styles.todoRow}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                        <span style={styles.featureTag}>動作確認</span>{t.text}
-                      </div>
-                      {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                      <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
-                      <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -3288,6 +3379,8 @@ const styles = {
   gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
   gapUrgent: { color: '#B3261E', fontWeight: 700 },
   todoSectionTitle: { fontSize: 12.5, fontWeight: 700, color: '#8A8A83', marginBottom: 8, marginTop: 4 },
+  memoSectionBanner: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: '#8A6D00', background: '#FFF3D6', border: '1px solid #F0DDA0', borderRadius: 10, padding: '9px 12px', marginBottom: 8 },
+  memoUnseenCountTag: { fontSize: 11.5, background: '#E63946', color: '#fff', borderRadius: 6, padding: '2px 8px', fontWeight: 700 },
   featureTag: { fontSize: 10, background: '#D6E9FF', color: '#0B5FB3', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   quickTagBtn: { fontSize: 12.5, padding: '6px 12px', borderRadius: 16, border: '1px solid #D8D6CC', background: '#fff', cursor: 'pointer' },
   quickTagBtnActive: { background: '#2A9D8F', color: '#fff', borderColor: '#2A9D8F' },
