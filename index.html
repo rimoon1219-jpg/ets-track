@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-30';
+  window.__APP_VERSION__ = '2026-09-17-32';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -453,35 +453,35 @@ const DEFAULT_IDENTIFIED_SITES = [
   { kumiten: 'OHA', siteName: '大和市下鶴間', houseNumber: '02619089', supervisorName: '森二葉', confirmedDate: '2026/09/16' },
   { kumiten: 'OHA', siteName: '横浜市南区永田山王台 川井邸 長屋', houseNumber: '02505072', supervisorName: '堀内治男', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '海老名市国分南3丁目 福岡邸', houseNumber: '02505080', supervisorName: '長谷川健人', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: '扶桑 平塚市豊田 熊澤邸', houseNumber: '02518116', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'MTR 横浜市磯子区森6丁目 AP', houseNumber: '02519081', supervisorName: '堀内治男', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'Metsa 藤沢市小塚 戸建賃貸', houseNumber: '02544069', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: "Y'sエステート 茅ヶ崎市行谷 岡邸", houseNumber: '02545102', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'Reiz 横浜市泉区和泉町', houseNumber: '02545139', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '平塚市豊田 熊澤邸', houseNumber: '02518116', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜市磯子区森6丁目 AP', houseNumber: '02519081', supervisorName: '堀内治男', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '藤沢市小塚 戸建賃貸', houseNumber: '02544069', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '茅ヶ崎市行谷 岡邸', houseNumber: '02545102', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜市泉区和泉町', houseNumber: '02545139', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '大和市渋谷4丁目 張ヶ谷邸', houseNumber: '02601077', supervisorName: '森二葉', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'トーヨーホーム 平塚市真田4丁目 AP', houseNumber: '02601090', supervisorName: '塚本哲也', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'BLISS COLTIO 横浜下瀬谷346', houseNumber: '02605011', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '平塚市真田4丁目 AP', houseNumber: '02601090', supervisorName: '塚本哲也', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜下瀬谷346', houseNumber: '02605011', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '平塚市西真土1丁目 小宮邸', houseNumber: '02618019', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'Live 横須賀市ハイランド4丁目 我妻邸', houseNumber: '02618028', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横須賀市ハイランド4丁目 我妻邸', houseNumber: '02618028', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '藤沢市石川 野島邸', houseNumber: '02618029', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'エムズハウジング 秦野市堀西 池藤邸', houseNumber: '02618053', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'アメニティハウス 町田市金森東1丁目', houseNumber: '02618061', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '秦野市堀西 池藤邸', houseNumber: '02618053', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '町田市金森東1丁目', houseNumber: '02618061', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '藤沢市円行 長野邸', houseNumber: '02618080', supervisorName: '山下琉花', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: '丸勇不動産 足柄上郡大井町上大井', houseNumber: '02619025', supervisorName: '西田涼乃', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'フレール ラック町田常盤町', houseNumber: '02619079', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'イーピーシーハウス 横浜市神奈川区羽沢町', houseNumber: '02619088', supervisorName: '草刈翔太', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: '齋藤不動産 中郡大磯町東小磯', houseNumber: '02620042', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'torio 横浜市港北区新吉田東6丁目', houseNumber: '02620043', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'Reiz 横浜市泉区下飯田町 B号棟', houseNumber: '02620051', supervisorName: '松山竜也', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '足柄上郡大井町上大井', houseNumber: '02619025', supervisorName: '西田涼乃', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '町田常盤町', houseNumber: '02619079', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜市神奈川区羽沢町', houseNumber: '02619088', supervisorName: '草刈翔太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '中郡大磯町東小磯', houseNumber: '02620042', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜市港北区新吉田東6丁目', houseNumber: '02620043', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '横浜市泉区下飯田町 B号棟', houseNumber: '02620051', supervisorName: '松山竜也', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '横浜市南区永田北3丁目 中村邸', houseNumber: '02623017', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'ベストスマイル 茅ヶ崎市南湖3丁目 AP', houseNumber: '02623020', supervisorName: '塚本哲也', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'ティクトラスト 町田市小川2丁目', houseNumber: '02623082', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'フロンティアハウス PR辻堂元町 A棟', houseNumber: '02637050', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'フロンティアハウス PR辻堂元町 B棟', houseNumber: '02637051', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'フロンティアハウス PR辻堂元町 C棟', houseNumber: '02637052', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'イープラス 逗子市桜山6丁目 A号棟', houseNumber: '02645029', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'イープラス 逗子市桜山6丁目 B号棟', houseNumber: '02645030', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
-  { kumiten: 'OHA', siteName: 'アクセスホーム 鎌倉市山崎', houseNumber: '02648036', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '茅ヶ崎市南湖3丁目 AP', houseNumber: '02623020', supervisorName: '塚本哲也', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '町田市小川2丁目', houseNumber: '02623082', supervisorName: '石原悠太', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '辻堂元町 A棟', houseNumber: '02637050', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '辻堂元町 B棟', houseNumber: '02637051', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '辻堂元町 C棟', houseNumber: '02637052', supervisorName: '家治涼聖', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '逗子市桜山6丁目 A号棟', houseNumber: '02645029', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '逗子市桜山6丁目 B号棟', houseNumber: '02645030', supervisorName: '寺坂太志', confirmedDate: '2026/09/17' },
+  { kumiten: 'OHA', siteName: '鎌倉市山崎', houseNumber: '02648036', supervisorName: '高野ひまわり', confirmedDate: '2026/09/17' },
   { kumiten: 'OHA', siteName: '鎌倉市岩瀬1丁目 遠藤邸', houseNumber: '02518111', supervisorName: '高野ひまわり', confirmedDate: '' },
   { kumiten: 'OHA', siteName: '鎌倉市岩瀬1丁目 稲垣邸', houseNumber: '02518118', supervisorName: '高野ひまわり', confirmedDate: '' },
   { kumiten: 'OHD', siteName: '南林間604①', houseNumber: '262441', supervisorName: '須藤大樹', supervisorPhone: '07031221033', confirmedDate: '2026/09/08' },
@@ -526,6 +526,16 @@ function formatDateTime(iso) {
   const hh = String(d.getHours()).padStart(2, '0');
   const mi = String(d.getMinutes()).padStart(2, '0');
   return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+// 現場名の「表記ゆれ」（全角/半角、スペースの有無など）を無視して比べるための正規化。
+// これはあくまで「候補として見比べる」ためだけに使い、自動で一致とはみなさない
+// （あいまい一致で違う現場を混同した過去の反省から、最終判断は必ず人の目で行う）
+function normalizeForCompare(str) {
+  return (str || '')
+    .normalize('NFKC')
+    .replace(/[\s　]/g, '')
+    .toLowerCase();
 }
 
 // 伝達の「見た」記録は新形式 {name, at} だが、古いデータ（名前の文字列のみ）にも両対応させる
@@ -963,6 +973,7 @@ function GenbaTracker() {
   const [reconcileMatches, setReconcileMatches] = useState([]);
   const [reconcileChecked, setReconcileChecked] = useState({});
   const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [nearMatches, setNearMatches] = useState([]);
   const [todos, setTodos] = useState([]);
   const [todoText, setTodoText] = useState('');
   const [todoSiteName, setTodoSiteName] = useState('');
@@ -2278,9 +2289,54 @@ function autoAssignTrucks() {
     });
     return matches;
   }
+  // 現場名が完全一致はしないが、全角/半角やスペースの違いだけで「実質同じ表記」に見えるものを
+  // 候補として拾う。ここは自動で反映せず、必ず見比べて自分で判断してもらう（ボタンを押した時だけ反映）
+  function findNearMatches(exactMatches) {
+    const matchedIds = new Set((exactMatches || []).map((m) => m.recordId));
+    const near = [];
+    schedRecords.forEach((r) => {
+      if (!MANIFEST_KUMITEN.includes(r.kumiten)) return;
+      if (matchedIds.has(r.id)) return;
+      const needSupervisor = !(r.supervisorName || '').trim();
+      const needHouseNumber = !(r.houseNumber || '').trim();
+      if (!needSupervisor && !needHouseNumber) return;
+      const normRecord = normalizeForCompare(r.name);
+      if (!normRecord) return;
+      identifiedSites.forEach((s) => {
+        if (s.kumiten !== r.kumiten) return;
+        if (s.siteName.trim() === r.name.trim()) return; // 完全一致は上のfindReconcileMatchesの方で扱う
+        if (normalizeForCompare(s.siteName) !== normRecord) return;
+        near.push({
+          recordId: r.id,
+          etsName: r.name,
+          dataName: s.siteName,
+          kumiten: r.kumiten,
+          date: r.date,
+          site: s,
+        });
+      });
+    });
+    return near;
+  }
+  async function applyNearMatch(nm) {
+    const rec = schedRecords.find((r) => r.id === nm.recordId);
+    if (!rec) return;
+    const site = nm.site;
+    const updatedRec = {
+      ...rec,
+      supervisorName: (rec.supervisorName || '').trim() || site.supervisorName || rec.supervisorName,
+      houseNumber: (rec.houseNumber || '').trim() || site.houseNumber || rec.houseNumber,
+      supervisorPhone: (rec.supervisorPhone || '').trim() || site.supervisorPhone || rec.supervisorPhone,
+    };
+    await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
+    applyLocalRecordUpdate('sched', updatedRec);
+    setNearMatches((prev) => prev.filter((x) => !(x.recordId === nm.recordId && x.dataName === nm.dataName)));
+    showToast(`「${rec.name}」に反映しました`);
+  }
   function openReconcileModal() {
     const matches = findReconcileMatches();
-    if (matches.length === 0) {
+    const near = findNearMatches(matches);
+    if (matches.length === 0 && near.length === 0) {
       showToast('照合できる候補が見つかりませんでした（現場名が完全一致する未登録データがありません）');
       return;
     }
@@ -2290,6 +2346,7 @@ function autoAssignTrucks() {
     const checked = {};
     matches.forEach((m) => { checked[m.recordId] = !m.isChange; });
     setReconcileChecked(checked);
+    setNearMatches(near);
     setShowReconcileModal(true);
   }
   async function applyReconcile() {
@@ -3709,9 +3766,40 @@ function autoAssignTrucks() {
                 </label>
               ))}
             </div>
-            <button style={{ ...styles.saveBtn, marginTop: 10 }} disabled={reconcileBusy} onClick={applyReconcile}>
-              {reconcileBusy ? '反映中…' : `✓ 反映する（${reconcileMatches.filter((m) => reconcileChecked[m.recordId]).length}件）`}
-            </button>
+            {reconcileMatches.length > 0 && (
+              <button style={{ ...styles.saveBtn, marginTop: 10 }} disabled={reconcileBusy} onClick={applyReconcile}>
+                {reconcileBusy ? '反映中…' : `✓ 反映する（${reconcileMatches.filter((m) => reconcileChecked[m.recordId]).length}件）`}
+              </button>
+            )}
+
+            {nearMatches.length > 0 && (
+              <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #F0EFE9' }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>表記ゆれの可能性がある候補</div>
+                <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+                  現場名が完全には一致しませんが、スペースや全角/半角の違いだけかもしれません。見比べて、同じ現場だと判断できたら「同じ現場として反映」を押してください（自動では反映しません）。
+                </div>
+                <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                  {nearMatches.map((nm, i) => (
+                    <div key={`${nm.recordId}_${i}`} style={{ padding: '10px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#8A8A83' }}>ETS側：</span>
+                        <span style={{ fontWeight: 700 }}>{nm.etsName}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#8A8A83' }}>特定済みデータ側：</span>
+                        <span style={{ fontWeight: 700 }}>{nm.dataName}</span>
+                      </div>
+                      <div style={{ color: '#8A8A83', marginTop: 2 }}>
+                        {nm.kumiten}／{nm.date}／監督名：{nm.site.supervisorName || '（なし）'}／ハウスNo：{nm.site.houseNumber || '（なし）'}
+                      </div>
+                      <button style={{ ...styles.linkBtn, marginTop: 6 }} onClick={() => applyNearMatch(nm)}>
+                        ✓ 同じ現場として反映
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
