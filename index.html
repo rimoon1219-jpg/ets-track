@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-42';
+  window.__APP_VERSION__ = '2026-09-17-43';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1121,13 +1121,15 @@ function GenbaTracker() {
   // 行き来するので気付きにくいが、PCは開きっぱなしのことが多いため）。開いたままでも自動で
   // 定期的に最新データを取りに行くようにする。
   useEffect(() => {
+    // 伝達（TODO）はスタッフ間の連絡用なので、他のタブより短い間隔で見に行く
+    const intervalMs = tab === 'todo' ? 15000 : 45000;
     const timer = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       if (showForm) return; // 入力中は割り込まない
       lastAutoRefreshRef.current = Date.now();
       load();
       if (tab === 'dispatch') loadDispatch(dispatchDate);
-    }, 45000);
+    }, intervalMs);
     return () => clearInterval(timer);
   }, [showForm, tab, dispatchDate]);
 
