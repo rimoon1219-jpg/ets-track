@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-14';
+  window.__APP_VERSION__ = '2026-09-17-15';
   (function () {
     try {
       if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
@@ -2501,7 +2501,7 @@ function autoAssignTrucks() {
                     {editingTodoId !== t.id && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
                         {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
-                        <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>片付ける</button>
+                        <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>OK</button>
                         <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>
                         <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
                         <button style={styles.switchTypeBtn} onClick={() => toggleImportant(t)}>{t.important ? '重要を解除' : '⚠️ 重要にする'}</button>
