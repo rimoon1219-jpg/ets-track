@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-18';
+  window.__APP_VERSION__ = '2026-09-17-20';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -139,6 +139,16 @@ function getQueue() {
 }
 function saveQueueToDisk(q) {
   try { localStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(q)); } catch (e) {}
+}
+
+// 動作確認を「やった」にした記録は、電波が悪くてサーバー保存が遅れることがあるため、
+// 端末にも控えを残しておく（開き直した時に同じ動作確認が復活するのを防ぐため）
+const DISMISSED_FEATURES_KEY = 'etsTrackDismissedFeatures';
+function getLocalDismissedFeatures() {
+  try { return JSON.parse(localStorage.getItem(DISMISSED_FEATURES_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveLocalDismissedFeatures(list) {
+  try { localStorage.setItem(DISMISSED_FEATURES_KEY, JSON.stringify(list)); } catch (e) {}
 }
 function queueCount() { return getQueue().length; } // 呼び出し順の都合で photoQueueCount は下で定義
 
@@ -455,9 +465,14 @@ const GARA_RECYCLE_HINT = '♻️ リサイクルガラ袋を優先で使って�
 
 // 新しく実装した機能を、次に開いた時にTODOへ自動で追加して動作確認を促す（機能を追加するたびにここへ足していく）
 const FEATURE_CHECKLIST = [
-  { key: 'feature-todo-tab', text: 'TODOタブ：新機能の動作確認をしてね' },
-  { key: 'feature-gara-default', text: '工務店選択でガラ袋のデフォルトが自動で切り替わるか確認してね' },
   { key: 'feature-mgmt-tab', text: '管理表タブ：まだ動作確認していません。一通り触ってみてね' },
+];
+
+// 上のFEATURE_CHECKLISTから外した項目（もう確認不要と判断したもの）。
+// 既に作られてしまっている古いTODOを、次に開いた時に自動で片付けるためのテキスト一覧
+const RETIRED_FEATURE_TEXTS = [
+  'TODOタブ：新機能の動作確認をしてね',
+  '工務店選択でガラ袋のデフォルトが自動で切り替わるか確認してね',
 ];
 
 function extractArea(address) {
@@ -1043,12 +1058,18 @@ function GenbaTracker() {
     const legacyGapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
     await runWithLimit(legacyGapTodos, 6, async (t) => { await completeTodo(t.id); });
 
+    // もう確認不要になった動作確認（RETIRED_FEATURE_TEXTS）が残っていれば片付ける
+    const retiredTodos = tItems.filter((t) => RETIRED_FEATURE_TEXTS.includes(t.text));
+    await runWithLimit(retiredTodos, 6, async (t) => { await completeTodo(t.id); });
+
     // 完了済み（やった済み）の動作確認は、二度と作り直さない
     let dismissedFeatures = [];
     try {
       const r = await storage.get('meta:dismissedFeatures', true);
       if (r && r.value) dismissedFeatures = JSON.parse(r.value);
     } catch (e) { dismissedFeatures = []; }
+    // サーバー保存が電波不良で遅れているケースに備えて、この端末で「やった」にした分もあわせて見る
+    dismissedFeatures = Array.from(new Set([...dismissedFeatures, ...getLocalDismissedFeatures()]));
 
     // 機能の動作確認タスクは、テキストが一致するものをまとめて「1つだけ残して重複は削除」にする
     // （過去にcheckType/featureKeyが保存されずに何度も複製されてしまった分の後片付けも兼ねる）
@@ -1171,16 +1192,22 @@ function GenbaTracker() {
   }
 
   async function markFeatureDismissed(featureKey) {
+    // まず端末側に即座に記録する。サーバー保存が電波不良で遅れたり失敗しても、
+    // この端末で開き直した時に同じ動作確認がまた出てこないようにするため
+    const local = getLocalDismissedFeatures();
+    if (!local.includes(featureKey)) {
+      local.push(featureKey);
+      saveLocalDismissedFeatures(local);
+    }
     try {
       let list = [];
       try {
         const r = await storage.get('meta:dismissedFeatures', true);
         if (r && r.value) list = JSON.parse(r.value);
       } catch (e) { list = []; }
-      if (!list.includes(featureKey)) {
-        list.push(featureKey);
-        await storage.set('meta:dismissedFeatures', JSON.stringify(list), true);
-      }
+      // サーバー側の最新リストと端末側の記録をマージしてから保存する（読み込みタイミングのズレで消えないように）
+      const merged = Array.from(new Set([...list, ...local]));
+      await storage.set('meta:dismissedFeatures', JSON.stringify(merged), true);
     } catch (e) { console.error(e); }
   }
 
