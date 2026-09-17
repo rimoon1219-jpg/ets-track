@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-25';
+  window.__APP_VERSION__ = '2026-09-17-26';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2252,6 +2252,7 @@ function autoAssignTrucks() {
     if (toApply.length === 0) { showToast('チェックが入っている項目がありません'); return; }
     setReconcileBusy(true);
     let count = 0;
+    let queuedCount = 0;
     for (const m of toApply) {
       const rec = schedRecords.find((r) => r.id === m.recordId);
       if (!rec) continue;
@@ -2262,16 +2263,24 @@ function autoAssignTrucks() {
         supervisorPhone: rec.supervisorPhone || m.newPhone,
       };
       try {
-        await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
+        const result = await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
+        // 保存直後は一覧を読み直さず、その場で反映する（読み直すと、送信がまだサーバーに
+        // 届いていない場合に古いデータで上書きしてしまい、「反映した」と表示だけ出て
+        // 実際には入っていないように見える不具合の原因になっていたため）
+        applyLocalRecordUpdate('sched', updatedRec);
+        if (result && result.queued) queuedCount++;
         count++;
       } catch (e) { console.error(e); }
     }
     setReconcileBusy(false);
-    showToast(`${count}件、監督名・ハウスNoを反映しました`);
+    if (queuedCount > 0) {
+      showToast(`${count}件反映しました（うち${queuedCount}件は電波の状況により保留中。電波が戻り次第、自動的に送信されます）`);
+    } else {
+      showToast(`${count}件、監督名・ハウスNoを反映しました`);
+    }
     setShowReconcileModal(false);
     setReconcileMatches([]);
     setReconcileChecked({});
-    load();
   }
 
   async function moveKumiten(index, dir) {
