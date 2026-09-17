@@ -9,19 +9,19 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-15';
+  window.__APP_VERSION__ = '2026-09-17-16';
   (function () {
+    // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
+    // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
+    // そのタブではずっと古いバージョンを見続けてしまう不具合があった。
+    // 開くたびに毎回サーバーの最新版と照合するように変更（軽いHTML取得だけなので問題ない）。
     try {
-      if (sessionStorage.getItem('etsTrackVersionChecked') === window.__APP_VERSION__) return;
       fetch('./index.html?check=' + Date.now(), { cache: 'no-store' })
         .then((res) => res.text())
         .then((text) => {
           const m = text.match(/__APP_VERSION__\s*=\s*'([^']+)'/);
           if (m && m[1] !== window.__APP_VERSION__) {
-            sessionStorage.removeItem('etsTrackVersionChecked');
             window.location.href = window.location.pathname + '?v=' + Date.now();
-          } else {
-            sessionStorage.setItem('etsTrackVersionChecked', window.__APP_VERSION__);
           }
         })
         .catch(() => {});
@@ -791,8 +791,9 @@ function GenbaTracker() {
   const [showSummaryView, setShowSummaryView] = useState(false);
   const [summaryFrom, setSummaryFrom] = useState('');
   const [summaryTo, setSummaryTo] = useState('');
-  const [summaryKumitenFilter, setSummaryKumitenFilter] = useState('全て');
-  const [ganttKumitenFilter, setGanttKumitenFilter] = useState('全て');
+  // 工務店フィルターは以前、一覧・集計・工期表でそれぞれ別々に持っていたため、
+  // 「全て」を押しても他の画面の選択が残ってしまい太字が消えないという不具合の原因になっていた。
+  // 混乱を避けるため、工務店フィルターは画面をまたいで1つだけ共有する（kumitenFilterのみ使用）。
   const [ganttMonthOffset, setGanttMonthOffset] = useState(-1); // 表示開始位置（今月からのズレ）
   const [kumitenList, setKumitenList] = useState(DEFAULT_KUMITEN);
   const [todos, setTodos] = useState([]);
@@ -2021,7 +2022,7 @@ function autoAssignTrucks() {
 
   // ---- 工務店・現場・日付ごとの集計（期間自由指定） ----
   const summaryRecords = mgmtRecords.filter((r) => {
-    if (summaryKumitenFilter !== '全て' && r.kumiten !== summaryKumitenFilter) return false;
+    if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return false;
     if (summaryFrom && r.date < summaryFrom) return false;
     if (summaryTo && r.date > summaryTo) return false;
     return true;
@@ -2161,12 +2162,12 @@ function autoAssignTrucks() {
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(''); setDateTo(''); }}>全期間を表示</button>
               <button style={styles.linkBtnSmall} onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>今日</button>
               <button style={styles.linkBtnSmall} onClick={() => { setShowTrash(true); setTrashSelected([]); loadTrash(); }}>🗑 ゴミ箱</button>
-              {(search || dateFrom || dateTo || kumitenFilter !== '全て' || summaryKumitenFilter !== '全て' || ganttKumitenFilter !== '全て' || showUncollectedOnly) && (
+              {(search || dateFrom || dateTo || kumitenFilter !== '全て' || showUncollectedOnly) && (
                 <button
                   style={{ ...styles.linkBtnSmall, color: '#E63946' }}
                   onClick={() => {
                     setSearch(''); setDateFrom(''); setDateTo('');
-                    setKumitenFilter('全て'); setSummaryKumitenFilter('全て'); setGanttKumitenFilter('全て');
+                    setKumitenFilter('全て');
                     setShowUncollectedOnly(false);
                   }}
                 >
@@ -2431,39 +2432,39 @@ function autoAssignTrucks() {
         return (
           <GanttChart
             schedRecords={schedRecords}
-            kumitenFilter={ganttKumitenFilter}
+            kumitenFilter={kumitenFilter}
             windowStart={winStart}
             windowEnd={winEnd}
             onShift={(d) => setGanttMonthOffset((v) => v + d)}
-            onPickKumiten={setGanttKumitenFilter}
+            onPickKumiten={setKumitenFilter}
             kumitenList={kumitenList}
           />
         );
       })()}
 
-      {tab === 'todo' && (
+      {tab === 'todo' && (() => {
+        // 表示のたびに一覧の並べ替えや不足チェックを何度も計算し直していたのが、
+        // スマホでの表示が遅く感じられる一因だったため、1回の描画につき1回だけ計算するようにする
+        const me = getDeviceStaff();
+        const memos = sortedMemos();
+        const tasks = sortedTasks();
+        const gapSites = infoGapSites();
+        const gapGroups = gapSites.length > 0 ? infoGapsByKumiten() : [];
+        const unseenCount = memos.filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
+        return (
         <div style={{ padding: '0 16px' }}>
           <div style={{ marginTop: 10 }}>
-            {(() => {
-              const unseenCount = sortedMemos().filter((t) => {
-                const me = getDeviceStaff();
-                return !(me && seenIncludes(t.seenBy, me));
-              }).length;
-              return (
-                <div style={styles.memoSectionBanner}>
-                  📢 伝達（見た管理）{unseenCount > 0 && <span style={styles.memoUnseenCountTag}>未確認 {unseenCount}件</span>}
-                </div>
-              );
-            })()}
-            {sortedMemos().length === 0 && (
+            <div style={styles.memoSectionBanner}>
+              📢 伝達（見た管理）{unseenCount > 0 && <span style={styles.memoUnseenCountTag}>未確認 {unseenCount}件</span>}
+            </div>
+            {memos.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
                 {loading ? '読み込み中…' : '今はありません'}
               </div>
             )}
-            {sortedMemos().length > 0 && (
+            {memos.length > 0 && (
               <>
-                {sortedMemos().map((t) => {
-                  const me = getDeviceStaff();
+                {memos.map((t) => {
                   const iSaw = me && seenIncludes(t.seenBy, me);
                   return (
                   <div key={t.id} style={{ ...styles.todoRow, ...(iSaw ? {} : styles.todoRowUnseen), ...(t.important ? styles.todoRowImportant : {}) }}>
@@ -2514,14 +2515,14 @@ function autoAssignTrucks() {
             )}
 
             <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>タスク（やった管理）</div>
-            {sortedTasks().length === 0 && (
+            {tasks.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
                 {loading ? '読み込み中…' : '今はありません'}
               </div>
             )}
-            {sortedTasks().length > 0 && (
+            {tasks.length > 0 && (
               <>
-                {sortedTasks().map((t) => {
+                {tasks.map((t) => {
                   return (
                   <div key={t.id} style={{ ...styles.todoRow, ...(t.important ? styles.todoRowImportant : {}) }}>
                     <div style={{ flex: 1 }}>
@@ -2639,15 +2640,15 @@ function autoAssignTrucks() {
             </button>
           </div>
 
-          {infoGapSites().length > 0 && (
+          {gapSites.length > 0 && (
             <div style={{ ...styles.gapSummaryCard, marginTop: 18 }}>
               <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
-                <span>📋 情報不足の現場（工務店ごと）：{infoGapSites().length}件</span>
+                <span>📋 情報不足の現場（工務店ごと）：{gapSites.length}件</span>
                 <span>{showInfoGaps ? '▲閉じる' : '▼見る'}</span>
               </div>
               {showInfoGaps && (
                 <div style={{ marginTop: 8 }}>
-                  {infoGapsByKumiten().map(({ kumiten, items }) => (
+                  {gapGroups.map(({ kumiten, items }) => (
                     <div key={kumiten} style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件）</div>
                       {items.map(({ r, gaps }) => {
@@ -2673,7 +2674,8 @@ function autoAssignTrucks() {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {tab === 'invoice' && (
         <div>
@@ -2782,7 +2784,7 @@ function autoAssignTrucks() {
             <label style={styles.label}>工務店</label>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
-                <button key={k} onClick={() => setSummaryKumitenFilter(k)} style={{ ...styles.chip, ...(summaryKumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
+                <button key={k} onClick={() => setKumitenFilter(k)} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
               ))}
             </div>
 
