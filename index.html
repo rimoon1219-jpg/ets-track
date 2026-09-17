@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-20';
+  window.__APP_VERSION__ = '2026-09-17-25';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -350,7 +350,116 @@ const storage = {
 const RYUBEI_PASSWORD = '8989';
 const TODO_PASSWORD = '4455';
 
-const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
+const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
+// 電子マニフェストを使っている工務店（この4社だけは、ハウスNo・監督名が必須。今後増える可能性あり）
+const MANIFEST_KUMITEN = ['OHA', 'OHD', 'アオイ', 'メルディア'];
+
+// オープンハウス・アーキテクト（OHA）の監督名簿。マニフェスト検索を楽にするため、
+// 現場ごとに監督名が入っていなくても、名前を選ぶだけで電話番号が自動で入るようにする初期データ
+const DEFAULT_SUPERVISORS = {
+  OHA: [
+    { name: '山下', phone: '08065118543' },
+    { name: '伊藤', phone: '08065359185' },
+    { name: '家治', phone: '08055224474' },
+    { name: '長谷川', phone: '08068078994' },
+    { name: '高野', phone: '08055223910' },
+    { name: '高橋', phone: '' },
+    { name: '町田', phone: '09093034024' },
+    { name: '松山', phone: '08065409043' },
+    { name: '石原', phone: '07088350148' },
+    { name: '望月', phone: '' },
+    { name: '寺坂', phone: '08066761267' },
+    { name: '森', phone: '08065118536' },
+    { name: '福田', phone: '07024681628' },
+    { name: '堀内', phone: '08054745377' },
+    { name: '久保', phone: '08056877985' },
+    { name: '中村', phone: '07024810984' },
+  ],
+  ケイアイ: [
+    { name: '杉山', phone: '07075383889' },
+    { name: '岡部', phone: '08034284816' },
+    { name: '高野', phone: '07024989782' },
+    { name: '桐ヶ谷', phone: '08034280185' },
+    { name: '尾形', phone: '07088352721' },
+    { name: '内野', phone: '08065103870' },
+    { name: '山中', phone: '08034267252' },
+  ],
+  メルディア: [
+    { name: '並木', phone: '09021544639' },
+    { name: '大原', phone: '07017995446' },
+    { name: '一條', phone: '08072232492' },
+    { name: '佃', phone: '08058692517' },
+    { name: '大内', phone: '07012739211' },
+    { name: '小川', phone: '09091340631' },
+    { name: '平塚', phone: '08059285437' },
+    { name: '水野', phone: '08096542427' },
+    { name: '牛込', phone: '09051962852' },
+    { name: '遊佐', phone: '07024837302' },
+    { name: '関戸', phone: '07012760589' },
+    { name: '飯島', phone: '07012676160' },
+    { name: '高石', phone: '07031738014' },
+  ],
+};
+
+// 「特定済み現場データ」の初期データ（マニフェスト業務プロジェクトの参考ファイルから）。
+// 現場名が完全一致した場合だけ、監督名・ハウスNoを提案する（あいまい一致はしない）。
+const DEFAULT_IDENTIFIED_SITES = [
+  { kumiten: 'OHA', siteName: '六角橋6丁目(松本邸)', houseNumber: '02623022', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '仲手原2丁目', houseNumber: '02623051', supervisorName: '寺坂太志', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '馬場2丁目2棟', houseNumber: '02623058・02623059', supervisorName: '松山竜也2', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '赤羽根(日比谷邸)', houseNumber: '02618013', supervisorName: '高野ひまわり', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '茅ヶ崎市萩園', houseNumber: '02618001', supervisorName: '高野ひまわり', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '双葉2丁目', houseNumber: '02619085', supervisorName: '森二葉', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '上和田(對馬邸)', houseNumber: '02618008', supervisorName: '山下琉花', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: 'さがみ野1丁目(石渡邸)', houseNumber: '02623064', supervisorName: '長谷川健人', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '上今泉4丁目2棟(海老名市)', houseNumber: '02623060・02623061', supervisorName: '山下琉花', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '堀西(辻邸)(秦野市)', houseNumber: '02618027', supervisorName: '家治涼聖', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '能ヶ谷5丁目(町田市)', houseNumber: '02619018', supervisorName: '石原悠太', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '新屋3棟(小田原市)', houseNumber: '02618032・02618033・02618034', supervisorName: '家治涼聖', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '蓼川1丁目4棟(綾瀬市)', houseNumber: '02619021・02619022・02619023・02619024', supervisorName: '家治涼聖', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '陽光台6丁目(相模原市中央区)', houseNumber: '02618048', supervisorName: '石原悠太', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '浜町1丁目(小田原市)', houseNumber: '02545144', supervisorName: '家治涼聖', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '上鶴間本町9丁目(相模原市南区)', houseNumber: '02618015', supervisorName: '石原悠太', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '湯河原町宮上(大澤邸)(足柄下郡)', houseNumber: '02502055', supervisorName: '中村泰河', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '常盤町AP(町田市)', houseNumber: '02520052', supervisorName: '堀内治男', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '下瀬谷3丁目(瀬谷区)', houseNumber: '02501054', supervisorName: '山下琉花', confirmedDate: '2026/09/09' },
+  { kumiten: 'OHA', siteName: '戸塚区矢部町', houseNumber: '02632066', supervisorName: '松山竜也2', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '佐野町1丁目(3号棟)(横須賀市)', houseNumber: '02623003', supervisorName: '福田真衣', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '佐野町1丁目(大津邸)(横須賀市)', houseNumber: '02623037', supervisorName: '福田真衣', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '横浜市南区六ッ川2丁目', houseNumber: '02618007', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '港南区日野2丁目', houseNumber: '02623010', supervisorName: '寺坂太志', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '鵠沼松が岡416AP(藤沢市)', houseNumber: '02678010', supervisorName: '塚本哲也', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '辻堂元町4丁目2棟(藤沢市)', houseNumber: '02602020・02602021', supervisorName: '久保志穂', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '下飯田町(熊坂邸)(横浜市泉区)', houseNumber: '02545016', supervisorName: '福田真衣', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '本鵠沼1丁目(和田濱邸)(藤沢市)', houseNumber: '02618042', supervisorName: '久保志穂', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '藤沢市高倉', houseNumber: '02345130', supervisorName: '家治涼聖', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '港北高田 長屋', houseNumber: '02637024', supervisorName: '堀内治男', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '中原区下沼部(川崎市)', houseNumber: '02648014', supervisorName: '寺坂太志', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '綱島東5丁目大澤様邸(港北区)', houseNumber: '02623034', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '旭区四季美台', houseNumber: '02645040', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '鶴見区梶山2丁目', houseNumber: '02619048', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '浜須賀7100(茅ヶ崎市)', houseNumber: '02619036', supervisorName: '高野ひまわり', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '西寺尾2丁目AP(神奈川区)', houseNumber: '02545094', supervisorName: '堀内治男', confirmedDate: '2026/09/11' },
+  { kumiten: 'OHA', siteName: '滝山町1丁目(久野邸)長屋(八王子市)', houseNumber: '02502076', supervisorName: '石原悠太', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '打越町1523(八王子市)', houseNumber: '02519047', supervisorName: '森二葉', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '淵野辺213 2棟(相模原市中央区)', houseNumber: '02678011・02678012', supervisorName: '塚本哲也', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '中野上町(八王子市)', houseNumber: '02652031', supervisorName: '森二葉', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '上溝(君塚邸)(相模原市中央区)', houseNumber: '02623054', supervisorName: '石原悠太', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '大野台4丁目(相模原市南区、森監督)', houseNumber: '02619086', supervisorName: '森二葉', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '唐沢(横浜市南区)', houseNumber: '02619002', supervisorName: '高橋利愛瑠', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '上草柳字東ヶ里(大和市)', houseNumber: '02619072', supervisorName: '森二葉', confirmedDate: '2026/09/14' },
+  { kumiten: 'OHA', siteName: '菅5丁目(川崎市多摩区)', houseNumber: '02619047', supervisorName: '小谷透生', confirmedDate: '2026/09/16' },
+  { kumiten: 'OHA', siteName: '福田3619(大和市)', houseNumber: '02619057', supervisorName: '山下琉花', confirmedDate: '2026/09/16' },
+  { kumiten: 'OHA', siteName: '大和市下鶴間', houseNumber: '02619089', supervisorName: '森二葉', confirmedDate: '2026/09/16' },
+  { kumiten: 'OHA', siteName: '鎌倉市岩瀬1丁目 遠藤邸', houseNumber: '02518111', supervisorName: '高野ひまわり', confirmedDate: '' },
+  { kumiten: 'OHA', siteName: '鎌倉市岩瀬1丁目 稲垣邸', houseNumber: '02518118', supervisorName: '高野ひまわり', confirmedDate: '' },
+  { kumiten: 'OHD', siteName: '南林間604①', houseNumber: '262441', supervisorName: '須藤大樹', supervisorPhone: '07031221033', confirmedDate: '2026/09/08' },
+  { kumiten: 'OHD', siteName: '中海岸104②1', houseNumber: '263437', supervisorName: '多田玲沙', supervisorPhone: '08042986248', confirmedDate: '2026/09/04' },
+  { kumiten: 'メルディア', siteName: '横浜市金沢区六浦341③', houseNumber: '', supervisorName: '林', confirmedDate: '' },
+  { kumiten: 'メルディア', siteName: '横浜市港南区港南台904 2棟', houseNumber: '', supervisorName: '柳沼', confirmedDate: '' },
+  { kumiten: 'メルディア', siteName: '藤沢市鵠沼海岸617', houseNumber: '', supervisorName: '中村', confirmedDate: '' },
+];
+
 const TRUCK_COLORS = ['#E63946', '#457B9D', '#2A9D8F', '#FFB703', '#9B5DE5', '#F4A261', '#606C38', '#FF6F91', '#3A86FF', '#8D5524'];
 
 const SCHED_STATUSES = [
@@ -811,6 +920,18 @@ function GenbaTracker() {
   // 混乱を避けるため、工務店フィルターは画面をまたいで1つだけ共有する（kumitenFilterのみ使用）。
   const [ganttMonthOffset, setGanttMonthOffset] = useState(-1); // 表示開始位置（今月からのズレ）
   const [kumitenList, setKumitenList] = useState(DEFAULT_KUMITEN);
+  const [supervisorDirectory, setSupervisorDirectory] = useState(DEFAULT_SUPERVISORS);
+  const [showSupervisorEditor, setShowSupervisorEditor] = useState(false);
+  const [supervisorEditorKumiten, setSupervisorEditorKumiten] = useState('OHA');
+  const [supervisorBulkText, setSupervisorBulkText] = useState('');
+  const [identifiedSites, setIdentifiedSites] = useState(DEFAULT_IDENTIFIED_SITES);
+  const [showIdentifiedSitesEditor, setShowIdentifiedSitesEditor] = useState(false);
+  const [identifiedSitesKumiten, setIdentifiedSitesKumiten] = useState('OHA');
+  const [identifiedSitesBulkText, setIdentifiedSitesBulkText] = useState('');
+  const [showReconcileModal, setShowReconcileModal] = useState(false);
+  const [reconcileMatches, setReconcileMatches] = useState([]);
+  const [reconcileChecked, setReconcileChecked] = useState({});
+  const [reconcileBusy, setReconcileBusy] = useState(false);
   const [todos, setTodos] = useState([]);
   const [todoText, setTodoText] = useState('');
   const [todoSiteName, setTodoSiteName] = useState('');
@@ -968,6 +1089,56 @@ function GenbaTracker() {
         setKumitenList(list);
       } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
 
+      // 監督名簿：保存済みのものに、初期データ（DEFAULT_SUPERVISORS）にしかない分だけ追加でマージする
+      try {
+        let dir = {};
+        try {
+          const sv = await storage.get('meta:supervisors', true);
+          if (sv && sv.value) dir = JSON.parse(sv.value);
+        } catch (e) { dir = {}; }
+        let changed = false;
+        Object.keys(DEFAULT_SUPERVISORS).forEach((k) => {
+          const existing = dir[k] || [];
+          const existingNames = new Set(existing.map((s) => s.name));
+          const missing = DEFAULT_SUPERVISORS[k].filter((s) => !existingNames.has(s.name));
+          if (missing.length > 0) { dir[k] = [...existing, ...missing]; changed = true; }
+        });
+        // 一度だけの修正：望月さんに高橋さんと同じ電話番号が誤って入っていたため、
+        // 正しい番号が届くまでは電話番号を空にしておく（名前は残す）
+        if (dir.OHA) {
+          const fixNames = ['望月', '高橋'];
+          const WRONG_PHONE = '08065408853';
+          let fixed = false;
+          dir.OHA = dir.OHA.map((s) => {
+            if (fixNames.includes(s.name) && s.phone === WRONG_PHONE) { fixed = true; return { ...s, phone: '' }; }
+            return s;
+          });
+          if (fixed) changed = true;
+        }
+        if (changed || !dir || Object.keys(dir).length === 0) {
+          await storage.set('meta:supervisors', JSON.stringify(dir), true);
+        }
+        setSupervisorDirectory(dir);
+      } catch (e) { setSupervisorDirectory(DEFAULT_SUPERVISORS); }
+
+      // 特定済み現場データ：保存済みのものに、初期データ（DEFAULT_IDENTIFIED_SITES）にしかない分だけ追加でマージする
+      // （工務店＋現場名の組み合わせで重複判定。既存データは上書きしない）
+      try {
+        let sites = [];
+        try {
+          const sv = await storage.get('meta:identifiedSites', true);
+          if (sv && sv.value) sites = JSON.parse(sv.value);
+        } catch (e) { sites = []; }
+        const existingKeys = new Set(sites.map((s) => `${s.kumiten}__${s.siteName}`));
+        const missing = DEFAULT_IDENTIFIED_SITES.filter((s) => !existingKeys.has(`${s.kumiten}__${s.siteName}`));
+        let changedSites = missing.length > 0;
+        if (missing.length > 0) sites = [...sites, ...missing];
+        if (changedSites || !sites || sites.length === 0) {
+          await storage.set('meta:identifiedSites', JSON.stringify(sites), true);
+        }
+        setIdentifiedSites(sites);
+      } catch (e) { setIdentifiedSites(DEFAULT_IDENTIFIED_SITES); }
+
       async function fetchGroup(prefix) {
         const listRes = await storage.list(`${prefix}:`, true);
         return fetchWithLimit((listRes && listRes.keys) || [], 8);
@@ -1104,6 +1275,8 @@ function GenbaTracker() {
 
   // マニフェストに必要な項目（工務店・監督名・ハウスNo、今日以降の現場のみ）と、住所の抜け（全期間）をその場で計算する。
   // 電話番号はマニフェストに不要なため対象外。保存はしない（重複しようがない）
+  // 監督名・ハウスNoは、実際に電子マニフェストを使っている工務店（MANIFEST_KUMITEN）だけ必須にする。
+  // それ以外の工務店まで対象にすると件数が膨れて本当に大事な分が埋もれてしまうため
   function infoGapSites() {
     const today = todayStr();
     return schedRecords
@@ -1115,9 +1288,10 @@ function GenbaTracker() {
         else if (!(r.address || '').trim()) gaps.push('住所');
         if (r.date >= today) {
           if (!(r.kumiten || '').trim()) gaps.push('工務店');
-          if (!(r.supervisorName || '').trim()) gaps.push('監督名');
-          if (!(r.supervisorPhone || '').trim()) gaps.push('電話番号');
-          if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
+          else if (MANIFEST_KUMITEN.includes(r.kumiten)) {
+            if (!(r.supervisorName || '').trim()) gaps.push('監督名');
+            if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
+          }
         }
         return { r, gaps };
       })
@@ -1475,12 +1649,9 @@ function autoAssignTrucks() {
   function fillPhoneFromSupervisorName(name) {
     const trimmed = (name || '').trim();
     if (!trimmed || form.supervisorPhone) return; // 電話番号が既に入力済みなら上書きしない
-    const candidates = schedRecords
-      .filter((r) => r.kumiten === form.kumiten && (r.supervisorName || '').trim() === trimmed && r.supervisorPhone)
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    const match = candidates[0];
-    if (!match) return;
-    setForm((f) => (f.supervisorPhone ? f : { ...f, supervisorPhone: match.supervisorPhone }));
+    const phone = findSupervisorPhone(form.kumiten, trimmed);
+    if (!phone) return;
+    setForm((f) => (f.supervisorPhone ? f : { ...f, supervisorPhone: phone }));
     showToast(`${form.kumiten}の${trimmed}さんの電話番号を自動入力しました`);
   }
 
@@ -1645,7 +1816,7 @@ function autoAssignTrucks() {
           houseNumber: (houseNumber || '').trim() || rec.houseNumber,
         };
         try {
-          await storage.set(`sched:${rec.id}`, JSON.stringify(updated));
+          await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
           updated++;
         } catch (e) { console.error(e); }
       }
@@ -1908,6 +2079,199 @@ function autoAssignTrucks() {
     const next = kumitenList.includes('その他') ? [...others, trimmed, 'その他'] : [...kumitenList, trimmed];
     await saveKumitenList(next);
     showToast(`「${trimmed}」を追加しました`);
+  }
+
+  // ---- 監督名簿（工務店ごとの監督名・電話番号）----
+  async function saveSupervisorDirectory(next) {
+    setSupervisorDirectory(next);
+    await storage.set('meta:supervisors', JSON.stringify(next), true);
+  }
+
+  // 現在の工務店で使える監督名の候補一覧（監督名簿＋実際に入力済みの現場データの両方から集める）
+  function supervisorOptionsFor(kumiten) {
+    if (!kumiten) return [];
+    const fromDirectory = (supervisorDirectory[kumiten] || []).map((s) => s.name);
+    const fromRecords = schedRecords.filter((r) => r.kumiten === kumiten && (r.supervisorName || '').trim()).map((r) => r.supervisorName.trim());
+    return Array.from(new Set([...fromDirectory, ...fromRecords]));
+  }
+
+  // 監督名簿・現場データの両方から、名前に一致する電話番号を探す
+  function findSupervisorPhone(kumiten, name) {
+    const trimmed = (name || '').trim();
+    if (!kumiten || !trimmed) return '';
+    const inDirectory = (supervisorDirectory[kumiten] || []).find((s) => s.name === trimmed);
+    if (inDirectory && inDirectory.phone) return inDirectory.phone;
+    const candidates = schedRecords
+      .filter((r) => r.kumiten === kumiten && (r.supervisorName || '').trim() === trimmed && r.supervisorPhone)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    return candidates[0] ? candidates[0].supervisorPhone : '';
+  }
+
+  // 「名前 電話番号」を1行ずつ貼り付けたテキストから監督名簿に一括登録する
+  async function importSupervisorBulkText() {
+    const kumiten = supervisorEditorKumiten;
+    const lines = supervisorBulkText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) { showToast('貼り付ける内容がありません'); return; }
+    const parsed = [];
+    const skipped = [];
+    lines.forEach((line) => {
+      // 「名前」と「電話番号（数字だけ）」を、間の空白・全角スペースで区切る想定
+      const m = line.match(/^([^\s　]+)[\s　]+([0-9\s　-]+)$/);
+      if (!m) { skipped.push(line); return; }
+      const name = m[1].trim();
+      const phone = m[2].replace(/[\s　-]/g, '');
+      if (!name || !phone) { skipped.push(line); return; }
+      parsed.push({ name, phone });
+    });
+    if (parsed.length === 0) { showToast('名前と電話番号として読み取れる行がありませんでした'); return; }
+    const existing = supervisorDirectory[kumiten] || [];
+    const map = new Map(existing.map((s) => [s.name, s.phone]));
+    // 同じ電話番号が既に別の名前に登録されている場合は、上書きせず警告だけ出す（間違って混ざらないように）
+    const duplicatePhoneWarnings = [];
+    parsed.forEach((s) => {
+      const dupe = Array.from(map.entries()).find(([n, p]) => p === s.phone && n !== s.name);
+      if (dupe) duplicatePhoneWarnings.push(`${s.name}と${dupe[0]}が同じ電話番号（${s.phone}）`);
+      map.set(s.name, s.phone);
+    });
+    const next = { ...supervisorDirectory, [kumiten]: Array.from(map.entries()).map(([name, phone]) => ({ name, phone })) };
+    await saveSupervisorDirectory(next);
+    setSupervisorBulkText('');
+    let msg = `${kumiten}に${parsed.length}件登録しました`;
+    if (skipped.length > 0) msg += `（読み取れなかった行：${skipped.length}件）`;
+    showToast(msg);
+    if (duplicatePhoneWarnings.length > 0) {
+      window.alert(`電話番号の重複があります。念のため確認してください：\n${duplicatePhoneWarnings.join('\n')}`);
+    }
+  }
+
+  async function removeSupervisorEntry(kumiten, name) {
+    const next = { ...supervisorDirectory, [kumiten]: (supervisorDirectory[kumiten] || []).filter((s) => s.name !== name) };
+    await saveSupervisorDirectory(next);
+  }
+
+  // ここから「特定済み現場データ」（マニフェスト業務プロジェクトの参考ファイルの内容をETS TRACK側にも持たせたもの）
+  async function saveIdentifiedSites(next) {
+    setIdentifiedSites(next);
+    await storage.set('meta:identifiedSites', JSON.stringify(next), true);
+  }
+  function identifiedSitesFor(kumiten) {
+    return identifiedSites.filter((s) => s.kumiten === kumiten);
+  }
+  async function removeIdentifiedSite(kumiten, siteName) {
+    const next = identifiedSites.filter((s) => !(s.kumiten === kumiten && s.siteName === siteName));
+    await saveIdentifiedSites(next);
+  }
+  // 参考ファイルの行をそのまま貼り付けて登録できるようにするパーサー。
+  // 対応形式：「現場名：X／ハウスNo：Y／現場監督：Z／確認日：W」「AAA → 監督名」など
+  async function importIdentifiedSitesBulkText() {
+    const kumiten = identifiedSitesKumiten;
+    const lines = identifiedSitesBulkText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) { showToast('貼り付ける内容がありません'); return; }
+    const parsed = [];
+    const skipped = [];
+    lines.forEach((line) => {
+      const entry = { kumiten, siteName: '', houseNumber: '', supervisorName: '', supervisorPhone: '', confirmedDate: '' };
+      if (line.includes('→')) {
+        const [left, right] = line.split('→').map((s) => s.trim());
+        entry.siteName = left;
+        entry.supervisorName = right || '';
+      } else if (line.includes('／') || /[：:]/.test(line)) {
+        line.split('／').forEach((part) => {
+          const m = part.split(/[：:]/);
+          if (m.length < 2) return;
+          const key = m[0].trim();
+          const val = m.slice(1).join(':').trim();
+          if (key === '現場名') entry.siteName = val;
+          else if (key === '住所' && !entry.siteName) entry.siteName = val;
+          else if ((key === 'ハウスNo' || key === '事業場コード') && !entry.houseNumber) entry.houseNumber = val;
+          else if (key === '現場監督' || key === '監督名' || key === '担当者') {
+            const phoneMatch = val.match(/[（(]([\d\-]+)[）)]/);
+            entry.supervisorName = val.replace(/[（(][\d\-]+[）)]/, '').trim();
+            if (phoneMatch) entry.supervisorPhone = phoneMatch[1].replace(/-/g, '');
+          } else if (key === '確認日') entry.confirmedDate = val;
+        });
+      } else {
+        skipped.push(line);
+        return;
+      }
+      if (!entry.siteName) { skipped.push(line); return; }
+      parsed.push(entry);
+    });
+    if (parsed.length === 0) { showToast('現場名として読み取れる行がありませんでした'); return; }
+    const map = new Map(identifiedSites.map((s) => [`${s.kumiten}__${s.siteName}`, s]));
+    parsed.forEach((e) => { map.set(`${e.kumiten}__${e.siteName}`, e); });
+    await saveIdentifiedSites(Array.from(map.values()));
+    setIdentifiedSitesBulkText('');
+    let msg = `${parsed.length}件登録・更新しました`;
+    if (skipped.length > 0) msg += `（読み取れなかった行：${skipped.length}件）`;
+    showToast(msg);
+  }
+  // 現場名が完全一致するものだけを候補にする（あいまい一致はしない：過去に間違った候補を出した反省から）
+  function findReconcileMatches() {
+    const matches = [];
+    schedRecords.forEach((r) => {
+      if (!MANIFEST_KUMITEN.includes(r.kumiten)) return;
+      const needSupervisor = !(r.supervisorName || '').trim();
+      const needHouseNumber = !(r.houseNumber || '').trim();
+      if (!needSupervisor && !needHouseNumber) return;
+      const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === r.name.trim());
+      if (!site) return;
+      const newSupervisor = needSupervisor && (site.supervisorName || '').trim() ? site.supervisorName.trim() : '';
+      const newHouseNumber = needHouseNumber && (site.houseNumber || '').trim() ? site.houseNumber.trim() : '';
+      const newPhone = !(r.supervisorPhone || '').trim() && (site.supervisorPhone || '').trim() ? site.supervisorPhone.trim() : '';
+      if (!newSupervisor && !newHouseNumber) return;
+      matches.push({
+        recordId: r.id,
+        siteName: r.name,
+        kumiten: r.kumiten,
+        date: r.date,
+        currentSupervisor: r.supervisorName || '',
+        currentHouseNumber: r.houseNumber || '',
+        newSupervisor,
+        newHouseNumber,
+        newPhone,
+        confirmedDate: site.confirmedDate || '',
+      });
+    });
+    return matches;
+  }
+  function openReconcileModal() {
+    const matches = findReconcileMatches();
+    if (matches.length === 0) {
+      showToast('照合できる候補が見つかりませんでした（現場名が完全一致する未登録データがありません）');
+      return;
+    }
+    setReconcileMatches(matches);
+    const checked = {};
+    matches.forEach((m) => { checked[m.recordId] = true; });
+    setReconcileChecked(checked);
+    setShowReconcileModal(true);
+  }
+  async function applyReconcile() {
+    const toApply = reconcileMatches.filter((m) => reconcileChecked[m.recordId]);
+    if (toApply.length === 0) { showToast('チェックが入っている項目がありません'); return; }
+    setReconcileBusy(true);
+    let count = 0;
+    for (const m of toApply) {
+      const rec = schedRecords.find((r) => r.id === m.recordId);
+      if (!rec) continue;
+      const updatedRec = {
+        ...rec,
+        supervisorName: m.newSupervisor || rec.supervisorName,
+        houseNumber: m.newHouseNumber || rec.houseNumber,
+        supervisorPhone: rec.supervisorPhone || m.newPhone,
+      };
+      try {
+        await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
+        count++;
+      } catch (e) { console.error(e); }
+    }
+    setReconcileBusy(false);
+    showToast(`${count}件、監督名・ハウスNoを反映しました`);
+    setShowReconcileModal(false);
+    setReconcileMatches([]);
+    setReconcileChecked({});
+    load();
   }
 
   async function moveKumiten(index, dir) {
@@ -2233,6 +2597,9 @@ function autoAssignTrucks() {
             <button style={styles.linkBtn} onClick={() => setShowBulkDelete(true)}>期間を指定して一括削除</button>
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkImport(true)}>TimeTreeから一括インポート</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkUpdate(true)}>監督名・ハウスNoを一括更新</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
           </div>
 
@@ -2981,7 +3348,18 @@ function autoAssignTrucks() {
                 <div style={styles.row2}>
                   <div style={{ flex: 1 }}>
                     <label style={styles.label}>監督名</label>
-                    <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} onBlur={(e) => fillPhoneFromSupervisorName(e.target.value)} placeholder="例：須藤大樹" />
+                    <SiteNameAutocomplete
+                      style={styles.input}
+                      value={form.supervisorName || ''}
+                      options={supervisorOptionsFor(form.kumiten)}
+                      placeholder="例：須藤大樹"
+                      onChange={(v) => setForm({ ...form, supervisorName: v })}
+                      onSelect={(v) => {
+                        const phone = findSupervisorPhone(form.kumiten, v);
+                        if (phone) setForm((f) => (f.supervisorPhone ? f : { ...f, supervisorPhone: phone }));
+                      }}
+                      onBlurExtra={(e) => fillPhoneFromSupervisorName(e.target.value)}
+                    />
                   </div>
                   <div style={{ flex: 1 }}>
                     <label style={styles.label}>監督の電話番号</label>
@@ -3142,6 +3520,140 @@ function autoAssignTrucks() {
             ))}
             <button style={{ ...styles.saveBtn, marginTop: 14 }} onClick={addKumitenName}>＋ 新しい工務店を追加</button>
             <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => { setShowRenameHistory(true); loadRenameHistory(); }}>🕘 改名の履歴（元に戻す）</button>
+          </div>
+        </div>
+      )}
+
+      {showSupervisorEditor && (
+        <div style={styles.overlay} onClick={() => setShowSupervisorEditor(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>監督名簿の編集（工務店ごと）</div>
+              <button style={styles.closeBtn} onClick={() => setShowSupervisorEditor(false)}>✕</button>
+            </div>
+            <label style={styles.label}>工務店</label>
+            <div style={styles.chipRow}>
+              {kumitenList.filter((k) => k !== 'その他').map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setSupervisorEditorKumiten(k)}
+                  style={{ ...styles.chip, ...(supervisorEditorKumiten === k ? styles.chipActive : {}), ...(MANIFEST_KUMITEN.includes(k) ? { fontWeight: 700 } : {}) }}
+                >
+                  {k}{MANIFEST_KUMITEN.includes(k) ? '（電子マニ）' : ''}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              {(supervisorDirectory[supervisorEditorKumiten] || []).length === 0 && (
+                <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 10px' }}>まだ登録がありません</div>
+              )}
+              {(supervisorDirectory[supervisorEditorKumiten] || []).map((s) => (
+                <div key={s.name} style={styles.kumitenEditRow}>
+                  <span style={styles.kumitenEditName}>{s.name}／{s.phone}</span>
+                  <div style={styles.kumitenEditBtns}>
+                    <button style={styles.kumitenDeleteBtn} onClick={() => removeSupervisorEntry(supervisorEditorKumiten, s.name)}>削除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <label style={{ ...styles.label, marginTop: 14 }}>まとめて貼り付けて登録（1行に「名前 電話番号」）</label>
+            <textarea
+              style={{ ...styles.input, minHeight: 120, resize: 'vertical' }}
+              placeholder={'例：\n山下 08065118543\n伊藤 08065359185'}
+              value={supervisorBulkText}
+              onChange={(e) => setSupervisorBulkText(e.target.value)}
+            />
+            <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importSupervisorBulkText}>＋ この内容を登録</button>
+          </div>
+        </div>
+      )}
+
+      {showIdentifiedSitesEditor && (
+        <div style={styles.overlay} onClick={() => setShowIdentifiedSitesEditor(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>特定済み現場データの編集（工務店ごと）</div>
+              <button style={styles.closeBtn} onClick={() => setShowIdentifiedSitesEditor(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+              マニフェスト業務のプロジェクトで調べた「現場名・ハウスNo・監督名」を登録しておくと、下の「🔍 特定済み現場と照合」ボタンで、現場名が完全一致するスケジュールに自動でコピーできます。ファイルが更新されたら、この画面に新しい内容を貼り直してください。
+            </div>
+            <label style={styles.label}>工務店</label>
+            <div style={styles.chipRow}>
+              {MANIFEST_KUMITEN.map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setIdentifiedSitesKumiten(k)}
+                  style={{ ...styles.chip, ...(identifiedSitesKumiten === k ? styles.chipActive : {}) }}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 10, maxHeight: 220, overflowY: 'auto' }}>
+              {identifiedSitesFor(identifiedSitesKumiten).length === 0 && (
+                <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 10px' }}>まだ登録がありません</div>
+              )}
+              {identifiedSitesFor(identifiedSitesKumiten).map((s) => (
+                <div key={s.siteName} style={styles.kumitenEditRow}>
+                  <span style={styles.kumitenEditName}>
+                    {s.siteName}
+                    {s.houseNumber ? `／No:${s.houseNumber}` : ''}
+                    {s.supervisorName ? `／${s.supervisorName}` : ''}
+                  </span>
+                  <div style={styles.kumitenEditBtns}>
+                    <button style={styles.kumitenDeleteBtn} onClick={() => removeIdentifiedSite(identifiedSitesKumiten, s.siteName)}>削除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <label style={{ ...styles.label, marginTop: 14 }}>まとめて貼り付けて登録（参考ファイルの行をそのまま貼ってOK）</label>
+            <textarea
+              style={{ ...styles.input, minHeight: 140, resize: 'vertical' }}
+              placeholder={'例：\n現場名：六角橋6丁目(松本邸)／ハウスNo：02623022／現場監督：高橋利愛瑠／確認日：2026/09/09\n横浜市金沢区六浦341③ → 林'}
+              value={identifiedSitesBulkText}
+              onChange={(e) => setIdentifiedSitesBulkText(e.target.value)}
+            />
+            <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importIdentifiedSitesBulkText}>＋ この内容を登録</button>
+          </div>
+        </div>
+      )}
+
+      {showReconcileModal && (
+        <div style={styles.overlay} onClick={() => setShowReconcileModal(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>特定済み現場と照合（現場名が完全一致するものだけ）</div>
+              <button style={styles.closeBtn} onClick={() => setShowReconcileModal(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+              チェックが入っている項目だけ反映します。内容を確認してから「反映する」を押してください。
+            </div>
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              {reconcileMatches.map((m) => (
+                <label key={m.recordId} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!reconcileChecked[m.recordId]}
+                    onChange={(e) => setReconcileChecked({ ...reconcileChecked, [m.recordId]: e.target.checked })}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div style={{ fontSize: 13 }}>
+                    <div style={{ fontWeight: 700 }}>{m.siteName}（{m.kumiten}／{m.date}）</div>
+                    {m.newSupervisor && <div>監督名：{m.currentSupervisor || '（未登録）'} → {m.newSupervisor}</div>}
+                    {m.newHouseNumber && <div>ハウスNo：{m.currentHouseNumber || '（未登録）'} → {m.newHouseNumber}</div>}
+                    {m.confirmedDate && <div style={{ color: '#8A8A83' }}>確認日：{m.confirmedDate}</div>}
+                  </div>
+                </label>
+              ))}
+            </div>
+            <button style={{ ...styles.saveBtn, marginTop: 10 }} disabled={reconcileBusy} onClick={applyReconcile}>
+              {reconcileBusy ? '反映中…' : `✓ 反映する（${reconcileMatches.filter((m) => reconcileChecked[m.recordId]).length}件）`}
+            </button>
           </div>
         </div>
       )}
