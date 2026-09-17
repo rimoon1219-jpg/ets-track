@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-16';
+  window.__APP_VERSION__ = '2026-09-17-18';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -805,6 +805,9 @@ function GenbaTracker() {
   const [todoType, setTodoType] = useState('task');
   const [editingTodoId, setEditingTodoId] = useState(null);
   const [editingTodoText, setEditingTodoText] = useState('');
+  const [showTodoAddForm, setShowTodoAddForm] = useState(false);
+  const [showAllTasks, setShowAllTasks] = useState(false);
+  const [showAllFeatureTodos, setShowAllFeatureTodos] = useState(false);
   const [showKumitenEditor, setShowKumitenEditor] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkImportText, setBulkImportText] = useState('');
@@ -2145,7 +2148,7 @@ function autoAssignTrucks() {
         </div>
       )}
 
-      {tab !== 'dispatch' && (
+      {tab !== 'dispatch' && tab !== 'todo' && (
         <>
           <div style={styles.searchBox}>
             <SiteNameAutocomplete
@@ -2514,7 +2517,7 @@ function autoAssignTrucks() {
               </>
             )}
 
-            <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>タスク（やった管理）</div>
+            <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>タスク（やった管理）{tasks.length > 0 ? `（${tasks.length}件）` : ''}</div>
             {tasks.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
                 {loading ? '読み込み中…' : '今はありません'}
@@ -2522,7 +2525,7 @@ function autoAssignTrucks() {
             )}
             {tasks.length > 0 && (
               <>
-                {tasks.map((t) => {
+                {(showAllTasks ? tasks : tasks.slice(0, 5)).map((t) => {
                   return (
                   <div key={t.id} style={{ ...styles.todoRow, ...(t.important ? styles.todoRowImportant : {}) }}>
                     <div style={{ flex: 1 }}>
@@ -2564,13 +2567,21 @@ function autoAssignTrucks() {
                   </div>
                   );
                 })}
+                {!showAllTasks && tasks.length > 5 && (
+                  <button style={styles.showMoreBtn} onClick={() => setShowAllTasks(true)}>▼ もっと見る（あと{tasks.length - 5}件）</button>
+                )}
+                {showAllTasks && tasks.length > 5 && (
+                  <button style={styles.showMoreBtn} onClick={() => setShowAllTasks(false)}>▲ 閉じる</button>
+                )}
               </>
             )}
 
-            {featureCheckTodos().length > 0 && (
+            {featureCheckTodos().length > 0 && (() => {
+              const featureTodos = featureCheckTodos();
+              return (
               <>
-                <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>動作確認（新機能）</div>
-                {featureCheckTodos().map((t) => (
+                <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>動作確認（新機能）（{featureTodos.length}件）</div>
+                {(showAllFeatureTodos ? featureTodos : featureTodos.slice(0, 5)).map((t) => (
                   <div key={t.id} style={styles.todoRow}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
@@ -2584,60 +2595,76 @@ function autoAssignTrucks() {
                     </div>
                   </div>
                 ))}
+                {!showAllFeatureTodos && featureTodos.length > 5 && (
+                  <button style={styles.showMoreBtn} onClick={() => setShowAllFeatureTodos(true)}>▼ もっと見る（あと{featureTodos.length - 5}件）</button>
+                )}
+                {showAllFeatureTodos && featureTodos.length > 5 && (
+                  <button style={styles.showMoreBtn} onClick={() => setShowAllFeatureTodos(false)}>▲ 閉じる</button>
+                )}
               </>
-            )}
+              );
+            })()}
           </div>
 
-          <div style={{ ...styles.todoAddBox, marginTop: 18 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#8A8A83', marginBottom: 6 }}>下の自由入力欄に書く内容はどちら？</div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-              <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'task' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('task')}>✅ タスク（やった管理）</button>
-              <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'memo' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('memo')}>📢 伝達（見た管理）</button>
-            </div>
-            <textarea
-              style={{ ...styles.input, minHeight: 54, resize: 'vertical' }}
-              placeholder="例：9/25 ○○現場の住所が未入力／PDFまだ、など"
-              value={todoText}
-              onChange={(e) => setTodoText(e.target.value)}
-            />
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <div style={{ flex: 1 }}>
-                <SiteNameAutocomplete
-                  style={{ ...styles.input, width: '100%' }}
-                  placeholder="関連する現場名（任意）"
-                  value={todoSiteName}
-                  options={siteNameOptions()}
-                  onChange={(v) => setTodoSiteName(v)}
+          <div style={{ marginTop: 18 }}>
+            {!showTodoAddForm ? (
+              <button style={styles.addBtn} onClick={() => setShowTodoAddForm(true)}>＋ 新しく書く</button>
+            ) : (
+              <div style={styles.todoAddBox}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#8A8A83' }}>下の自由入力欄に書く内容はどちら？</div>
+                  <button style={styles.switchTypeBtn} onClick={() => setShowTodoAddForm(false)}>閉じる</button>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                  <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'task' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('task')}>✅ タスク（やった管理）</button>
+                  <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'memo' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('memo')}>📢 伝達（見た管理）</button>
+                </div>
+                <textarea
+                  style={{ ...styles.input, minHeight: 54, resize: 'vertical' }}
+                  placeholder="例：9/25 ○○現場の住所が未入力／PDFまだ、など"
+                  value={todoText}
+                  onChange={(e) => setTodoText(e.target.value)}
                 />
-              </div>
-              <input
-                type="date"
-                style={{ ...styles.input, width: 140 }}
-                value={todoDate}
-                onChange={(e) => setTodoDate(e.target.value)}
-              />
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-              {QUICK_TODO_TAGS.map((tag) => (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <SiteNameAutocomplete
+                      style={{ ...styles.input, width: '100%' }}
+                      placeholder="関連する現場名（任意）"
+                      value={todoSiteName}
+                      options={siteNameOptions()}
+                      onChange={(v) => setTodoSiteName(v)}
+                    />
+                  </div>
+                  <input
+                    type="date"
+                    style={{ ...styles.input, width: 140 }}
+                    value={todoDate}
+                    onChange={(e) => setTodoDate(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {QUICK_TODO_TAGS.map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => toggleQuickTag(tag)}
+                      style={{ ...styles.quickTagBtn, ...(todoQuickTags.includes(tag) ? styles.quickTagBtnActive : {}) }}
+                    >
+                      {todoQuickTags.includes(tag) ? '✓ ' : ''}{tag}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 4 }}>※ワンタップの3つは常にタスク扱いになります</div>
                 <button
-                  key={tag}
-                  onClick={() => toggleQuickTag(tag)}
-                  style={{ ...styles.quickTagBtn, ...(todoQuickTags.includes(tag) ? styles.quickTagBtnActive : {}) }}
+                  style={{ ...styles.quickTagBtn, marginTop: 8, ...(todoImportant ? styles.importantBtnActive : {}) }}
+                  onClick={() => setTodoImportant((v) => !v)}
                 >
-                  {todoQuickTags.includes(tag) ? '✓ ' : ''}{tag}
+                  {todoImportant ? '⚠️ 重要としてマーク中' : '⚠️ 重要にする'}
                 </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 4 }}>※ワンタップの3つは常にタスク扱いになります</div>
-            <button
-              style={{ ...styles.quickTagBtn, marginTop: 8, ...(todoImportant ? styles.importantBtnActive : {}) }}
-              onClick={() => setTodoImportant((v) => !v)}
-            >
-              {todoImportant ? '⚠️ 重要としてマーク中' : '⚠️ 重要にする'}
-            </button>
-            <button style={{ ...styles.addBtn, marginTop: 8 }} onClick={addQuickTodos}>
-              ＋ 追加{todoQuickTags.length > 0 ? `（${todoQuickTags.length}件）` : ''}
-            </button>
+                <button style={{ ...styles.addBtn, marginTop: 8 }} onClick={addQuickTodos}>
+                  ＋ 追加{todoQuickTags.length > 0 ? `（${todoQuickTags.length}件）` : ''}
+                </button>
+              </div>
+            )}
           </div>
 
           {gapSites.length > 0 && (
@@ -3365,6 +3392,7 @@ const styles = {
   pendingBadge: { fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '2px 7px', fontWeight: 700 },
   dupWarningBar: { background: '#FDECEA', color: '#B3261E', fontSize: 13, fontWeight: 700, padding: '10px 14px', margin: '0 16px 8px', borderRadius: 8, cursor: 'pointer' },
   todoAddBox: { background: '#F7F6F1', borderRadius: 10, padding: 12, marginTop: 10 },
+  showMoreBtn: { display: 'block', width: '100%', textAlign: 'center', background: '#fff', border: '1px dashed #D8D6CC', color: '#457B9D', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', marginTop: 4 },
   todoRow: { display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fff', border: '1px solid #EFEDE6', borderRadius: 10, padding: 12, marginBottom: 10 },
   todoMeta: { fontSize: 12, color: '#2A9D8F', marginTop: 4, cursor: 'pointer', fontWeight: 600 },
   todoDoneBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
