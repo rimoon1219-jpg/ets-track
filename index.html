@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-64';
+  window.__APP_VERSION__ = '2026-09-18-66';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1572,6 +1572,36 @@ function GenbaTracker() {
     if (target && target.checkType === 'feature' && target.featureKey) {
       await markFeatureDismissed(target.featureKey);
     }
+  }
+
+  // 「工程表画像添付」タスクの上にある専用の添付ボタンから写真を選んだ時だけ、
+  // その現場（予定表）に写真を追加してタスクを自動で「やった」にする。
+  // 現場写真（回収スタッフが管理表・予定表から普通に追加するもの）とは別ルートなので、
+  // 通常の写真追加ではタスクは完了にならない（誤って完了扱いになる心配がない）
+  async function attachGanttPhotoAndComplete(t, files) {
+    if (!files || files.length === 0) return;
+    const match = (t.siteId && schedRecords.find((r) => r.id === t.siteId))
+      || schedRecords.find((r) => r.name === t.siteName && (!t.date || r.date === t.date))
+      || schedRecords.find((r) => r.name === t.siteName);
+    if (!match) { showToast('現場が見つかりませんでした。予定表から直接添付してください'); return; }
+    const staffName = deviceStaff || '担当者';
+    const fileArray = Array.from(files);
+    showToast(`アップロード中…（${fileArray.length}枚）`);
+    const uploadResults = new Array(fileArray.length).fill(null);
+    await runWithLimit(fileArray, 3, async (file, idx) => {
+      try {
+        const dataUrl = await compressImage(file);
+        const url = await storage.uploadPhoto(dataUrl, `${match.id}_${Date.now()}_${idx}.jpg`, match.id, staffName, 'sched');
+        if (url) uploadResults[idx] = { staff: staffName, img: url, at: Date.now(), kind: 'gantt' };
+      } catch (e) { showToast(e.message || '写真の保存に失敗しました'); }
+    });
+    const newPhotos = uploadResults.filter(Boolean);
+    if (newPhotos.length === 0) { showToast('写真の添付に失敗しました'); return; }
+    const updated = { ...match, photos: [...(match.photos || []), ...newPhotos] };
+    await storage.set(`sched:${match.id}`, JSON.stringify(updated), true);
+    applyLocalRecordUpdate('sched', updated);
+    showToast('工程表の写真を添付しました');
+    await completeTodo(t.id);
   }
 
   async function markFeatureDismissed(featureKey) {
@@ -3455,6 +3485,22 @@ function autoAssignTrucks() {
                     </div>
                     {editingTodoId !== t.id && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                        {t.text.includes('工程表画像添付') && (
+                          <label style={styles.attachPhotoBtn}>
+                            📎 写真を選んで完了
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              style={{ display: 'none' }}
+                              onChange={(e) => {
+                                const files = e.target.files;
+                                if (files && files.length > 0) attachGanttPhotoAndComplete(t, files);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        )}
                         <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
                         <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
                         {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
@@ -4588,6 +4634,7 @@ const styles = {
   importantBtnActive: { background: '#E63946', color: '#fff', borderColor: '#E63946' },
   seenBtn: { fontSize: 11, padding: '5px 10px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   switchTypeBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #D8D6CC', color: '#8A8A83', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  attachPhotoBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-block' },
   gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
   gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
   gapSummaryRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', borderRadius: 8, padding: '8px 10px', marginTop: 6, cursor: 'pointer' },
