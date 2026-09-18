@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-52';
+  window.__APP_VERSION__ = '2026-09-18-53';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2934,11 +2934,11 @@ function autoAssignTrucks() {
             </div>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
-                <div key={k} role="button" onClick={() => setKumitenFilter((prev) => (prev === k ? '全て' : k))} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</div>
+                <button key={k} onClick={() => setKumitenFilter((prev) => (prev === k ? '全て' : k))} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
               ))}
               <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 工務店を編集・並び替え</button>
               {tab === 'sched' && (
-                <button onClick={() => setShowUncollectedOnly((v) => !v)} style={{ ...styles.chip, ...(showUncollectedOnly ? { ...styles.chipActive, borderColor: '#E63946' } : {}) }}>未回収のみ</button>
+                <button onClick={() => setShowUncollectedOnly((v) => !v)} style={{ ...styles.chip, ...(showUncollectedOnly ? styles.chipActiveRed : {}) }}>未回収のみ</button>
               )}
               {(tab === 'sched' || tab === 'mgmt') && (
                 <button onClick={() => setShowCalendar((v) => !v)} style={{ ...styles.chip, ...(showCalendar ? styles.chipActive : {}) }}>📅 カレンダー表示</button>
@@ -3599,7 +3599,7 @@ function autoAssignTrucks() {
             <label style={styles.label}>工務店</label>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
-                <div key={k} role="button" onClick={() => setKumitenFilter((prev) => (prev === k ? '全て' : k))} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</div>
+                <button key={k} onClick={() => setKumitenFilter((prev) => (prev === k ? '全て' : k))} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
               ))}
             </div>
 
@@ -4469,7 +4469,11 @@ const styles = {
   linkBtnSmall: { background: 'none', border: 'none', color: '#457B9D', fontSize: 11.5, textDecoration: 'underline', cursor: 'pointer', padding: '0 2px', whiteSpace: 'nowrap' },
   chipRow: { display: 'flex', flexWrap: 'wrap', gap: 6 },
   chip: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 999, padding: '5px 10px', fontSize: 12, color: '#4A4A45', cursor: 'pointer' },
-  chipActive: { borderColor: '#2A9D8F', borderWidth: 2, fontWeight: 700, color: '#232320' },
+  // 太枠バグ対策：chip側は border（一括指定）、chipActive側もborderを一括で上書きする。
+  // border（一括）とborderColor/borderWidthを混在させると、非選択に戻った時に古いborderColor/
+  // borderWidthだけが消えてborder-styleがブラウザの初期値（太い黒っぽい枠）に戻ってしまうバグがあった。
+  chipActive: { border: '2px solid #2A9D8F', fontWeight: 700, color: '#232320' },
+  chipActiveRed: { border: '2px solid #E63946', fontWeight: 700, color: '#232320' },
   dot: { width: 8, height: 8, borderRadius: '50%', display: 'inline-block' },
   toolRow: { marginBottom: 12 },
   linkBtn: { background: 'none', border: 'none', color: '#457B9D', fontSize: 13, textDecoration: 'underline', cursor: 'pointer', padding: 0 },
