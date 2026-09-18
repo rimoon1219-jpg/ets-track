@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-66';
+  window.__APP_VERSION__ = '2026-09-18-67';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2062,6 +2062,8 @@ function autoAssignTrucks() {
         expectedVisits: (expectedVisits || '').trim(),
         staff: (staff || deviceStaff || '').trim(),
         note: (note || '').trim(),
+        // メルディアは一括取り込みでもハウスNoが未入力になりがちなので、他と同じく「／」を自動で入れておく
+        houseNumber: (kumiten || '').trim() === 'メルディア' ? '／' : '',
       };
       try {
         await storage.set(`sched:${record.id}`, JSON.stringify(record));
@@ -3893,6 +3895,9 @@ function autoAssignTrucks() {
                     ...f,
                     kumiten: k,
                     garaRequired: editingId ? f.garaRequired : !GARA_DEFAULT_EXCLUDE.includes(k),
+                    // メルディアは実際の番号がすぐ分からないことが多く、正式な番号は別途（マニフェスト自動化側の検索で）
+                    // 確認する運用のため、ハウスNoが未入力の時だけ「／」を自動で入れておく（情報不足リストにも出なくなる）
+                    houseNumber: (tab === 'sched' && k === 'メルディア' && !(f.houseNumber || '').trim()) ? '／' : f.houseNumber,
                   }))}
                   style={{ ...styles.statusOption, borderColor: form.kumiten === k ? '#2A9D8F' : '#E5E3DC', background: form.kumiten === k ? '#2A9D8F1A' : '#fff' }}
                 >{k}</button>
