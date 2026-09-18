@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-44';
+  window.__APP_VERSION__ = '2026-09-18-45';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1098,12 +1098,18 @@ function GenbaTracker() {
   // 他のアプリ・タブに切り替えて、またこの画面に戻ってきた時に自動で最新データを取り直す
   // （フォームを開いて入力中のときは邪魔しないよう対象外。短時間の連続実行は間引く）
   const lastAutoRefreshRef = useRef(Date.now());
+  // 保存した直後は、サーバー側（スプレッドシート）への反映に少し時間がかかることがあり、
+  // その間に自動更新のload()が走ると、まだ古いままのサーバーデータで画面が上書きされて
+  // 「保存できたはずなのに消えている」ように見えてしまう。保存直後はしばらく自動更新を待つ。
+  const lastLocalWriteRef = useRef(0);
+  const SAVE_SETTLE_MS = 12000;
   useEffect(() => {
     function handleVisible() {
       if (document.visibilityState !== 'visible') return;
       if (showForm) return; // 入力中は割り込まない
       const now = Date.now();
       if (now - lastAutoRefreshRef.current < 15000) return; // 15秒以内の再実行は間引く
+      if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち
       lastAutoRefreshRef.current = now;
       load();
       if (tab === 'dispatch') loadDispatch(dispatchDate);
@@ -1126,7 +1132,9 @@ function GenbaTracker() {
     const timer = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       if (showForm) return; // 入力中は割り込まない
-      lastAutoRefreshRef.current = Date.now();
+      const now = Date.now();
+      if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち
+      lastAutoRefreshRef.current = now;
       load();
       if (tab === 'dispatch') loadDispatch(dispatchDate);
     }, intervalMs);
@@ -1824,6 +1832,7 @@ function autoAssignTrucks() {
         await storage.set(`trash:${id}`, JSON.stringify({ ...record, _type: prefix, deletedAt: new Date().toISOString() }), true);
       }
       await storage.delete(`${prefix}:${id}`, true);
+      lastLocalWriteRef.current = Date.now();
       if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
       else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
     } catch (e) { console.error(e); }
@@ -1876,6 +1885,7 @@ function autoAssignTrucks() {
 
   // 保存直後は全件を読み直さず、その場で一覧・カレンダーに反映する（サーバーへの再取得を待たない分、体感が速くなる）
   function applyLocalRecordUpdate(prefix, record) {
+    lastLocalWriteRef.current = Date.now(); // しばらく自動更新でのload()を待たせ、保存直後の巻き戻りを防ぐ
     if (prefix === 'sched') {
       setSchedRecords((prev) => {
         const next = [record, ...prev.filter((r) => r.id !== record.id)];
@@ -2069,6 +2079,7 @@ function autoAssignTrucks() {
       }
       const result = await storage.delete(`${prefix}:${id}`, true);
       showToast(result.queued ? '削除を保留しました。電波が戻り次第、自動的に反映されます' : '削除しました（ゴミ箱に30日間残ります）');
+      lastLocalWriteRef.current = Date.now();
       if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
       else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
     } catch (e) { showToast('削除に失敗しました'); }
