@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-49';
+  window.__APP_VERSION__ = '2026-09-18-50';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -983,6 +983,7 @@ function GenbaTracker() {
   const [toast, setToast] = useState('');
 
   const [search, setSearch] = useState('');
+  const [expandedNoteIds, setExpandedNoteIds] = useState({});
   const [kumitenFilter, setKumitenFilter] = useState('全て');
   const [dateFrom, setDateFrom] = useState(todayStr());
   const [dateTo, setDateTo] = useState(todayStr());
@@ -1895,18 +1896,23 @@ function autoAssignTrucks() {
     let extraPhotos = [];
     if (pendingPhotos.length > 0) {
       showToast(`写真をアップロード中…（${pendingPhotos.length}枚）`);
-      for (const file of pendingPhotos) {
+      // 連棟などで枚数が多い時にまとめて待たされないよう、少しずつ並行してアップロードする
+      const staffName = deviceStaff || form.staff || '担当者';
+      const uploadResults = new Array(pendingPhotos.length).fill(null);
+      let queuedCount = 0;
+      await runWithLimit(pendingPhotos, 3, async (file, idx) => {
         try {
           const dataUrl = await compressImage(file);
-          const staffName = deviceStaff || form.staff || '担当者';
-          const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`, id, staffName, prefix);
+          const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}_${idx}.jpg`, id, staffName, prefix);
           if (url) {
-            extraPhotos.push({ staff: staffName, img: url, at: Date.now() });
+            uploadResults[idx] = { staff: staffName, img: url, at: Date.now() };
           } else {
-            showToast('一部の写真は保留中です。あとで自動的に追加されます');
+            queuedCount++;
           }
         } catch (e) { showToast(e.message || '写真の保存に失敗しました'); }
-      }
+      });
+      extraPhotos = uploadResults.filter(Boolean);
+      if (queuedCount > 0) showToast(`一部の写真（${queuedCount}枚）は保留中です。あとで自動的に追加されます`);
     }
     if (extraPhotos.length > 0) {
       record = { ...record, photos: [...(record.photos || []), ...extraPhotos] };
@@ -2229,20 +2235,24 @@ function autoAssignTrucks() {
     if (!record) return;
     const fileArray = files instanceof File ? [files] : Array.from(files);
     showToast(`アップロード中…（${fileArray.length}枚）`);
-    const newPhotos = [];
-    for (const file of fileArray) {
+    // 連棟などで枚数が多い時にまとめて待たされないよう、少しずつ並行してアップロードする
+    const uploadResults = new Array(fileArray.length).fill(null);
+    let queuedCount = 0;
+    await runWithLimit(fileArray, 3, async (file, idx) => {
       try {
         const dataUrl = await compressImage(file);
-        const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}.jpg`, id, staffName, prefix);
+        const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}_${idx}.jpg`, id, staffName, prefix);
         if (url) {
-          newPhotos.push({ staff: staffName || '担当者', img: url, at: Date.now() });
+          uploadResults[idx] = { staff: staffName || '担当者', img: url, at: Date.now() };
         } else {
-          showToast('一部の写真は保留中です。あとで自動的に追加されます');
+          queuedCount++;
         }
       } catch (e) {
         showToast(e.message || '写真の保存に失敗しました');
       }
-    }
+    });
+    if (queuedCount > 0) showToast(`一部の写真（${queuedCount}枚）は保留中です。あとで自動的に追加されます`);
+    const newPhotos = uploadResults.filter(Boolean);
     const photos = [...(record.photos || []), ...newPhotos];
     const updated = { ...record, photos };
     await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
@@ -2924,7 +2934,7 @@ function autoAssignTrucks() {
             </div>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
-                <button key={k} onClick={() => setKumitenFilter(k)} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
+                <button key={k} onClick={() => setKumitenFilter((prev) => (prev === k ? '全て' : k))} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
               ))}
               <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 工務店を編集・並び替え</button>
               {tab === 'sched' && (
@@ -2989,7 +2999,6 @@ function autoAssignTrucks() {
                   {tab === 'sched' && r.address && (
                     <div style={styles.addrRow}>
                       <span style={styles.addrText}>📍 {r.address}</span>
-                      {isCoordOnlyAddress(r.address) && <span style={styles.coordWarnTag}>⚠️座標のみ・住所要確認</span>}
                       <a
                         href={mapUrl(r.address)}
                         target="_blank"
@@ -3017,8 +3026,26 @@ function autoAssignTrucks() {
                     </div>
                   )}
 
-                  {tab === 'sched' && r.note && <div style={styles.noteText}>{r.note}</div>}
-                  {tab === 'mgmt' && r.items && <div style={styles.noteText}>{r.items}</div>}
+                  {tab === 'sched' && r.note && (
+                    expandedNoteIds[r.id] ? (
+                      <div>
+                        <div style={styles.noteText}>{r.note}</div>
+                        <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: false })); }}>▲ メモを閉じる</div>
+                      </div>
+                    ) : (
+                      <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: true })); }}>📝 メモを見る</div>
+                    )
+                  )}
+                  {tab === 'mgmt' && r.items && (
+                    expandedNoteIds[r.id] ? (
+                      <div>
+                        <div style={styles.noteText}>{r.items}</div>
+                        <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: false })); }}>▲ メモを閉じる</div>
+                      </div>
+                    ) : (
+                      <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: true })); }}>📝 メモを見る</div>
+                    )
+                  )}
                   {tab === 'sched' && r.dateHistory && r.dateHistory.length > 0 && (
                     <div style={styles.dateHistoryBox}>
                       {r.dateHistory.slice(-3).reverse().map((h, i) => (
@@ -3572,7 +3599,7 @@ function autoAssignTrucks() {
             <label style={styles.label}>工務店</label>
             <div style={styles.chipRow}>
               {['全て', ...kumitenList].map((k) => (
-                <button key={k} onClick={() => setKumitenFilter(k)} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
+                <button key={k} onClick={() => setKumitenFilter((prev) => (prev === k ? '全て' : k))} style={{ ...styles.chip, ...(kumitenFilter === k ? styles.chipActive : {}) }}>{k}</button>
               ))}
             </div>
 
@@ -4468,6 +4495,7 @@ const styles = {
   supervisorName: { fontSize: 12.5, color: '#5A5A54' },
   phoneLink: { fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, textDecoration: 'none' },
   noteText: { fontSize: 13, color: '#6B6B63', marginBottom: 6, whiteSpace: 'pre-wrap' },
+  noteToggleBtn: { fontSize: 12, color: '#457B9D', background: '#F3F9FB', border: '1px solid #C7DCE5', borderRadius: 6, padding: '3px 9px', marginBottom: 6, cursor: 'pointer', display: 'inline-block' },
   dateHistoryBox: { marginBottom: 6 },
   dateHistoryText: { fontSize: 10.5, color: '#B0AFA8' },
   cardMeta: { fontSize: 12.5, color: '#5A5A54' },
