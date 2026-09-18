@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-17-43';
+  window.__APP_VERSION__ = '2026-09-18-44';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1400,10 +1400,9 @@ function GenbaTracker() {
     return schedRecords
       .map((r) => {
         const gaps = [];
-        // 座標のみの住所は地図には出せるが、マニフェスト等では正式住所が必要なため一覧には残す。
-        // ただし地図が使えない「完全に空欄」ほど急ぎではないので、赤字の緊急表示・並び順の最優先からは外す
-        if (isCoordOnlyAddress(r.address)) gaps.push('住所(座標のみ)');
-        else if (!(r.address || '').trim()) gaps.push('住所');
+        // 座標のみの住所は地図には出せるので、情報不足としては挙げない（洋子さんの指示）。
+        // 完全に空欄（地図も出せない）の場合だけ引き続き対象にする
+        if (!isCoordOnlyAddress(r.address) && !(r.address || '').trim()) gaps.push('住所');
         if (r.date >= today) {
           if (!(r.kumiten || '').trim()) gaps.push('工務店');
           else if (HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) {
