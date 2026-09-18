@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-68';
+  window.__APP_VERSION__ = '2026-09-18-73';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1027,6 +1027,8 @@ function GenbaTracker() {
   const [exportText, setExportText] = useState('');
   const [ryubeiUnlocked, setRyubeiUnlocked] = useState(false);
   const [todoUnlocked, setTodoUnlocked] = useState(false);
+  const [showStaffManager, setShowStaffManager] = useState(false);
+  const [revokedStaff, setRevokedStaff] = useState([]);
 
   // dispatch state
   const [dispatchDate, setDispatchDate] = useState(todayStr());
@@ -1110,6 +1112,8 @@ function GenbaTracker() {
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [bulkUpdateText, setBulkUpdateText] = useState('');
   const [deviceStaff, setDeviceStaffState] = useState(getDeviceStaff());
+  // 担当者名が未設定の端末では、他の画面を一切見せずに最初に名前を入力してもらう（誰が入力したか必ず分かるようにするため）
+  const [nameGateInput, setNameGateInput] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
   // 「未送信」バッジは、保存→サーバー確認までの一瞬（通常は1秒未満）でも一旦表示されてしまい、
   // 開くたびにチラッと出て気になるという声があったため、一定時間（900ms）経っても
@@ -1142,9 +1146,21 @@ function GenbaTracker() {
   function changeDeviceStaff() {
     const name = window.prompt('この端末を使う担当者名を入力してください（次回から自動で入力されます）', deviceStaff);
     if (name === null) return;
-    setDeviceStaff(name.trim());
-    setDeviceStaffState(name.trim());
+    const trimmed = name.trim();
+    if (!trimmed) { showToast('担当者名を入力してください'); return; }
+    if (revokedStaff.includes(trimmed)) { showToast('この名前は現在ご利用いただけません。洋子さんまたは社長にご確認ください'); return; }
+    setDeviceStaff(trimmed);
+    setDeviceStaffState(trimmed);
     showToast('担当者名を覚えました');
+  }
+
+  // 最初の画面（担当者名ゲート）で名前を確定した時の処理
+  function saveNameGate() {
+    const trimmed = nameGateInput.trim();
+    if (!trimmed) { showToast('担当者名を入力してください'); return; }
+    if (revokedStaff.includes(trimmed)) { showToast('この名前は現在ご利用いただけません。洋子さんまたは社長にご確認ください'); return; }
+    setDeviceStaff(trimmed);
+    setDeviceStaffState(trimmed);
   }
 
   const emptySched = () => ({
@@ -1344,6 +1360,12 @@ function GenbaTracker() {
         }
         setIdentifiedSites(sites);
       } catch (e) { setIdentifiedSites(DEFAULT_IDENTIFIED_SITES); }
+
+      // 退出させたスタッフ名（洋子さん・社長がスタッフ管理画面で設定）
+      try {
+        const rv = await storage.get('meta:revokedStaff', true);
+        setRevokedStaff(rv && rv.value ? JSON.parse(rv.value) : []);
+      } catch (e) { setRevokedStaff([]); }
 
       async function fetchGroup(prefix) {
         return storage.listWithValues(`${prefix}:`);
@@ -2434,6 +2456,40 @@ function autoAssignTrucks() {
     }
   }
 
+  function tryUnlockStaffManager() {
+    if (ryubeiUnlocked) { setShowStaffManager(true); return; }
+    const input = window.prompt('スタッフ管理を開くには合言葉を入力してください');
+    if (input === null) return;
+    if (input === RYUBEI_PASSWORD) {
+      setRyubeiUnlocked(true);
+      setShowStaffManager(true);
+      showToast('ロック解除しました');
+    } else {
+      showToast('合言葉が違います');
+    }
+  }
+
+  // 予定表・管理表・伝達／タスクに残っている「担当」「投稿者」名から、これまでアプリを使った人の一覧を作る
+  // （アカウント登録の仕組みが無いため、実際の記入履歴から名前を拾う方式にしている）
+  function allKnownStaffNames() {
+    const names = new Set();
+    schedRecords.forEach((r) => { if (r.staff) names.add(r.staff); });
+    mgmtRecords.forEach((r) => { if (r.staff) names.add(r.staff); });
+    todos.forEach((t) => {
+      if (t.staff) names.add(t.staff);
+      (t.seenBy || []).forEach((s) => { if (s.name) names.add(s.name); });
+    });
+    revokedStaff.forEach((n) => names.add(n)); // 退出済みでも一覧から消えないようにする
+    return Array.from(names).filter(Boolean).sort((a, b) => a.localeCompare(b, 'ja'));
+  }
+
+  async function toggleRevokedStaff(name) {
+    const next = revokedStaff.includes(name) ? revokedStaff.filter((n) => n !== name) : [...revokedStaff, name];
+    setRevokedStaff(next);
+    try { await storage.set('meta:revokedStaff', JSON.stringify(next), true); }
+    catch (e) { showToast('保存に失敗しました'); }
+  }
+
   // filterUnseen=true で呼ぶと、TODOタブを開いた直後から「未確認だけ見る」が有効な状態になる
   // （ヘッダーの📢伝達バッジから来た時は、そのまま未確認の伝達だけがすぐ見えるようにするため）
   // view省略時（普通に🔒TODOタブを直接タップした時）は必ず「全部」に戻す。
@@ -2930,6 +2986,52 @@ function autoAssignTrucks() {
     } catch (e) { showToast('コピーできませんでした。手動で選択してコピーしてください'); }
   }
 
+  // 退出させたスタッフの端末は、他の画面を一切表示せずここで止める。
+  // すでにアプリを開いたままの端末をその場で強制的にログアウトさせることはできない（アカウント管理の仕組みが無いため）が、
+  // 次にこの画面が表示されたタイミング（アプリを開き直した時など）からは確実にブロックする
+  if (deviceStaff && revokedStaff.includes(deviceStaff)) {
+    return (
+      <div style={styles.nameGateOverlay}>
+        <div style={styles.nameGateCard}>
+          <div style={styles.brand}>ETS TRACK</div>
+          <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 18, marginBottom: 6 }}>このアカウントは現在ご利用いただけません</div>
+          <div style={{ fontSize: 12.5, color: '#8A8A83', lineHeight: 1.6 }}>
+            ご利用は停止されています。詳しくは洋子さんまたは社長にご確認ください。
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 担当者名が未設定の端末は、他の画面を一切表示せずここで止める。
+  // 「誰が入力したか分からない」を根本からなくすため、使い始める前に一度だけ必ず通す関門にする
+  if (!deviceStaff) {
+    return (
+      <div style={styles.nameGateOverlay}>
+        <div style={styles.nameGateCard}>
+          <div style={styles.brand}>ETS TRACK</div>
+          <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginTop: 18, marginBottom: 6 }}>はじめに、あなたのお名前を入力してください</div>
+          <div style={{ fontSize: 12.5, color: '#8A8A83', marginBottom: 16, lineHeight: 1.6 }}>
+            誰が入力した内容か分かるようにするための設定です。この端末では最初の一回だけで、次回からは自動で使われます。
+          </div>
+          <input
+            style={styles.input}
+            value={nameGateInput}
+            onChange={(e) => setNameGateInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveNameGate(); }}
+            placeholder="例：本城"
+            autoFocus
+          />
+          <button style={{ ...styles.addBtn, width: '100%', marginTop: 12, justifyContent: 'center' }} onClick={saveNameGate}>
+            はじめる
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       <style>{`
@@ -3010,6 +3112,7 @@ function autoAssignTrucks() {
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
         )}
         <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">🔒</button>
+        <button onClick={tryUnlockStaffManager} style={styles.lockIconBtn} title="スタッフ管理">🔒👤</button>
       </div>
 
       {findDuplicateGroups().length > 0 && (
@@ -3145,21 +3248,36 @@ function autoAssignTrucks() {
                   {tab === 'sched' && r.note && (
                     expandedNoteIds[r.id] ? (
                       <div>
-                        <div style={styles.noteText}>{r.note}</div>
-                        <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: false })); }}>▲ メモを閉じる</div>
+                        <div style={styles.noteText}>📌 {r.note}</div>
+                        <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: false })); }}>▲ 閉じる</div>
                       </div>
                     ) : (
-                      <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: true })); }}>📝 メモを見る</div>
+                      // 注意事項（日程を勝手に動かさない、等）は特に、開かないと見えないと意味がないので
+                      // 管理表の内訳と同じく、最初から1行（省略表示）で直接見せる
+                      <div
+                        style={styles.itemsInlineText}
+                        onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: true })); }}
+                      >
+                        📌 {r.note}
+                      </div>
                     )
                   )}
                   {tab === 'mgmt' && r.items && (
                     expandedNoteIds[r.id] ? (
                       <div>
                         <div style={styles.noteText}>{r.items}</div>
-                        <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: false })); }}>▲ メモを閉じる</div>
+                        <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: false })); }}>▲ 閉じる</div>
                       </div>
                     ) : (
-                      <div style={styles.noteToggleBtn} onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: true })); }}>📝 メモを見る</div>
+                      // 木・プラなどの内訳は開かなくても最初から1行でパッと見えた方がいいという要望のため、
+                      // 「メモを見る」のボタンではなく実際の内容を直接1行（省略表示）で出す。
+                      // 続きがある時だけ、タップすれば全文（複数行）に開ける
+                      <div
+                        style={styles.itemsInlineText}
+                        onClick={(e) => { e.stopPropagation(); setExpandedNoteIds((prev) => ({ ...prev, [r.id]: true })); }}
+                      >
+                        {r.items}
+                      </div>
                     )
                   )}
                   {tab === 'sched' && r.dateHistory && r.dateHistory.length > 0 && (
@@ -4131,6 +4249,41 @@ function autoAssignTrucks() {
         </div>
       )}
 
+      {showStaffManager && (
+        <div style={styles.overlay} onClick={() => setShowStaffManager(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>スタッフ管理</div>
+              <button style={styles.closeBtn} onClick={() => setShowStaffManager(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>
+              これまでに予定表・管理表・伝達で名前が使われたスタッフの一覧です。「退出させる」にすると、その名前ではこのアプリを開けなくなります（すでに開いたままの端末がある場合、次にアプリを開き直した時からブロックされます）。
+            </div>
+            {allKnownStaffNames().length === 0 && (
+              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 10px' }}>まだ記録がありません</div>
+            )}
+            {allKnownStaffNames().map((name) => {
+              const revoked = revokedStaff.includes(name);
+              return (
+                <div key={name} style={styles.kumitenEditRow}>
+                  <span style={{ ...styles.kumitenEditName, ...(revoked ? { color: '#B0B0A6', textDecoration: 'line-through' } : {}) }}>
+                    {name}{revoked ? '（退出済み）' : ''}
+                  </span>
+                  <div style={styles.kumitenEditBtns}>
+                    <button
+                      style={revoked ? styles.saveBtnSmall : styles.kumitenDeleteBtn}
+                      onClick={() => toggleRevokedStaff(name)}
+                    >
+                      {revoked ? '有効に戻す' : '退出させる'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {showSupervisorEditor && (
         <div style={styles.overlay} onClick={() => setShowSupervisorEditor(false)}>
           <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
@@ -4622,6 +4775,8 @@ function autoAssignTrucks() {
 
 const styles = {
   page: { background: '#FAF9F6', minHeight: '100vh', padding: '20px 16px 40px', color: '#232320', fontFamily: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif', maxWidth: 720, margin: '0 auto' },
+  nameGateOverlay: { background: '#FAF9F6', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px 16px', color: '#232320', fontFamily: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif' },
+  nameGateCard: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 16, padding: '28px 24px', maxWidth: 360, width: '100%', boxShadow: '0 4px 16px rgba(0,0,0,0.06)' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 14 },
   brand: { fontSize: 22, fontWeight: 700, letterSpacing: '0.01em' },
   brandTag: { fontSize: 10.5, color: '#2A9D8F', fontWeight: 700, letterSpacing: '0.06em', marginTop: 1 },
@@ -4708,6 +4863,7 @@ const styles = {
   phoneLink: { fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, textDecoration: 'none' },
   noteText: { fontSize: 13, color: '#6B6B63', marginBottom: 6, whiteSpace: 'pre-wrap' },
   noteToggleBtn: { fontSize: 12, color: '#457B9D', background: '#F3F9FB', border: '1px solid #C7DCE5', borderRadius: 6, padding: '3px 9px', marginBottom: 6, cursor: 'pointer', display: 'inline-block' },
+  itemsInlineText: { fontSize: 12.5, color: '#5A5A54', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' },
   dateHistoryBox: { marginBottom: 6 },
   dateHistoryText: { fontSize: 10.5, color: '#B0AFA8' },
   cardMeta: { fontSize: 12.5, color: '#5A5A54' },
@@ -4823,6 +4979,7 @@ const styles = {
   ganttTrack: { flex: 1, height: 16, position: 'relative', background: '#FAF9F6', borderRadius: 4 },
   ganttBar: { position: 'absolute', top: 0, height: 16, borderRadius: 4 },
   kumitenDeleteBtn: { background: '#fff', border: '1px solid #E63946', color: '#E63946', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
+  saveBtnSmall: { background: '#fff', border: '1px solid #2A9D8F', color: '#2A9D8F', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
 };
 
 
