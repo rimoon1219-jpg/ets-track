@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-46';
+  window.__APP_VERSION__ = '2026-09-18-49';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -167,7 +167,14 @@ async function sendToServer(body) {
   return res.json();
 }
 
+// 書き込み（set/delete）が起きた直後は、サーバー側（スプレッドシート）への反映に少し時間がかかることがある。
+// その間に画面の自動更新（load()）が走ると、まだ古いままのサーバーデータで上書きしてしまい、
+// 「保存したはずなのに消えている／戻っている」ように見える。書き込みの入口はここに集約されているので、
+// ここで最終書き込み時刻を記録しておき、個別の保存処理（saveRecordなど）で書き忘れても
+// 自動更新側で必ずガードできるようにする。
+let lastWriteAt = 0;
 async function reliableSend(body) {
+  lastWriteAt = Date.now();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const item = { id, body, createdAt: Date.now() };
   const q = getQueue();
@@ -338,6 +345,23 @@ const storage = {
     const res = await fetch(`${API_URL}?action=list&prefix=${encodeURIComponent(prefix || '')}`);
     const data = await res.json();
     return { keys: data.keys || [] };
+  },
+  // list()＋キーごとにget()を1件ずつ呼ぶと、件数が多い時にものすごく遅くなる
+  // （スプレッドシート全体を毎回読み直す処理が、件数分だけ繰り返し走ってしまうため）。
+  // サーバー側のlistWithValuesは、対象のprefixに一致する分の値を1回のシート読み込みでまとめて返す。
+  // 古いバージョンのバックエンド（listWithValues未対応）でも動くよう、失敗したら従来方式に自動で切り替える。
+  async listWithValues(prefix) {
+    try {
+      const res = await fetch(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`);
+      const data = await res.json();
+      if (!data.items) throw new Error('listWithValues not supported');
+      return data.items
+        .map((it) => { try { return JSON.parse(it.value); } catch (e) { return null; } })
+        .filter(Boolean);
+    } catch (e) {
+      const listRes = await this.list(prefix);
+      return fetchWithLimit(listRes.keys || [], 8);
+    }
   },
   async uploadPhoto(dataUrl, filename, recordId, staff, recordPrefix) {
     try {
@@ -1102,14 +1126,15 @@ function GenbaTracker() {
   // その間に自動更新のload()が走ると、まだ古いままのサーバーデータで画面が上書きされて
   // 「保存できたはずなのに消えている」ように見えてしまう。保存直後はしばらく自動更新を待つ。
   const lastLocalWriteRef = useRef(0);
-  const SAVE_SETTLE_MS = 12000;
+  const SAVE_SETTLE_MS = 20000;
   useEffect(() => {
     function handleVisible() {
       if (document.visibilityState !== 'visible') return;
       if (showForm) return; // 入力中は割り込まない
       const now = Date.now();
       if (now - lastAutoRefreshRef.current < 15000) return; // 15秒以内の再実行は間引く
-      if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち
+      if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（この画面での保存）
+      if (now - lastWriteAt < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（書き込み全般の保険）
       lastAutoRefreshRef.current = now;
       load();
       if (tab === 'dispatch') loadDispatch(dispatchDate);
@@ -1133,7 +1158,8 @@ function GenbaTracker() {
       if (document.visibilityState !== 'visible') return;
       if (showForm) return; // 入力中は割り込まない
       const now = Date.now();
-      if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち
+      if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（この画面での保存）
+      if (now - lastWriteAt < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（書き込み全般の保険）
       lastAutoRefreshRef.current = now;
       load();
       if (tab === 'dispatch') loadDispatch(dispatchDate);
@@ -1266,8 +1292,7 @@ function GenbaTracker() {
       } catch (e) { setIdentifiedSites(DEFAULT_IDENTIFIED_SITES); }
 
       async function fetchGroup(prefix) {
-        const listRes = await storage.list(`${prefix}:`, true);
-        return fetchWithLimit((listRes && listRes.keys) || [], 8);
+        return storage.listWithValues(`${prefix}:`);
       }
       const [sItems, mItems, tItems] = await Promise.all([
         fetchGroup('sched'),
@@ -1310,6 +1335,7 @@ function GenbaTracker() {
       createdAt: new Date().toISOString(),
     };
     await storage.set(`todo:${record.id}`, JSON.stringify(record), true);
+    lastLocalWriteRef.current = Date.now();
     setTodos((prev) => [record, ...prev]);
     if (!overrides) { setTodoText(''); setTodoSiteName(''); setTodoDate(''); }
     return record;
@@ -1319,6 +1345,7 @@ function GenbaTracker() {
   async function toggleImportant(t) {
     const next = { ...t, important: !t.important };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+    lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
   }
 
@@ -1336,6 +1363,7 @@ function GenbaTracker() {
     if (!text) { showToast('内容を入力してください'); return; }
     const next = { ...t, text };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+    lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
     setEditingTodoId(null);
     setEditingTodoText('');
@@ -1473,6 +1501,7 @@ function GenbaTracker() {
     if (seenIncludes(t.seenBy, me)) return;
     const updated = { ...t, seenBy: [...(t.seenBy || []), { name: me, at: new Date().toISOString() }] };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+    lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
   }
 
@@ -1483,6 +1512,7 @@ function GenbaTracker() {
   async function completeTodo(id) {
     const target = todos.find((t) => t.id === id);
     setTodos((prev) => prev.filter((t) => t.id !== id));
+    lastLocalWriteRef.current = Date.now();
     try { await storage.delete(`todo:${id}`, true); } catch (e) { console.error(e); }
     // 動作確認タスクは、完了したことを覚えておかないと次の読み込みでまた作られてしまうので、完了済みリストに記録する
     if (target && target.checkType === 'feature' && target.featureKey) {
@@ -1529,6 +1559,7 @@ function GenbaTracker() {
   async function toggleInProgress(t) {
     const next = t.inProgress ? { ...t, inProgress: false, inProgressBy: '' } : { ...t, inProgress: true, inProgressBy: getDeviceStaff() || '担当者未設定' };
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    lastLocalWriteRef.current = Date.now();
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
   }
 
@@ -1536,6 +1567,7 @@ function GenbaTracker() {
   async function switchTodoType(t) {
     const next = { ...t, todoType: (t.todoType === 'memo') ? 'task' : 'memo' };
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    lastLocalWriteRef.current = Date.now();
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     showToast(next.todoType === 'memo' ? '伝達に移動しました' : 'タスクに移動しました');
   }
@@ -1956,7 +1988,9 @@ function autoAssignTrucks() {
 
   function copyUpdateTemplate() {
     const header = '現場名\t監督名\t監督電話\tハウスNo・事業場コード';
-    navigator.clipboard.writeText(header).then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'));
+    navigator.clipboard.writeText(header)
+      .then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'))
+      .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
   }
 
   // Googleカレンダーの「予定を検索」結果画面のテキストをそのまま貼り付けて、管理表（回収実績）に
@@ -2077,7 +2111,9 @@ function autoAssignTrucks() {
 
   function copyImportTemplate() {
     const header = '現場名\t工務店\t住所\t日付(YYYY-MM-DD)\t時間(HH:MM 任意)\tステータス\t監督名\t監督電話\tガラ必須(○か空欄)\t想定回数\t担当者\t注意事項';
-    navigator.clipboard.writeText(header).then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'));
+    navigator.clipboard.writeText(header)
+      .then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'))
+      .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
   }
 
   async function deleteRecord(id) {
