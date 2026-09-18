@@ -5,11 +5,11 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" id="viewportMeta" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-53';
+  window.__APP_VERSION__ = '2026-09-18-58';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -39,7 +39,7 @@
 <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js" crossorigin></script>
 <style>
-  body { margin: 0; background: #FAF9F6; }
+  html, body { margin: 0; background: #FAF9F6; max-width: 100%; overflow-x: hidden; }
   button { -webkit-appearance: none; appearance: none; -webkit-tap-highlight-color: transparent; }
   button:focus, button:focus-visible, button:active { outline: none !important; box-shadow: none !important; -webkit-tap-highlight-color: transparent; }
   * { forced-color-adjust: none; }
@@ -384,6 +384,12 @@ const storage = {
 // 立米数（請求書関連）を編集するための合言葉。後で洋子さんの希望のものに変更します。
 const RYUBEI_PASSWORD = '8989';
 const TODO_PASSWORD = '4455';
+// 伝達（TODOタブ）を実際に見に来る人の宛先候補。今後TODOを見る人が増えたらここに名前を足すだけでOK。
+// 「全員」を選ぶと今まで通りみんなに見えるバッジになる（グループLINEで済む話は基本そちらで、
+// 個別に気づいてほしい伝達だけここで宛先を絞る運用を想定）
+const TODO_RECIPIENTS = ['全員', 'すぐる', '社長'];
+// 宛先を指定できるのは洋子さんの端末だけ（他の人が送る伝達は常に「全員」扱いになり、選ぶ手間自体が発生しない）
+const TODO_TARGET_PICKER_STAFF = '洋子';
 
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
 // 電子マニフェストを使っている工務店（この4社だけは、ハウスNo・監督名が必須。今後増える可能性あり）
@@ -575,6 +581,22 @@ function statusColor(list, key) {
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// 老眼などでピンチズームを使う人のために拡大自体はできるようにしつつ、
+// 誤って拡大・変な位置までスクロールしてしまった時に、ワンタップで拡大率と位置を元に戻せるようにする。
+// viewport指定を一瞬だけ「拡大禁止」に切り替えると、スマホのブラウザが拡大率を1.0にリセットしてくれる
+// （その後すぐ元の「拡大できる」設定に戻すので、次にまた自由に拡大できる）。
+function resetZoomAndScroll() {
+  try { window.scrollTo(0, 0); } catch (e) {}
+  try {
+    const meta = document.getElementById('viewportMeta');
+    if (meta) {
+      const original = meta.getAttribute('content');
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+      setTimeout(() => { meta.setAttribute('content', original); }, 100);
+    }
+  } catch (e) {}
 }
 
 // TODO/伝達の記入日時・確認日時を「9/17 14:20」のように短く表示する
@@ -1059,6 +1081,8 @@ function GenbaTracker() {
   const [todoDate, setTodoDate] = useState('');
   const [todoQuickTags, setTodoQuickTags] = useState([]);
   const [todoImportant, setTodoImportant] = useState(false);
+  const [todoTarget, setTodoTarget] = useState('全員');
+  const [showTargetPicker, setShowTargetPicker] = useState(false);
   const [todoType, setTodoType] = useState('task');
   const [editingTodoId, setEditingTodoId] = useState(null);
   const [editingTodoText, setEditingTodoText] = useState('');
@@ -1331,6 +1355,7 @@ function GenbaTracker() {
       checkType: (overrides && overrides.checkType) || '',
       featureKey: (overrides && overrides.featureKey) || '',
       todoType: (overrides && overrides.todoType) || 'task',
+      target: (overrides && overrides.target) || '全員',
       important: !!(overrides && overrides.important),
       seenBy: (overrides && overrides.auto) ? [] : (getDeviceStaff() ? [{ name: getDeviceStaff(), at: new Date().toISOString() }] : []),
       createdAt: new Date().toISOString(),
@@ -1551,9 +1576,9 @@ function GenbaTracker() {
         await addTodo({ text: tag, siteName: todoSiteName.trim(), date: todoDate, todoType: 'task' });
       }
     } else if (todoText.trim()) {
-      await addTodo({ text: todoText.trim(), siteName: todoSiteName.trim(), date: todoDate, todoType, important: todoImportant });
+      await addTodo({ text: todoText.trim(), siteName: todoSiteName.trim(), date: todoDate, todoType, important: todoImportant, target: todoType === 'memo' ? todoTarget : '全員' });
     }
-    setTodoQuickTags([]); setTodoText(''); setTodoSiteName(''); setTodoDate(''); setTodoImportant(false);
+    setTodoQuickTags([]); setTodoText(''); setTodoSiteName(''); setTodoDate(''); setTodoImportant(false); setTodoTarget('全員'); setShowTargetPicker(false);
   }
 
   // 対応中マークの切り替え（他の人が同じタスクに重複して手を付けないように）
@@ -2850,6 +2875,14 @@ function autoAssignTrucks() {
         }
       `}</style>
 
+      <button
+        onClick={resetZoomAndScroll}
+        title="画面の拡大や位置がおかしくなった時に押してください"
+        style={styles.zoomResetBtn}
+      >
+        ⤢ 表示を元に戻す
+      </button>
+
       <div style={styles.header}>
         <div>
           <div style={styles.brand}>ETS TRACK</div>
@@ -2866,6 +2899,21 @@ function autoAssignTrucks() {
           {pendingCount > 0 && (
             <span style={styles.pendingBadge}>⏳ 未送信 {pendingCount}件</span>
           )}
+          {tab !== 'todo' && (() => {
+            // 現場が忙しくてTODOタブ（パスワード付き）を開かない人にも、伝達が来ていることだけは
+            // タブを開かなくても控えめに気づけるように。タスクは対象外（洋子さんの指定通り）。
+            // 派手すぎると他のスタッフも気になってしまうので、色は目立たせすぎず小さめに。
+            const me = deviceStaff;
+            const unseen = sortedMemos()
+              .filter((t) => !t.target || t.target === '全員' || t.target === me)
+              .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
+            if (unseen === 0) return null;
+            return (
+              <button style={styles.memoHintBadge} onClick={tryUnlockTodoTab}>
+                📢 伝達 {unseen}件
+              </button>
+            );
+          })()}
         </div>
       </div>
 
@@ -3241,7 +3289,9 @@ function autoAssignTrucks() {
         const tasks = sortedTasks();
         const gapSites = infoGapSites();
         const gapGroups = gapSites.length > 0 ? infoGapsByKumiten() : [];
-        const unseenCount = memos.filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
+        const unseenCount = memos
+          .filter((t) => !t.target || t.target === '全員' || t.target === me)
+          .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
         return (
         <div style={{ padding: '0 16px' }}>
           <div style={{ marginTop: 10 }}>
@@ -3284,7 +3334,7 @@ function autoAssignTrucks() {
                         </div>
                       )}
                       <div style={{ fontSize: 10.5, color: '#B5B5AC', marginTop: 2 }}>
-                        {t.staff ? `${t.staff}／` : ''}{formatDateTime(t.createdAt)}
+                        {t.target && t.target !== '全員' ? `宛先：${t.target}／` : ''}{t.staff ? `${t.staff}／` : ''}{formatDateTime(t.createdAt)}
                         {(t.seenBy || []).length > 0
                           ? `／見た：${t.seenBy.map((e) => `${seenName(e)}${seenAt(e) ? `(${formatDateTime(seenAt(e))})` : ''}`).join('・')}`
                           : '／まだ誰も見ていません'}
@@ -3407,6 +3457,33 @@ function autoAssignTrucks() {
                   <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'task' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('task')}>✅ タスク（やった管理）</button>
                   <button style={{ ...styles.quickTagBtn, flex: 1, ...(todoType === 'memo' ? styles.quickTagBtnActive : {}) }} onClick={() => setTodoType('memo')}>📢 伝達（見た管理）</button>
                 </div>
+                {todoType === 'memo' && deviceStaff === TODO_TARGET_PICKER_STAFF && (
+                  <div style={{ marginBottom: 8 }}>
+                    {!showTargetPicker ? (
+                      <button
+                        style={styles.linkBtnSmall}
+                        onClick={() => setShowTargetPicker(true)}
+                      >
+                        🎯 誰か一人に気づいてほしい時はこちら{todoTarget !== '全員' ? `（今：${todoTarget}）` : ''}
+                      </button>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 11.5, color: '#8A8A83', marginBottom: 4 }}>宛先（全員に見せたい時は「全員」のまま）</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {TODO_RECIPIENTS.map((name) => (
+                            <button
+                              key={name}
+                              onClick={() => setTodoTarget(name)}
+                              style={{ ...styles.quickTagBtn, ...(todoTarget === name ? styles.quickTagBtnActive : {}) }}
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <textarea
                   style={{ ...styles.input, minHeight: 54, resize: 'vertical' }}
                   placeholder="例：9/25 ○○現場の住所が未入力／PDFまだ、など"
@@ -4433,6 +4510,8 @@ const styles = {
   tabBtnActive: { background: '#232320', color: '#fff', borderColor: '#232320' },
   todoTabBadge: { display: 'inline-block', marginLeft: 5, background: '#8A8A83', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700, verticalAlign: 2 },
   todoTabBadgeImportant: { background: '#E63946', animation: 'todoBadgePulse 1.6s infinite' },
+  // タブを開かなくても伝達の存在に気づける、控えめな常時表示バッジ（タスクは含めない）
+  memoHintBadge: { background: '#F0EFE9', color: '#5A5A54', border: '1px solid #D8D5CB', borderRadius: 999, padding: '3px 10px', fontSize: 11.5, cursor: 'pointer' },
   lockIconBtn: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, width: 40, fontSize: 14, cursor: 'pointer' },
   staffChip: { background: 'none', border: 'none', color: '#457B9D', fontSize: 11.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
   pendingBadge: { fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '2px 7px', fontWeight: 700 },
@@ -4474,6 +4553,8 @@ const styles = {
   // borderWidthだけが消えてborder-styleがブラウザの初期値（太い黒っぽい枠）に戻ってしまうバグがあった。
   chipActive: { border: '2px solid #2A9D8F', fontWeight: 700, color: '#232320' },
   chipActiveRed: { border: '2px solid #E63946', fontWeight: 700, color: '#232320' },
+  // 拡大・スクロール位置を元に戻すための、常に画面右下に浮いているボタン
+  zoomResetBtn: { position: 'fixed', bottom: 14, right: 14, zIndex: 9999, background: '#232320', color: '#fff', border: 'none', borderRadius: 999, padding: '8px 12px', fontSize: 11.5, boxShadow: '0 2px 8px rgba(0,0,0,0.25)', cursor: 'pointer', opacity: 0.85 },
   dot: { width: 8, height: 8, borderRadius: '50%', display: 'inline-block' },
   toolRow: { marginBottom: 12 },
   linkBtn: { background: 'none', border: 'none', color: '#457B9D', fontSize: 13, textDecoration: 'underline', cursor: 'pointer', padding: 0 },
