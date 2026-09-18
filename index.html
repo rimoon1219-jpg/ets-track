@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-45';
+  window.__APP_VERSION__ = '2026-09-18-46';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1817,7 +1817,10 @@ function autoAssignTrucks() {
   // form の _moveFromId に元のレコードIDを覚えておき、saveRecord() 側で保存成功後に処理する。
   function duplicateRecord(r, dayOffset = 7) {
     const { id, createdAt, photos, ...rest } = r;
-    setForm({ ...rest, date: addDays(r.date, dayOffset), photos: [], _moveFromId: r.id });
+    const newDate = addDays(r.date, dayOffset);
+    const entry = { from: r.date, to: newDate, by: deviceStaff || r.staff || '（担当者不明）', at: new Date().toISOString() };
+    const dateHistory = [...(r.dateHistory || []), entry].slice(-10);
+    setForm({ ...rest, date: newDate, photos: [], dateHistory, _moveFromId: r.id });
     setEditingId(null);
     setPendingPhotos([]);
     setShowForm(true);
@@ -1847,6 +1850,15 @@ function autoAssignTrucks() {
     let record = { ...formRest, id, createdAt: form.createdAt || Date.now() };
     if (tab === 'sched' && record.address && !record.area) {
       record = { ...record, area: extractArea(record.address) };
+    }
+    // 日付を動かした時だけ、誰が・いつ・何日から何日に変更したかを記録しておく（予定表のみ）。
+    // 動かしてはいけない現場が動いていた時に、あとで担当者に確認できるようにするため。
+    if (tab === 'sched' && editingId) {
+      const before = schedRecords.find((r) => r.id === editingId);
+      if (before && before.date && record.date && before.date !== record.date) {
+        const entry = { from: before.date, to: record.date, by: deviceStaff || form.staff || '（担当者不明）', at: new Date().toISOString() };
+        record = { ...record, dateHistory: [...(record.dateHistory || []), entry].slice(-10) };
+      }
     }
     let extraPhotos = [];
     if (pendingPhotos.length > 0) {
@@ -2971,6 +2983,13 @@ function autoAssignTrucks() {
 
                   {tab === 'sched' && r.note && <div style={styles.noteText}>{r.note}</div>}
                   {tab === 'mgmt' && r.items && <div style={styles.noteText}>{r.items}</div>}
+                  {tab === 'sched' && r.dateHistory && r.dateHistory.length > 0 && (
+                    <div style={styles.dateHistoryBox}>
+                      {r.dateHistory.slice(-3).reverse().map((h, i) => (
+                        <div key={i} style={styles.dateHistoryText}>📅日付変更：{h.from}→{h.to}（{h.by}・{formatDateTime(h.at)}）</div>
+                      ))}
+                    </div>
+                  )}
 
                   <div style={styles.actionRow} onClick={(e) => e.stopPropagation()}>
                     <button style={styles.editOpenBtn} onClick={() => openEdit(r)}>✏️ 開いて編集</button>
@@ -4413,6 +4432,8 @@ const styles = {
   supervisorName: { fontSize: 12.5, color: '#5A5A54' },
   phoneLink: { fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, textDecoration: 'none' },
   noteText: { fontSize: 13, color: '#6B6B63', marginBottom: 6, whiteSpace: 'pre-wrap' },
+  dateHistoryBox: { marginBottom: 6 },
+  dateHistoryText: { fontSize: 10.5, color: '#B0AFA8' },
   cardMeta: { fontSize: 12.5, color: '#5A5A54' },
   m3Row: { marginBottom: 6 },
   m3Value: { fontSize: 12.5, color: '#5A5A54', fontWeight: 700 },
