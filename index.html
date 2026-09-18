@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-67';
+  window.__APP_VERSION__ = '2026-09-18-68';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1093,7 +1093,10 @@ function GenbaTracker() {
   const [editingTodoText, setEditingTodoText] = useState('');
   const [showTodoAddForm, setShowTodoAddForm] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
-  const [showOnlyUnseenMemos, setShowOnlyUnseenMemos] = useState(false);
+  // TODOタブの表示絞り込み。'all'（全部）/ 'unseen'（伝達の未確認のみ）/ 'task'（タスクのみ）/ 'gap'（情報不足のみ）。
+  // タブ上部に常にボタンを出しておき、うっかり🔒TODOタブに触れて全部表示に戻っても
+  // すぐワンタップで絞り込みを選び直せるようにする
+  const [todoFilter, setTodoFilter] = useState('all');
   const [showAllFeatureTodos, setShowAllFeatureTodos] = useState(false);
   const [showKumitenEditor, setShowKumitenEditor] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -2433,8 +2436,10 @@ function autoAssignTrucks() {
 
   // filterUnseen=true で呼ぶと、TODOタブを開いた直後から「未確認だけ見る」が有効な状態になる
   // （ヘッダーの📢伝達バッジから来た時は、そのまま未確認の伝達だけがすぐ見えるようにするため）
-  function tryUnlockTodoTab(filterUnseen) {
-    setShowOnlyUnseenMemos(!!filterUnseen);
+  // view省略時（普通に🔒TODOタブを直接タップした時）は必ず「全部」に戻す。
+  // 📢伝達バッジから来た時だけ 'unseen' を渡して、未確認の伝達だけを最初から見せる
+  function tryUnlockTodoTab(view) {
+    setTodoFilter(view || 'all');
     if (todoUnlocked) { setTab('todo'); return; }
     const input = window.prompt('TODOタブを開くには合言葉を入力してください');
     if (input === null) return;
@@ -2972,7 +2977,7 @@ function autoAssignTrucks() {
               .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
             if (unseen === 0) return null;
             return (
-              <button style={styles.memoHintBadge} onClick={() => tryUnlockTodoTab(true)}>
+              <button style={styles.memoHintBadge} onClick={() => tryUnlockTodoTab('unseen')}>
                 📢 伝達 {unseen}件
               </button>
             );
@@ -2985,7 +2990,7 @@ function autoAssignTrucks() {
         <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
-        <button onClick={() => tryUnlockTodoTab(false)} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
+        <button onClick={() => tryUnlockTodoTab('all')} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
           🔒TODO
           {todoUnlocked && (() => {
             // タスク・伝達（スタッフが対応するもの）だけをバッジ件数にする。
@@ -3355,22 +3360,24 @@ function autoAssignTrucks() {
         const unseenCount = memos
           .filter((t) => !t.target || t.target === '全員' || t.target === me)
           .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
-        const visibleMemos = showOnlyUnseenMemos
+        const visibleMemos = todoFilter === 'unseen'
           ? memos.filter((t) => (!t.target || t.target === '全員' || t.target === me) && !(me && seenIncludes(t.seenBy, me)))
           : memos;
+        const showMemoSection = todoFilter === 'all' || todoFilter === 'unseen';
+        const showTaskSection = todoFilter === 'all' || todoFilter === 'task';
+        const showGapSection = todoFilter === 'all' || todoFilter === 'gap';
         return (
         <div style={{ padding: '0 16px' }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+            <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'all' ? styles.todoFilterBtnActive : {}) }} onClick={() => setTodoFilter('all')}>全部</button>
+            <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'unseen' ? styles.todoFilterBtnActive : {}) }} onClick={() => setTodoFilter('unseen')}>📢 未確認だけ</button>
+            <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'task' ? styles.todoFilterBtnActive : {}) }} onClick={() => setTodoFilter('task')}>✅ タスクだけ</button>
+            <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'gap' ? styles.todoFilterBtnActive : {}) }} onClick={() => { setTodoFilter('gap'); setShowInfoGaps(true); }}>📋 情報不足だけ</button>
+          </div>
+          {showMemoSection && (
           <div style={{ marginTop: 10 }}>
-            <div style={{ ...styles.memoSectionBanner, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ ...styles.memoSectionBanner, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span>📢 伝達{unseenCount > 0 && <span style={styles.memoUnseenCountTag}>未確認 {unseenCount}件</span>}</span>
-              {memos.length > 0 && (
-                <button
-                  style={{ ...styles.unseenFilterBtn, ...(showOnlyUnseenMemos ? styles.unseenFilterBtnActive : {}) }}
-                  onClick={() => setShowOnlyUnseenMemos((v) => !v)}
-                >
-                  {showOnlyUnseenMemos ? '✓ 未確認のみ表示中' : '未確認だけ見る'}
-                </button>
-              )}
             </div>
             {memos.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
@@ -3437,8 +3444,12 @@ function autoAssignTrucks() {
                 })}
               </>
             )}
+          </div>
+          )}
 
-            <div style={{ ...styles.todoSectionTitle, marginTop: 18 }}>タスク{tasks.length > 0 ? `（${tasks.length}件）` : ''}</div>
+          {showTaskSection && (
+          <div style={{ marginTop: 18 }}>
+            <div style={{ ...styles.todoSectionTitle }}>タスク{tasks.length > 0 ? `（${tasks.length}件）` : ''}</div>
             {tasks.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
                 {loading ? '読み込み中…' : '今はありません'}
@@ -3520,8 +3531,10 @@ function autoAssignTrucks() {
                 )}
               </>
             )}
+          </div>
+          )}
 
-            {featureCheckTodos().length > 0 && (() => {
+          {todoFilter === 'all' && featureCheckTodos().length > 0 && (() => {
               const featureTodos = featureCheckTodos();
               return (
               <>
@@ -3549,7 +3562,6 @@ function autoAssignTrucks() {
               </>
               );
             })()}
-          </div>
 
           <div style={{ marginTop: 18 }}>
             {!showTodoAddForm ? (
@@ -3639,7 +3651,7 @@ function autoAssignTrucks() {
             )}
           </div>
 
-          {gapSites.length > 0 && (
+          {showGapSection && gapSites.length > 0 && (
             <div style={{ ...styles.gapSummaryCard, marginTop: 18 }}>
               <div style={styles.gapSummaryHeader} onClick={() => setShowInfoGaps((v) => !v)}>
                 <span>📋 情報不足の現場（工務店ごと）：{gapSites.length}件</span>
@@ -4647,8 +4659,8 @@ const styles = {
   todoSectionTitle: { fontSize: 12.5, fontWeight: 700, color: '#8A8A83', marginBottom: 8, marginTop: 4 },
   memoSectionBanner: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: '#8A6D00', background: '#FFF3D6', border: '1px solid #F0DDA0', borderRadius: 10, padding: '9px 12px', marginBottom: 8 },
   memoUnseenCountTag: { fontSize: 11.5, background: '#E63946', color: '#fff', borderRadius: 6, padding: '2px 8px', fontWeight: 700 },
-  unseenFilterBtn: { fontSize: 11, padding: '4px 9px', borderRadius: 999, border: '1px solid #D8C68A', color: '#8A6D00', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
-  unseenFilterBtnActive: { background: '#8A6D00', color: '#fff', borderColor: '#8A6D00' },
+  todoFilterBtn: { fontSize: 11.5, padding: '5px 11px', borderRadius: 999, border: '1px solid #D8D6CC', color: '#5A5A54', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  todoFilterBtnActive: { background: '#232320', color: '#fff', borderColor: '#232320', fontWeight: 700 },
   iconToggleBtn: { fontSize: 11, width: 22, height: 22, minWidth: 22, borderRadius: 999, border: '1px solid #D8D6CC', background: '#fff', color: '#C7C5BB', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', filter: 'grayscale(1)', opacity: 0.6 },
   iconToggleBtnActive: { borderColor: '#E63946', background: '#FDECEE', filter: 'none', opacity: 1 },
   featureTag: { fontSize: 10, background: '#D6E9FF', color: '#0B5FB3', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
