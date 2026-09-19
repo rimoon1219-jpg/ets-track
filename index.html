@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-74';
+  window.__APP_VERSION__ = '2026-09-18-77';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1061,6 +1061,8 @@ function GenbaTracker() {
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [invoiceExportText, setInvoiceExportText] = useState('');
   const [invoiceEdits, setInvoiceEdits] = useState({}); // recordId -> lineItems編集中バッファ
+  const invoicePriceSectionRef = useRef(null);
+  const [highlightedInvoiceId, setHighlightedInvoiceId] = useState(null);
   const [showDismissedInvoice, setShowDismissedInvoice] = useState(false);
   const [showInvoiceAddSite, setShowInvoiceAddSite] = useState(false);
   const [invoiceAddName, setInvoiceAddName] = useState('');
@@ -2342,6 +2344,26 @@ function autoAssignTrucks() {
     load();
   }
 
+  // メルディアのハウスNoは「／」で足りる運用にしたが、その機能を追加する前から登録されていた
+  // 未来日の予定はまだ空欄のままになっている。情報不足リストにいつまでも残ってしまうので、
+  // まとめて／を入れられるようにする（今日以降の予定・空欄のものだけが対象）
+  async function backfillMeldiaHouseNumber() {
+    const today = todayStr();
+    const targets = schedRecords.filter((r) => r.kumiten === 'メルディア' && r.date >= today && !(r.houseNumber || '').trim());
+    if (targets.length === 0) { showToast('対象がありません（すでに全部埋まっています）'); return; }
+    if (!window.confirm(`メルディアの現場${targets.length}件のハウスNoに「／」を入れます。よろしいですか？`)) return;
+    let count = 0;
+    await runWithLimit(targets, 4, async (r) => {
+      const updated = { ...r, houseNumber: '／' };
+      try {
+        await storage.set(`sched:${r.id}`, JSON.stringify(updated));
+        applyLocalRecordUpdate('sched', updated);
+        count++;
+      } catch (e) { /* 失敗分は次回の情報不足リストに残るので無視してよい */ }
+    });
+    showToast(`${count}件に「／」を入れました`);
+  }
+
   async function addPhotoToMgmt(id, staffName, files, recordTab) {
     const activeTab = recordTab || tab;
     const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
@@ -2593,6 +2615,7 @@ function autoAssignTrucks() {
   }
 
   async function removeSupervisorEntry(kumiten, name) {
+    if (!window.confirm(`「${name}」を監督名簿から削除しますか？`)) return;
     const next = { ...supervisorDirectory, [kumiten]: (supervisorDirectory[kumiten] || []).filter((s) => s.name !== name) };
     await saveSupervisorDirectory(next);
   }
@@ -2606,6 +2629,7 @@ function autoAssignTrucks() {
     return identifiedSites.filter((s) => s.kumiten === kumiten);
   }
   async function removeIdentifiedSite(kumiten, siteName) {
+    if (!window.confirm(`「${siteName}」を特定済み現場データから削除しますか？`)) return;
     const next = identifiedSites.filter((s) => !(s.kumiten === kumiten && s.siteName === siteName));
     await saveIdentifiedSites(next);
   }
@@ -2947,6 +2971,12 @@ function autoAssignTrucks() {
   function jumpToInvoiceItem(record) {
     setInvoiceKumiten(record.kumiten);
     setInvoiceMonth((record.date || todayStr()).slice(0, 7));
+    setHighlightedInvoiceId(record.id);
+    showToast(`${record.kumiten}・${(record.date || '').slice(0, 7)} を表示中。下にスクロールして金額を入力してください`);
+    setTimeout(() => {
+      if (invoicePriceSectionRef.current) invoicePriceSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+    setTimeout(() => setHighlightedInvoiceId((cur) => (cur === record.id ? null : cur)), 4000);
   }
 
   async function addAdhocInvoiceSite() {
@@ -3238,15 +3268,21 @@ function autoAssignTrucks() {
           )}
 
           <div style={styles.toolRow}>
-            <button style={styles.linkBtn} onClick={() => setShowBulkDelete(true)}>期間を指定して一括削除</button>
+            {ryubeiUnlocked && <button style={styles.linkBtn} onClick={() => setShowBulkDelete(true)}>期間を指定して一括削除</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkImport(true)}>TimeTreeから一括インポート</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkUpdate(true)}>監督名・ハウスNoを一括更新</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアの空欄に一括で／を入れる</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
           </div>
+          {!ryubeiUnlocked && (tab === 'sched' || tab === 'mgmt') && (
+            <div style={{ fontSize: 11.5, color: '#B0B0A6', marginTop: -6, marginBottom: 10 }}>
+              🔒 一括削除・一括インポートなどは社長さんと洋子さん専用です（請求書タブの🔒から開けます）
+            </div>
+          )}
 
           {!loading && filtered.length === 0 && <div style={styles.empty}>該当する現場がありません。</div>}
 
@@ -3883,8 +3919,13 @@ function autoAssignTrucks() {
                 <div key={record.id} style={styles.invoiceRow}>
                   <div style={styles.invoiceName}>{record.name}</div>
                   <div style={styles.invoiceMeta}>{record.kumiten}／{record.date}／{record.status}</div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  {record.items && <div style={styles.itemsInlineText}>品目：{record.items}</div>}
+                  {(record.photos || []).length > 0 && (
+                    <div style={{ fontSize: 11.5, color: '#8A8A83', marginBottom: 4 }}>📷 写真{record.photos.length}枚あり</div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                     <button type="button" style={styles.handoffBtn} onClick={() => jumpToInvoiceItem(record)}>ここで確認する</button>
+                    <button type="button" style={styles.linkBtnSmall} onClick={() => openEdit(record)}>🔍 詳しく見る（写真・数量）</button>
                     <button type="button" style={styles.kumitenDeleteBtn} onClick={() => dismissInvoiceItem(record)}>不要にする</button>
                   </div>
                 </div>
@@ -3918,14 +3959,14 @@ function autoAssignTrucks() {
                 <span style={{ fontWeight: 700 }}>合計 ¥{Math.round(invoiceGrandTotal).toLocaleString()}</span>
               </div>
 
-              <div style={styles.areaGroupTitle}>価格を入力する（追加・単発の記録）</div>
+              <div style={styles.areaGroupTitle} ref={invoicePriceSectionRef}>価格を入力する（追加・単発の記録）</div>
               {invoiceRecords.length === 0 && <div style={styles.empty}>この工務店・この月の「追加」「単発」の記録がまだありません。</div>}
 
               {invoiceRecords.map((record) => {
                 const items = getEditItems(record);
                 const dirty = invoiceEdits[record.id] !== undefined;
                 return (
-                  <div key={record.id} style={styles.invoiceRow}>
+                  <div key={record.id} style={{ ...styles.invoiceRow, ...(highlightedInvoiceId === record.id ? styles.invoiceRowHighlight : {}) }}>
                     <div style={styles.invoiceName}>{record.name}</div>
                     <div style={styles.invoiceMeta}>{record.date}／{record.status}</div>
                     {items.map((item, idx) => (
@@ -5074,6 +5115,7 @@ const styles = {
   truckSummaryRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '4px 0' },
   truckDot: { width: 10, height: 10, borderRadius: '50%', display: 'inline-block' },
   invoiceRow: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px 12px', marginBottom: 8 },
+  invoiceRowHighlight: { border: '2px solid #E9A227', boxShadow: '0 0 0 3px rgba(233,162,39,0.18)' },
   invoiceName: { fontSize: 14, fontWeight: 700, marginBottom: 2 },
   invoiceMeta: { fontSize: 11.5, color: '#8A8A83', marginBottom: 4 },
   invoiceM3: { fontSize: 15, fontWeight: 800, color: '#2A9D8F', marginTop: 6, textAlign: 'right' },
