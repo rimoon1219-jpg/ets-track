@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-79';
+  window.__APP_VERSION__ = '2026-09-18-80';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2094,8 +2094,8 @@ function autoAssignTrucks() {
         expectedVisits: (expectedVisits || '').trim(),
         staff: (staff || deviceStaff || '').trim(),
         note: (note || '').trim(),
-        // メルディアは一括取り込みでもハウスNoが未入力になりがちなので、他と同じく「／」を自動で入れておく
-        houseNumber: (kumiten || '').trim() === 'メルディア' ? '／' : '',
+        // メルディアは一括取り込みでもハウスNoが未入力になりがちなので、他と同じく「対象外」を自動で入れておく
+        houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
       };
       try {
         await storage.set(`sched:${record.id}`, JSON.stringify(record));
@@ -2344,24 +2344,25 @@ function autoAssignTrucks() {
     load();
   }
 
-  // メルディアのハウスNoは「／」で足りる運用にしたが、その機能を追加する前から登録されていた
+  // メルディアのハウスNoは「対象外」で足りる運用にしたが、その機能を追加する前から登録されていた
   // 未来日の予定はまだ空欄のままになっている。情報不足リストにいつまでも残ってしまうので、
-  // まとめて／を入れられるようにする（今日以降の予定・空欄のものだけが対象）
+  // まとめて「対象外」を入れられるようにする（今日以降の予定が対象）。
+  // 以前のバージョンで自動で入っていた「／」も、見づらいという指摘があったので「対象外」に統一する
   async function backfillMeldiaHouseNumber() {
     const today = todayStr();
-    const targets = schedRecords.filter((r) => r.kumiten === 'メルディア' && r.date >= today && !(r.houseNumber || '').trim());
+    const targets = schedRecords.filter((r) => r.kumiten === 'メルディア' && r.date >= today && (!(r.houseNumber || '').trim() || r.houseNumber === '／'));
     if (targets.length === 0) { showToast('対象がありません（すでに全部埋まっています）'); return; }
-    if (!window.confirm(`メルディアの現場${targets.length}件のハウスNoに「／」を入れます。よろしいですか？`)) return;
+    if (!window.confirm(`メルディアの現場${targets.length}件のハウスNoに「対象外」を入れます。よろしいですか？`)) return;
     let count = 0;
     await runWithLimit(targets, 4, async (r) => {
-      const updated = { ...r, houseNumber: '／' };
+      const updated = { ...r, houseNumber: '対象外' };
       try {
         await storage.set(`sched:${r.id}`, JSON.stringify(updated));
         applyLocalRecordUpdate('sched', updated);
         count++;
       } catch (e) { /* 失敗分は次回の情報不足リストに残るので無視してよい */ }
     });
-    showToast(`${count}件に「／」を入れました`);
+    showToast(`${count}件に「対象外」を入れました`);
   }
 
   async function addPhotoToMgmt(id, staffName, files, recordTab) {
@@ -3274,7 +3275,7 @@ function autoAssignTrucks() {
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
-        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアの空欄に一括で／を入れる</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアのハウスNoに一括で「対象外」を入れる</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
           </div>
@@ -4197,8 +4198,8 @@ function autoAssignTrucks() {
                     kumiten: k,
                     garaRequired: editingId ? f.garaRequired : !GARA_DEFAULT_EXCLUDE.includes(k),
                     // メルディアは実際の番号がすぐ分からないことが多く、正式な番号は別途（マニフェスト自動化側の検索で）
-                    // 確認する運用のため、ハウスNoが未入力の時だけ「／」を自動で入れておく（情報不足リストにも出なくなる）
-                    houseNumber: (tab === 'sched' && k === 'メルディア' && !(f.houseNumber || '').trim()) ? '／' : f.houseNumber,
+                    // 確認する運用のため、ハウスNoが未入力の時だけ「対象外」を自動で入れておく（情報不足リストにも出なくなる）
+                    houseNumber: (tab === 'sched' && k === 'メルディア' && !(f.houseNumber || '').trim()) ? '対象外' : f.houseNumber,
                   }))}
                   style={{ ...styles.statusOption, borderColor: form.kumiten === k ? '#2A9D8F' : '#E5E3DC', background: form.kumiten === k ? '#2A9D8F1A' : '#fff' }}
                 >{k}</button>
