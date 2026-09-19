@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-84';
+  window.__APP_VERSION__ = '2026-09-19-85';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -895,18 +895,20 @@ function dayToDate(day) {
   return new Date(day * 86400000).toISOString().slice(0, 10);
 }
 
-function GanttChart({ schedRecords, kumitenFilter, windowStart, windowEnd, onShift, onPickKumiten, kumitenList }) {
+function GanttChart({ schedRecords, kumitenFilter, windowStart, windowEnd, onShift, onPickKumiten, kumitenList, onOpenRecord }) {
   const todayDay = dateToDay(todayStr());
   const startDay = dateToDay(windowStart);
   const endDay = dateToDay(windowEnd);
   const totalDays = Math.max(1, endDay - startDay);
+  const [expandedSite, setExpandedSite] = useState(null);
 
   const bySite = {};
   schedRecords.forEach((r) => {
     if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return;
-    if (!bySite[r.name]) bySite[r.name] = { name: r.name, kumiten: r.kumiten, dates: [], hasFinal: false, finalDay: null, hasSingle: false };
+    if (!bySite[r.name]) bySite[r.name] = { name: r.name, kumiten: r.kumiten, dates: [], records: [], hasFinal: false, finalDay: null, hasSingle: false };
     const d = dateToDay(r.date);
     bySite[r.name].dates.push(d);
+    bySite[r.name].records.push(r);
     if (r.status === '最終') {
       bySite[r.name].hasFinal = true;
       bySite[r.name].finalDay = bySite[r.name].finalDay === null ? d : Math.max(bySite[r.name].finalDay, d);
@@ -973,21 +975,63 @@ function GanttChart({ schedRecords, kumitenFilter, windowStart, windowEnd, onShi
           const left = Math.max(0, ((r.startDay - startDay) / totalDays) * 100);
           const right = Math.min(100, ((r.endDay - startDay) / totalDays) * 100);
           const width = Math.max(1.5, right - left);
+          const isExpanded = expandedSite === r.name;
+          const sortedRecords = [...r.records].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+          const latest = sortedRecords[sortedRecords.length - 1];
           return (
-            <div key={r.name} style={styles.ganttRow}>
-              <div style={styles.ganttLabel}>{r.name}</div>
-              <div style={styles.ganttTrack}>
-                <div
-                  style={{
-                    ...styles.ganttBar,
-                    left: `${left}%`,
-                    width: `${width}%`,
-                    background: r.ongoing ? '#2A9D8F' : (r.hasSingle && !r.hasFinal ? '#FFB703' : '#9A9A94'),
-                  }}
-                  title={`${dayToDate(r.startDay)} 〜 ${dayToDate(r.endDay)}${r.ongoing ? '（進行中）' : (r.hasSingle && !r.hasFinal ? '（単発）' : '（最終済み）')}`}
-                />
+            <React.Fragment key={r.name}>
+              <div
+                style={{ ...styles.ganttRow, ...styles.ganttRowClickable, ...(isExpanded ? styles.ganttRowActive : {}) }}
+                onClick={() => setExpandedSite((cur) => (cur === r.name ? null : r.name))}
+              >
+                <div style={styles.ganttLabel}>{r.name}</div>
+                <div style={styles.ganttTrack}>
+                  <div
+                    style={{
+                      ...styles.ganttBar,
+                      left: `${left}%`,
+                      width: `${width}%`,
+                      background: r.ongoing ? '#2A9D8F' : (r.hasSingle && !r.hasFinal ? '#FFB703' : '#9A9A94'),
+                    }}
+                    title={`${dayToDate(r.startDay)} 〜 ${dayToDate(r.endDay)}${r.ongoing ? '（進行中）' : (r.hasSingle && !r.hasFinal ? '（単発）' : '（最終済み）')}`}
+                  />
+                </div>
+                <div style={styles.ganttExpandHint}>{isExpanded ? '▲' : '▼'}</div>
               </div>
-            </div>
+              {isExpanded && (
+                <div style={styles.ganttDetailBox}>
+                  <div style={styles.ganttDetailHeader}>
+                    <span>{r.kumiten}・{r.name}</span>
+                    {(latest.supervisorName || latest.houseNumber) && (
+                      <span style={styles.ganttDetailSub}>
+                        {latest.supervisorName && `監督：${latest.supervisorName}`}
+                        {latest.supervisorName && latest.houseNumber && '／'}
+                        {latest.houseNumber && `ハウスNo：${latest.houseNumber}`}
+                      </span>
+                    )}
+                  </div>
+                  {sortedRecords.map((rec) => (
+                    <div
+                      key={rec.id}
+                      style={styles.ganttDetailRow}
+                      onClick={(e) => { e.stopPropagation(); onOpenRecord && onOpenRecord(rec); }}
+                    >
+                      <span style={styles.ganttDetailDate}>{rec.date}</span>
+                      <span style={{ ...styles.ganttDetailStatus, color: statusColor(SCHED_STATUSES, rec.status) }}>{rec.status || '（未設定）'}</span>
+                      <span style={styles.ganttDetailStaff}>{rec.staff || '（担当者未入力）'}</span>
+                      {(rec.photos || []).length > 0 && <span style={styles.ganttDetailPhoto}>📷{rec.photos.length}</span>}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    style={styles.ganttDetailBtn}
+                    onClick={(e) => { e.stopPropagation(); onOpenRecord && onOpenRecord(latest); }}
+                  >
+                    🔍 詳しく見る・編集する
+                  </button>
+                </div>
+              )}
+            </React.Fragment>
           );
         })}
       </div>
@@ -3577,6 +3621,7 @@ function autoAssignTrucks() {
             onShift={(d) => setGanttMonthOffset((v) => v + d)}
             onPickKumiten={setKumitenFilter}
             kumitenList={kumitenList}
+            onOpenRecord={(rec) => { setTab('sched'); setSearch(rec.name); openEdit(rec); }}
           />
         );
       })()}
@@ -5168,9 +5213,21 @@ const styles = {
   ganttTick: { position: 'absolute', fontSize: 10.5, color: '#A5A59C', transform: 'translateX(-4px)' },
   ganttTodayLine: { position: 'absolute', top: 0, bottom: -400, width: 2, background: '#E63946', opacity: 0.5 },
   ganttRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, position: 'relative' },
+  ganttRowClickable: { cursor: 'pointer', padding: '3px 4px', margin: '-3px -4px 3px', borderRadius: 6 },
+  ganttRowActive: { background: '#F5F4EF' },
   ganttLabel: { width: 108, fontSize: 11.5, color: '#4A4A45', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   ganttTrack: { flex: 1, height: 16, position: 'relative', background: '#FAF9F6', borderRadius: 4 },
   ganttBar: { position: 'absolute', top: 0, height: 16, borderRadius: 4 },
+  ganttExpandHint: { width: 14, flexShrink: 0, fontSize: 9, color: '#A5A59C', textAlign: 'center' },
+  ganttDetailBox: { background: '#FAF9F6', border: '1px solid #E5E3DC', borderRadius: 8, padding: '8px 10px', marginBottom: 10, marginTop: -2 },
+  ganttDetailHeader: { display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12, fontWeight: 700, color: '#3A3A35', marginBottom: 6, paddingBottom: 6, borderBottom: '1px solid #E5E3DC' },
+  ganttDetailSub: { fontSize: 11, fontWeight: 400, color: '#8A8A83' },
+  ganttDetailRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, padding: '5px 2px', borderBottom: '1px solid #EFEEE8', cursor: 'pointer' },
+  ganttDetailDate: { width: 74, flexShrink: 0, color: '#5A5A54' },
+  ganttDetailStatus: { flex: 1, fontWeight: 700 },
+  ganttDetailStaff: { color: '#5A5A54' },
+  ganttDetailPhoto: { fontSize: 10.5, color: '#8A8A83' },
+  ganttDetailBtn: { marginTop: 6, width: '100%', background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 0', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' },
   kumitenDeleteBtn: { background: '#fff', border: '1px solid #E63946', color: '#E63946', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
   saveBtnSmall: { background: '#fff', border: '1px solid #2A9D8F', color: '#2A9D8F', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
 };
