@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-89';
+  window.__APP_VERSION__ = '2026-09-19-90';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1225,7 +1225,7 @@ function GenbaTracker() {
 
   const emptySched = () => ({
     name: '', kumiten: '', address: '', area: '', status: '新規', staff: deviceStaff, note: '', date: todayStr(),
-    time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, expectedVisits: '12', photos: [],
+    time: '', supervisorName: '', supervisorPhone: '', houseNumber: '', garaRequired: false, keiTruckRequired: false, expectedVisits: '12', photos: [],
   });
   const emptyMgmt = () => ({
     name: '', kumiten: '', date: todayStr(), status: 'クロス', staff: deviceStaff, items: '', lineItems: [], photos: [], supervisorName: '',
@@ -1984,6 +1984,7 @@ function autoAssignTrucks() {
       supervisorPhone: f.supervisorPhone || match.supervisorPhone || '',
       houseNumber: f.houseNumber || match.houseNumber || '',
       garaRequired: f.garaRequired || match.garaRequired || false,
+      keiTruckRequired: f.keiTruckRequired || match.keiTruckRequired || false,
       expectedVisits: match.expectedVisits || f.expectedVisits || '12',
       area: f.area || match.area || '',
       address: f.address || match.address || '',
@@ -2184,7 +2185,7 @@ function autoAssignTrucks() {
     const records = [];
     lines.forEach((line) => {
       const cols = line.split('\t');
-      const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, expectedVisits, staff, note] = cols;
+      const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, keiTruck, expectedVisits, staff, note] = cols;
       if (!name || name === '現場名') return; // ヘッダー行はスキップ
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       records.push({
@@ -2199,6 +2200,7 @@ function autoAssignTrucks() {
         supervisorName: (supervisorName || '').trim(),
         supervisorPhone: (supervisorPhone || '').trim(),
         garaRequired: (gara || '').trim() === '○' || (gara || '').trim().toLowerCase() === 'true',
+        keiTruckRequired: (keiTruck || '').trim() === '○' || (keiTruck || '').trim().toLowerCase() === 'true',
         expectedVisits: (expectedVisits || '').trim(),
         staff: (staff || deviceStaff || '').trim(),
         note: (note || '').trim(),
@@ -2350,7 +2352,7 @@ function autoAssignTrucks() {
   }
 
   function copyImportTemplate() {
-    const header = '現場名\t工務店\t住所\t日付(YYYY-MM-DD)\t時間(HH:MM 任意)\tステータス\t監督名\t監督電話\tガラ必須(○か空欄)\t想定回数\t担当者\t注意事項';
+    const header = '現場名\t工務店\t住所\t日付(YYYY-MM-DD)\t時間(HH:MM 任意)\tステータス\t監督名\t監督電話\tガラ必須(○か空欄)\t軽トラ指定(○か空欄)\t想定回数\t担当者\t注意事項';
     navigator.clipboard.writeText(header)
       .then(() => showToast('テンプレート行をコピーしました。Excelに貼り付けてください'))
       .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
@@ -3414,6 +3416,7 @@ function autoAssignTrucks() {
                 <div style={styles.cardBody} onClick={() => openEdit(r)}>
                   <div style={styles.cardTop}>
                     {tab === 'sched' && r.time && <span style={styles.timeBadge}>⏰ {r.time}</span>}
+                    {tab === 'sched' && r.keiTruckRequired && <span style={styles.keiBadge}>🚚 軽トラ指定</span>}
                     {tab === 'sched' && r.garaRequired && <span style={styles.garaBadge}>🧺 ガラ袋必須</span>}
                     {tab === 'sched' && GARA_RECYCLE_OK.includes(r.kumiten) && <span style={styles.recycleBadge}>♻️ リサイクルガラ袋</span>}
                     {tab === 'sched' && (() => {
@@ -3618,6 +3621,7 @@ function autoAssignTrucks() {
                   <div key={s.id} style={{ ...styles.dispatchRow, borderLeft: `4px solid ${barColor}` }}>
                     <div style={styles.dispatchInfo}>
                       <div style={styles.dispatchName}>
+                        {s.keiTruckRequired && <span style={{ marginRight: 4 }}>🚚</span>}
                         {s.garaRequired && <span style={{ marginRight: 4 }}>🧺</span>}
                         {s.name}
                         {extraSiteIds.includes(s.id) && (
@@ -4399,6 +4403,15 @@ function autoAssignTrucks() {
                   <input style={styles.input} value={form.houseNumber || ''} onChange={(e) => setForm({ ...form, houseNumber: e.target.value })} placeholder="例：262441" />
                 )}
 
+                <label style={styles.label}>軽トラ指定</label>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, keiTruckRequired: !form.keiTruckRequired })}
+                  style={{ ...styles.garaToggle, ...(form.keiTruckRequired ? styles.keiToggleOn : {}) }}
+                >
+                  {form.keiTruckRequired ? '🚚 指定あり' : 'なし（タップで指定に）'}
+                </button>
+
                 <div style={styles.row2}>
                   <div style={{ flex: 1 }}>
                     <label style={styles.label}>ガラ袋</label>
@@ -4961,7 +4974,7 @@ function autoAssignTrucks() {
               <button style={styles.closeBtn} onClick={() => setShowBulkImport(false)}>✕</button>
             </div>
             <div style={styles.exportHint}>
-              Excel/スプレッドシートで列を「現場名・工務店・住所・日付・時間・ステータス・監督名・監督電話・ガラ必須・想定回数・担当者・注意事項」の順に用意し、その範囲をコピーしてここに貼り付けてください（タブ区切り）。1行1件です。
+              Excel/スプレッドシートで列を「現場名・工務店・住所・日付・時間・ステータス・監督名・監督電話・ガラ必須・軽トラ指定・想定回数・担当者・注意事項」の順に用意し、その範囲をコピーしてここに貼り付けてください（タブ区切り）。1行1件です。
             </div>
             <button style={{ ...styles.linkBtn, marginBottom: 8 }} onClick={copyImportTemplate}>見出し行をコピーする（Excelの1行目に貼り付け用）</button>
             <textarea
@@ -5262,8 +5275,10 @@ const styles = {
   garaToggle: { width: '100%', textAlign: 'left', border: '2px solid #E5E3DC', borderRadius: 8, padding: '10px 12px', fontSize: 13.5, background: '#fff', color: '#8A8A83', cursor: 'pointer' },
   recycleHint: { fontSize: 11, color: '#2A9D8F', fontWeight: 700, marginTop: 4 },
   garaToggleOn: { borderColor: '#FFB703', background: '#FFF7E0', color: '#8A6D00', fontWeight: 700 },
-  garaBadge: { fontSize: 11.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '3px 8px', fontWeight: 800 },
-  recycleBadge: { fontSize: 11.5, background: '#DFF2E1', color: '#1E6B2E', borderRadius: 6, padding: '3px 8px', fontWeight: 800, marginLeft: 6 },
+  garaBadge: { fontSize: 12, background: '#FF8C00', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800, boxShadow: '0 0 0 1px #C96A00 inset' },
+  recycleBadge: { fontSize: 12, background: '#0E9F6E', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800, marginLeft: 6, boxShadow: '0 0 0 1px #0B7A55 inset' },
+  keiBadge: { fontSize: 12, background: '#5B21B6', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800, boxShadow: '0 0 0 1px #3F1583 inset' },
+  keiToggleOn: { borderColor: '#5B21B6', background: '#EFE7FB', color: '#3F1583', fontWeight: 700 },
   visitBadge: { fontSize: 11, color: '#6B6B63', fontWeight: 700, background: '#F0EFE9', borderRadius: 6, padding: '2px 6px' },
   visitBadgeOver: { color: '#fff', background: '#E63946' },
   dispatchVisitCount: { fontSize: 11, color: '#8A8A83' },
