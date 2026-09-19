@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-97';
+  window.__APP_VERSION__ = '2026-09-19-98';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1153,6 +1153,9 @@ function GenbaTracker() {
   const [todoType, setTodoType] = useState('task');
   const [editingTodoId, setEditingTodoId] = useState(null);
   const [editingTodoText, setEditingTodoText] = useState('');
+  // タスクのボタンが「やった・対応中・編集・伝達に移動」と縦に並んで多すぎたため、
+  // 現場スタッフが普段一番よく使う「やった」だけを大きく出し、残りは「⋯」を押した時だけ広げる。
+  const [expandedTodoActions, setExpandedTodoActions] = useState({});
   const [showTodoAddForm, setShowTodoAddForm] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // TODOタブの表示絞り込み。'all'（全部）/ 'unseen'（伝達の未確認のみ）/ 'task'（タスクのみ）/ 'gap'（情報不足のみ）。
@@ -3959,10 +3962,25 @@ function autoAssignTrucks() {
                             />
                           </label>
                         )}
-                        <button style={styles.todoDoneBtn} onClick={() => completeTodo(t.id)}>やった</button>
-                        <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '対応中を解除' : '対応中にする'}</button>
-                        {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
-                        <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
+                        {/* 普段いちばん押すのは「やった」だけなので、それだけを大きく目立たせる。
+                            「対応中」「編集」「伝達に移動」は使う頻度が低いので、⋯を押した時だけ出す。 */}
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <button style={styles.todoDoneBtnBig} onClick={() => completeTodo(t.id)}>✅ やった</button>
+                          <button
+                            style={styles.moreActionsBtn}
+                            onClick={() => setExpandedTodoActions((prev) => ({ ...prev, [t.id]: !prev[t.id] }))}
+                            title="その他の操作"
+                          >
+                            ⋯
+                          </button>
+                        </div>
+                        {expandedTodoActions[t.id] && (
+                          <React.Fragment>
+                            <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '🔧 対応中を解除' : '🔧 対応中にする'}</button>
+                            {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
+                            <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
+                          </React.Fragment>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5221,6 +5239,9 @@ const styles = {
   todoRow: { display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fff', border: '1px solid #EFEDE6', borderRadius: 10, padding: 12, marginBottom: 10 },
   todoMeta: { fontSize: 12, color: '#2A9D8F', marginTop: 4, cursor: 'pointer', fontWeight: 600 },
   todoDoneBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
+  // 現場スタッフが一番よく使う「やった」だけ大きく・押しやすくして、他の操作と迷わないようにする
+  todoDoneBtnBig: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: '0 1px 0 rgba(0,0,0,0.08)' },
+  moreActionsBtn: { background: '#fff', color: '#8A8A83', border: '1px solid #D8D6CC', borderRadius: 10, padding: '10px 12px', fontSize: 16, fontWeight: 800, cursor: 'pointer', lineHeight: 1 },
   autoTag: { fontSize: 10, background: '#FFE8A3', color: '#8A6D00', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   newTag: { fontSize: 10, background: '#E63946', color: '#fff', borderRadius: 5, padding: '2px 6px', fontWeight: 700, marginRight: 6 },
   todoRowUnseen: { borderLeft: '3px solid #E63946', background: '#FFF7F5' },
