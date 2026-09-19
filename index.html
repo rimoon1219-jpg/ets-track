@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-77';
+  window.__APP_VERSION__ = '2026-09-18-78';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3213,7 +3213,7 @@ function autoAssignTrucks() {
         </div>
       )}
 
-      {tab !== 'dispatch' && tab !== 'todo' && (
+      {tab !== 'dispatch' && tab !== 'todo' && tab !== 'invoice' && (
         <>
           <div style={styles.searchBox}>
             <SiteNameAutocomplete
