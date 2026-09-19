@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-90';
+  window.__APP_VERSION__ = '2026-09-19-91';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2182,19 +2182,27 @@ function autoAssignTrucks() {
   async function runBulkImport() {
     const lines = bulkImportText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
     if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
+    // 同じ現場名・同じ日付の予定がすでにある場合は重複として取り込まない（TimeTreeからの移行と、
+    // すでに手入力済みの新規現場が被って二重登録になるのを防ぐため）。現場名は完全一致のみで判定し、
+    // 似ているだけの別現場を誤ってスキップしないようにする。
+    const existingKeys = new Set(schedRecords.map((r) => `${(r.name || '').trim()}__${r.date || ''}`));
     const records = [];
+    let skipped = 0;
     lines.forEach((line) => {
       const cols = line.split('\t');
       const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, keiTruck, expectedVisits, staff, note] = cols;
       if (!name || name === '現場名') return; // ヘッダー行はスキップ
+      const trimmedName = name.trim();
+      const normalizedDate = normalizeDateStr(date);
+      if (existingKeys.has(`${trimmedName}__${normalizedDate}`)) { skipped++; return; }
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       records.push({
         id, createdAt: Date.now(),
-        name: name.trim(),
+        name: trimmedName,
         kumiten: (kumiten || 'その他').trim(),
         address: (address || '').trim(),
         area: (address ? extractArea(address) : ''),
-        date: normalizeDateStr(date),
+        date: normalizedDate,
         time: (time || '').trim(),
         status: (status || '新規').trim(),
         supervisorName: (supervisorName || '').trim(),
@@ -2208,7 +2216,10 @@ function autoAssignTrucks() {
         houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
       });
     });
-    if (records.length === 0) { showToast('取り込めるデータがありませんでした'); return; }
+    if (records.length === 0) {
+      showToast(skipped > 0 ? `全て重複のため取り込みませんでした（${skipped}件）` : '取り込めるデータがありませんでした');
+      return;
+    }
     setBulkImportBusy(true);
     // 以前は1件ずつ順番にサーバーへ送ってから最後にload()で全部読み直していたため、
     // 件数が多いほど「登録しました」が出るまでも、実際にカレンダーに出てくるまでも遅くなっていた。
@@ -2222,7 +2233,7 @@ function autoAssignTrucks() {
       count++;
     });
     setBulkImportBusy(false);
-    showToast(`${count}件取り込みました`);
+    showToast(skipped > 0 ? `${count}件取り込みました（重複${skipped}件はスキップ）` : `${count}件取り込みました`);
   }
 
   function copyUpdateTemplate() {
@@ -4974,7 +4985,7 @@ function autoAssignTrucks() {
               <button style={styles.closeBtn} onClick={() => setShowBulkImport(false)}>✕</button>
             </div>
             <div style={styles.exportHint}>
-              Excel/スプレッドシートで列を「現場名・工務店・住所・日付・時間・ステータス・監督名・監督電話・ガラ必須・軽トラ指定・想定回数・担当者・注意事項」の順に用意し、その範囲をコピーしてここに貼り付けてください（タブ区切り）。1行1件です。
+              Excel/スプレッドシートで列を「現場名・工務店・住所・日付・時間・ステータス・監督名・監督電話・ガラ必須・軽トラ指定・想定回数・担当者・注意事項」の順に用意し、その範囲をコピーしてここに貼り付けてください（タブ区切り）。1行1件です。同じ現場名・同じ日付の予定がすでにある場合は自動でスキップされ、重複登録されません。
             </div>
             <button style={{ ...styles.linkBtn, marginBottom: 8 }} onClick={copyImportTemplate}>見出し行をコピーする（Excelの1行目に貼り付け用）</button>
             <textarea
