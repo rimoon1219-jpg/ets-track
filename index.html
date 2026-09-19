@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-80';
+  window.__APP_VERSION__ = '2026-09-18-83';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1194,6 +1194,26 @@ function GenbaTracker() {
     // 裏側で最新データを取りに行き、取れ次第差し替える
     load();
   }, []);
+
+  // 端末の「戻る」操作（Androidの戻るボタン・スワイプなど）でうっかりアプリごと閉じてしまうのを防ぐ。
+  // 履歴を1つ積んでおき、戻る操作が来たら1回目はその場に留まって「もう一度押すと閉じます」と案内し、
+  // 2秒以内にもう一度戻る操作をした時だけ、本当に閉じる（アプリから出る）操作として扱う。
+  useEffect(() => {
+    try { history.pushState({ etsTrackGuard: true }, ''); } catch (e) { return; }
+    let lastBackAt = 0;
+    function handlePopState() {
+      const now = Date.now();
+      if (now - lastBackAt < 2000) {
+        return; // 2回目の戻る操作。そのまま閉じる・戻るに任せる
+      }
+      lastBackAt = now;
+      showToast('もう一度「戻る」を押すと閉じます');
+      try { history.pushState({ etsTrackGuard: true }, ''); } catch (e) {}
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   useEffect(() => { if (tab === 'dispatch') loadDispatch(dispatchDate); }, [tab, dispatchDate]);
 
   // 他のアプリ・タブに切り替えて、またこの画面に戻ってきた時に自動で最新データを取り直す
