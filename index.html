@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-78';
+  window.__APP_VERSION__ = '2026-09-18-79';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3278,11 +3278,6 @@ function autoAssignTrucks() {
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
           </div>
-          {!ryubeiUnlocked && (tab === 'sched' || tab === 'mgmt') && (
-            <div style={{ fontSize: 11.5, color: '#B0B0A6', marginTop: -6, marginBottom: 10 }}>
-              🔒 一括削除・一括インポートなどは社長さんと洋子さん専用です（請求書タブの🔒から開けます）
-            </div>
-          )}
 
           {!loading && filtered.length === 0 && <div style={styles.empty}>該当する現場がありません。</div>}
 
