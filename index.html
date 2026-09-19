@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-86';
+  window.__APP_VERSION__ = '2026-09-19-89';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2142,22 +2142,57 @@ function autoAssignTrucks() {
     }
   }
 
+  // 管理表の「これで何回目の収集か」を表示するための計算。
+  // TimeTreeから移した現場は、それより前に何回訪問したか分からないので、回数を出すと逆に間違った数字になる。
+  // 「新規」ステータスの記録がある現場だけ、そこを1回目として数えられる（新規の記録がなければ表示しない）。
+  function mgmtVisitNumber(record) {
+    if (!record || !record.name) return null;
+    const sameName = mgmtRecords
+      .filter((m) => (m.name || '').trim() === record.name.trim())
+      .sort((a, b) => {
+        const d = (a.date || '').localeCompare(b.date || '');
+        if (d !== 0) return d;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+    const firstNewIdx = sameName.findIndex((m) => m.status === '新規');
+    if (firstNewIdx === -1) return null; // 新規の記録が見つからない＝過去の回数が不明
+    const idx = sameName.findIndex((m) => m.id === record.id);
+    if (idx < firstNewIdx) return null; // 新規より前の記録（通常は起こらないが念のため）
+    return idx - firstNewIdx + 1;
+  }
+
+  // 予定表側の「これまで何回収集したか」バッジも同じ考え方にする。
+  // 以前は単純に管理表の件数をそのまま数えていたため、TimeTreeから移した現場（新規の記録がない）は
+  // 実際は何度も訪問しているのに「0回」と出て、逆に少なく・誤解を招く表示になっていた。
+  // 新規の記録が見つかる現場だけ数えて返し、見つからなければnull（バッジ自体を出さない）。
+  function mgmtReliableVisitCount(name) {
+    const sameName = mgmtRecords
+      .filter((m) => (m.name || '').trim() === (name || '').trim())
+      .sort((a, b) => {
+        const d = (a.date || '').localeCompare(b.date || '');
+        if (d !== 0) return d;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+    const firstNewIdx = sameName.findIndex((m) => m.status === '新規');
+    if (firstNewIdx === -1) return null;
+    return sameName.length - firstNewIdx;
+  }
+
   async function runBulkImport() {
     const lines = bulkImportText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
     if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
-    setBulkImportBusy(true);
-    let count = 0;
-    for (const line of lines) {
+    const records = [];
+    lines.forEach((line) => {
       const cols = line.split('\t');
       const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, expectedVisits, staff, note] = cols;
-      if (!name || name === '現場名') continue; // ヘッダー行はスキップ
+      if (!name || name === '現場名') return; // ヘッダー行はスキップ
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const record = {
+      records.push({
         id, createdAt: Date.now(),
         name: name.trim(),
         kumiten: (kumiten || 'その他').trim(),
         address: (address || '').trim(),
-        area: (address ? extractArea(address) : '') ,
+        area: (address ? extractArea(address) : ''),
         date: normalizeDateStr(date),
         time: (time || '').trim(),
         status: (status || '新規').trim(),
@@ -2169,17 +2204,23 @@ function autoAssignTrucks() {
         note: (note || '').trim(),
         // メルディアは一括取り込みでもハウスNoが未入力になりがちなので、他と同じく「対象外」を自動で入れておく
         houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
-      };
-      try {
-        await storage.set(`sched:${record.id}`, JSON.stringify(record));
-        count++;
-      } catch (e) { console.error(e); }
-    }
-    setBulkImportBusy(false);
-    showToast(`${count}件取り込みました`);
+      });
+    });
+    if (records.length === 0) { showToast('取り込めるデータがありませんでした'); return; }
+    setBulkImportBusy(true);
+    // 以前は1件ずつ順番にサーバーへ送ってから最後にload()で全部読み直していたため、
+    // 件数が多いほど「登録しました」が出るまでも、実際にカレンダーに出てくるまでも遅くなっていた。
+    // 先に画面（予定表・工程表）へその場で反映しておき、サーバーへの保存は裏で並行して進める形に変更。
+    records.forEach((record) => applyLocalRecordUpdate('sched', record));
     setShowBulkImport(false);
     setBulkImportText('');
-    load();
+    let count = 0;
+    await runWithLimit(records, 4, async (record) => {
+      await storage.set(`sched:${record.id}`, JSON.stringify(record));
+      count++;
+    });
+    setBulkImportBusy(false);
+    showToast(`${count}件取り込みました`);
   }
 
   function copyUpdateTemplate() {
@@ -2245,12 +2286,11 @@ function autoAssignTrucks() {
 
   async function runMgmtBulkImport() {
     if (!mgmtBulkImportPreview || mgmtBulkImportPreview.entries.length === 0) return;
-    setMgmtBulkImportBusy(true);
-    let count = 0;
-    for (const e of mgmtBulkImportPreview.entries) {
-      if (!e.name || !e.date) continue;
+    const records = [];
+    mgmtBulkImportPreview.entries.forEach((e) => {
+      if (!e.name || !e.date) return;
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const record = {
+      records.push({
         id, createdAt: Date.now(),
         name: e.name,
         kumiten: e.kumiten,
@@ -2261,18 +2301,22 @@ function autoAssignTrucks() {
         supervisorName: e.supervisorName || '',
         lineItems: [],
         photos: [],
-      };
-      try {
-        await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
-        count++;
-      } catch (err) { console.error(err); }
-    }
-    setMgmtBulkImportBusy(false);
-    showToast(`${count}件、管理表に登録しました`);
+      });
+    });
+    if (records.length === 0) { showToast('登録できるデータがありませんでした'); return; }
+    setMgmtBulkImportBusy(true);
+    // 予定表側と同じく、先に画面へ反映してからサーバー保存は並行して裏で進める
+    records.forEach((record) => applyLocalRecordUpdate('mgmt', record));
     setShowMgmtBulkImport(false);
     setMgmtBulkImportText('');
     setMgmtBulkImportPreview(null);
-    load();
+    let count = 0;
+    await runWithLimit(records, 4, async (record) => {
+      await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
+      count++;
+    });
+    setMgmtBulkImportBusy(false);
+    showToast(`${count}件、管理表に登録しました`);
   }
 
   async function runBulkUpdate() {
@@ -2317,16 +2361,24 @@ function autoAssignTrucks() {
     const source = tab === 'sched' ? schedRecords : mgmtRecords;
     const record = source.find((r) => r.id === id);
     if (!window.confirm(`「${record ? record.name : 'この現場'}」を削除しますか？（あとでゴミ箱から復元できます）`)) return;
+    // 以前は「ゴミ箱へ保存」→「本体を削除」を順番に待ってから画面を更新していたため、
+    // 通信のたびに待ち時間が積み重なって「削除しました」と出るまで遅く感じられた。
+    // 先に画面から消してしまい（ゴミ箱からいつでも復元できるので安全）、
+    // ゴミ箱への保存と本体削除の2つの通信は同時並行で進める。
+    lastLocalWriteRef.current = Date.now();
+    if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
+    else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
     try {
-      if (record) {
-        await storage.set(`trash:${id}`, JSON.stringify({ ...record, _type: prefix, deletedAt: new Date().toISOString() }), true);
-      }
-      const result = await storage.delete(`${prefix}:${id}`, true);
-      showToast(result.queued ? '削除を保留しました。電波が戻り次第、自動的に反映されます' : '削除しました（ゴミ箱に30日間残ります）');
-      lastLocalWriteRef.current = Date.now();
-      if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
-      else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
-    } catch (e) { showToast('削除に失敗しました'); }
+      const trashPromise = record
+        ? storage.set(`trash:${id}`, JSON.stringify({ ...record, _type: prefix, deletedAt: new Date().toISOString() }), true)
+        : Promise.resolve({ queued: false });
+      const deletePromise = storage.delete(`${prefix}:${id}`, true);
+      const [, deleteResult] = await Promise.all([trashPromise, deletePromise]);
+      showToast(deleteResult.queued ? '削除を保留しました。電波が戻り次第、自動的に反映されます' : '削除しました（ゴミ箱に30日間残ります）');
+    } catch (e) {
+      showToast('削除に失敗しました。もう一度お試しください');
+      load(); // 失敗した場合は一覧をサーバーの状態に戻す
+    }
   }
 
   async function loadTrash() {
@@ -3365,7 +3417,8 @@ function autoAssignTrucks() {
                     {tab === 'sched' && r.garaRequired && <span style={styles.garaBadge}>🧺 ガラ袋必須</span>}
                     {tab === 'sched' && GARA_RECYCLE_OK.includes(r.kumiten) && <span style={styles.recycleBadge}>♻️ リサイクルガラ袋</span>}
                     {tab === 'sched' && (() => {
-                      const count = mgmtRecords.filter((m) => m.name.trim() === r.name.trim()).length;
+                      const count = mgmtReliableVisitCount(r.name);
+                      if (count === null) return null; // 新規の記録がなく、正しい回数が分からない現場は出さない
                       const isSingle = r.status === '単発';
                       const expected = isSingle ? 0 : (Number(r.expectedVisits) || 0);
                       const over = expected > 0 && count > expected;
@@ -3380,6 +3433,13 @@ function autoAssignTrucks() {
                     {r.area && <span style={styles.areaTag}>{r.area}</span>}
                     <span style={styles.dateText}>{r.date}</span>
                     {r.staff && <span style={styles.staffInline}>・{r.staff}</span>}
+                    {tab === 'mgmt' && (() => {
+                      const visitNo = mgmtVisitNumber(r);
+                      // 新規の記録が見つかっていて回数が分かる現場だけ、右端に独立して出す。
+                      // 左側の並び（ステータス・工務店・日付など）とは別枠にすることで、
+                      // 出る／出ないでカード同士の見た目がガタつかないようにする。
+                      return visitNo ? <span style={{ ...styles.visitBadge, marginLeft: 'auto' }}>{visitNo}回目</span> : null;
+                    })()}
                   </div>
                   <div style={styles.cardName}>{r.name}</div>
                   {tab === 'sched' && r.address && (
