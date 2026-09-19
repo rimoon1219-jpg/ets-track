@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-102';
+  window.__APP_VERSION__ = '2026-09-20-106';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -370,6 +370,18 @@ const storage = {
     } catch (e) {
       const listRes = await this.list(prefix);
       return fetchWithLimit(listRes.keys || [], 8);
+    }
+  },
+  // listWithValuesはキーを捨てて中身だけ返すが、geocodeキャッシュはキー（住所）自体が意味を持つデータなので、
+  // キー付きのまま欲しい時はこちらを使う（1回のサーバー読み込みで済ませ、現場ごとに問い合わせずに済ませるため）
+  async listWithKeys(prefix) {
+    try {
+      const res = await fetch(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`);
+      const data = await res.json();
+      if (!data.items) throw new Error('listWithValues not supported');
+      return data.items;
+    } catch (e) {
+      return [];
     }
   },
   async uploadPhoto(dataUrl, filename, recordId, staff, recordPrefix) {
@@ -815,6 +827,50 @@ function geocodeQuery(address) {
     .trim();
 }
 
+// 2地点間の直線距離（km）。配車の自動割り振りで、同じ地域グループの中でも
+// 実際に近い現場同士をまとめて並べるために使う。
+function haversineKm(a, b) {
+  if (!a || !b) return Infinity;
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+function coordFromAddressStr(address) {
+  const [latStr, lngStr] = (address || '').split(/[,、]/);
+  const lat = parseFloat(latStr), lng = parseFloat(lngStr);
+  return (isNaN(lat) || isNaN(lng)) ? null : { lat, lng };
+}
+
+// グループ内の現場を、実際の距離が近いもの同士がまとまるように並べ替える
+// （貪欲法：直前の現場から一番近いものを次々つないでいく。位置が分からない現場は末尾にそのまま残す）
+function sortByProximity(sites, geocodeCache, isCoordOnlyAddress, geocodeQuery) {
+  const withLoc = sites.map((s) => {
+    if (!s.address) return { site: s, loc: null };
+    const loc = isCoordOnlyAddress(s.address) ? coordFromAddressStr(s.address) : geocodeCache[geocodeQuery(s.address)];
+    return { site: s, loc: loc || null };
+  });
+  const located = withLoc.filter((x) => x.loc);
+  const unlocated = withLoc.filter((x) => !x.loc).map((x) => x.site);
+  if (located.length <= 1) return [...located.map((x) => x.site), ...unlocated];
+  const remaining = located.slice();
+  const ordered = [remaining.shift()];
+  while (remaining.length > 0) {
+    const last = ordered[ordered.length - 1];
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((r, i) => {
+      const d = haversineKm(last.loc, r.loc);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    });
+    ordered.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return [...ordered.map((x) => x.site), ...unlocated];
+}
+
 function markerIcon(color) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="${color}" stroke="#fff" stroke-width="3"/></svg>`;
   return { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new window.google.maps.Size(28, 28) };
@@ -1099,6 +1155,9 @@ function GenbaTracker() {
   const [dumpOnlyCount, setDumpOnlyCount] = useState(0);
   const [assignments, setAssignments] = useState({}); // siteId -> truck id string ('R1','KEI','D1'...) or '' for unassigned
   const [extraSiteIds, setExtraSiteIds] = useState([]); // 他の日の予定から追加した現場ID
+  const [nearbyHints, setNearbyHints] = useState(null); // 前後の日で近い現場の候補（未計算はnull）
+  const [nearbyHintsLoading, setNearbyHintsLoading] = useState(false);
+  const [assignmentsUndoSnapshot, setAssignmentsUndoSnapshot] = useState(null); // 自動割り振り直前の状態（「元に戻す」用、1回分だけ）
   const [showAddExtraSite, setShowAddExtraSite] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -1280,6 +1339,7 @@ function GenbaTracker() {
   }, []);
 
   useEffect(() => { if (tab === 'dispatch') loadDispatch(dispatchDate); }, [tab, dispatchDate]);
+  useEffect(() => { setNearbyHints(null); setAssignmentsUndoSnapshot(null); }, [dispatchDate]); // 日付を変えたら前後日程の候補や「元に戻す」もリセット
 
   // 他のアプリ・タブに切り替えて、またこの画面に戻ってきた時に自動で最新データを取り直す
   // （フォームを開いて入力中のときは邪魔しないよう対象外。短時間の連続実行は間引く）
@@ -1351,19 +1411,32 @@ function GenbaTracker() {
 
       const bounds = new window.google.maps.LatLngBounds();
       const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+      // 以前は現場を1件ずつ順番に（サーバーへのキャッシュ確認も含めて）問い合わせていたため、
+      // 件数が多い日ほど地図が表示されるまで待たされていた。
+      // 先にキャッシュ済みの座標をまとめて1回のサーバー読み込みで取得しておき、
+      // キャッシュにない分だけGoogleへの問い合わせを並行して行うことで大幅に短縮する。
+      const geocodeCache = {};
+      try {
+        const raw = await storage.listWithKeys('geocode:');
+        raw.forEach((it) => {
+          try { geocodeCache[it.key.slice('geocode:'.length)] = JSON.parse(it.value); } catch (e) {}
+        });
+      } catch (e) { /* 取得に失敗しても現場ごとの問い合わせにフォールバックする */ }
+      if (cancelled) return;
+
       let placed = 0;
-      for (const s of daySites) {
-        if (!s.address) continue;
+      await runWithLimit(daySites.filter((s) => s.address), 5, async (s) => {
+        if (cancelled) return;
         let loc = null;
         if (isCoordOnlyAddress(s.address)) {
           // 座標だけが分かっている現場は、Googleに問い合わせず座標をそのまま使う
           const [latStr, lngStr] = s.address.split(/[,、]/);
           loc = { lat: parseFloat(latStr), lng: parseFloat(lngStr) };
         } else {
-          loc = await geocodeAddress(geocodeQuery(s.address));
+          const q = geocodeQuery(s.address);
+          loc = geocodeCache[q] || await geocodeAddress(q);
         }
-        if (cancelled) return;
-        if (!loc) continue;
+        if (cancelled || !loc) return;
         const truckId = assignments[s.id];
         const idx = opts.findIndex((o) => o.id === truckId);
         const color = idx >= 0 ? TRUCK_COLORS[idx % TRUCK_COLORS.length] : '#9A9A94';
@@ -1376,9 +1449,10 @@ function GenbaTracker() {
         mapMarkersRef.current.push(marker);
         bounds.extend(loc);
         placed++;
-      }
+      });
+      if (cancelled) return;
       if (placed > 0) map.fitBounds(bounds);
-      if (!cancelled) setMapStatus('ready');
+      setMapStatus('ready');
     }
     build();
     return () => { cancelled = true; };
@@ -1888,51 +1962,138 @@ function zoneRuleForDate(dateStr) {
   return ZONE_RULES.find((r) => r.days.includes(d.getDay())) || null;
 }
 
-function autoAssignTrucks() {
+async function autoAssignTrucks() {
     const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
     if (opts.length === 0) { showToast('トラックがありません'); return; }
     const counts = {};
     opts.forEach((o) => { counts[o.id] = 0; });
     Object.values(assignments).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
 
-    // 地域ごとにまとめる（曜日のエリアルールに合うものは、細かい地域名が違っても同じゾーンとしてまとめる）
-    // 住所不明で地域が分からない現場（未分類）は、誤った割り振りを避けるため自動割り振りの対象外にする
-    const zoneRule = zoneRuleForDate(dispatchDate);
-    const areaOrder = [];
-    const areas = {};
+    // 地域名（○○区△△町など）はあくまでラベルであって、隣り合う地域名が実際には
+    // すぐ近くにあることも多いため、地域名で区切らずその日の対象現場全体を
+    // 実際の距離が近い順に1本のルートとしてつなげ、それを台数分に区切って割り振る。
+    // 住所不明で場所が分からない現場（未分類）は、誤った割り振りを避けるため自動割り振りの対象外にする
+    const eligible = [];
     let skippedUnknown = 0;
     daySites.forEach((s) => {
       if (assignments[s.id]) return; // すでに割り振り済みはそのまま
       const rawArea = s.area || extractArea(s.address) || '未分類';
       if (rawArea === '未分類') { skippedUnknown++; return; } // 場所が分からないので対象外
-      const zoneMatch = zoneRule && zoneRule.keywords.find((kw) => rawArea.includes(kw));
-      const groupKey = zoneMatch ? zoneRule.name : rawArea;
-      if (!areas[groupKey]) { areas[groupKey] = []; areaOrder.push(groupKey); }
-      areas[groupKey].push(s);
+      eligible.push(s);
     });
 
-    const unassignedTotal = areaOrder.reduce((sum, a) => sum + areas[a].length, 0);
-    const target = Math.max(1, Math.ceil(unassignedTotal / opts.length)); // 1台あたりの目安件数
+    // まずキャッシュ済みの座標をまとめて取得し、キャッシュにない分だけGoogleへ問い合わせる。
+    showToast('位置情報を確認して割り振り中…');
+    const geocodeCache = {};
+    try {
+      const raw = await storage.listWithKeys('geocode:');
+      raw.forEach((it) => { try { geocodeCache[it.key.slice('geocode:'.length)] = JSON.parse(it.value); } catch (e) {} });
+    } catch (e) { /* 取得に失敗しても順番はそのまま続行する */ }
+    const needGeocode = eligible.filter((s) => s.address && !isCoordOnlyAddress(s.address) && !geocodeCache[geocodeQuery(s.address)]);
+    if (needGeocode.length > 0) {
+      await runWithLimit(needGeocode, 5, async (s) => {
+        const q = geocodeQuery(s.address);
+        const loc = await geocodeAddress(q);
+        if (loc) geocodeCache[q] = loc;
+      });
+    }
+    // 地域名の区切りを気にせず、その日の対象現場全体を近い順に1本のルートにする
+    const ordered = sortByProximity(eligible, geocodeCache, isCoordOnlyAddress, geocodeQuery);
+
+    const target = Math.max(1, Math.ceil(ordered.length / opts.length)); // 1台あたりの目安件数
 
     const next = { ...assignments };
     let truckIdx = 0;
-    areaOrder.forEach((area) => {
-      const sites = areas[area];
+    ordered.forEach((s) => {
       // 今のトラックがすでに目安件数に達していて、次のトラックがまだ残っていれば進める
-      // （地域を分割はしない＝同じ地域は必ず同じトラックにまとめる）
+      // （ルート順につないでいるので、区切った先も自然と近い現場同士でまとまる）
       while (truckIdx < opts.length - 1 && counts[opts[truckIdx].id] >= target) {
         truckIdx++;
       }
       const truckId = opts[truckIdx].id;
-      sites.forEach((s) => { next[s.id] = truckId; counts[truckId]++; });
+      next[s.id] = truckId;
+      counts[truckId]++;
     });
 
+    setAssignmentsUndoSnapshot(assignments); // 実行前の状態を1回分だけ覚えておく（元に戻す用）
     setAssignments(next);
     saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
-    const zoneLabel = zoneRule ? `${zoneRule.name}の考え方に沿って` : '地域のまとまりを優先して';
     showToast(skippedUnknown > 0
-      ? `${zoneLabel}割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
-      : `${zoneLabel}割り振りました（手動でも調整できます）`);
+      ? `距離が近い順に割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
+      : `距離が近い順に割り振りました（手動でも調整できます）`);
+  }
+
+  function undoAutoAssign() {
+    if (!assignmentsUndoSnapshot) return;
+    setAssignments(assignmentsUndoSnapshot);
+    saveDispatch(assignmentsUndoSnapshot, regularTruckCount, includeKei, dumpOnlyCount);
+    setAssignmentsUndoSnapshot(null);
+    showToast('自動割り振り前の状態に戻しました');
+  }
+
+  function resetAllAssignments() {
+    if (Object.keys(assignments).length === 0) { showToast('割り振りはまだありません'); return; }
+    if (!window.confirm('この日の割り振りを全て空に戻します。よろしいですか？')) return;
+    setAssignmentsUndoSnapshot(assignments); // リセットも1回分だけ元に戻せるようにしておく
+    setAssignments({});
+    saveDispatch({}, regularTruckCount, includeKei, dumpOnlyCount);
+    showToast('割り振りを全てリセットしました');
+  }
+
+  const NEARBY_KM_THRESHOLD = 10; // これ以内なら「近い」として教える（洋子さんの指定）
+
+  // 今日の現場と、前日・翌日の現場を距離で比較し、10km以内に近い現場があれば教える。
+  // すぐるが曜日ルールで組んだスケジュールに含まれていない「気づいていないかもしれない近場」を
+  // 見つけるための参考情報であって、自動で動かすものではない（最終判断は本人・洋子さんに任せる）。
+  async function findNearbyAdjacentSites() {
+    setNearbyHintsLoading(true);
+    try {
+      const yesterday = addDays(dispatchDate, -1);
+      const tomorrow = addDays(dispatchDate, 1);
+      const todaySet = new Set(daySites.map((s) => s.id));
+      const adjacentSites = schedRecords.filter((r) => (r.date === yesterday || r.date === tomorrow) && !todaySet.has(r.id));
+      if (adjacentSites.length === 0) { setNearbyHints([]); return; }
+
+      const geocodeCache = {};
+      try {
+        const raw = await storage.listWithKeys('geocode:');
+        raw.forEach((it) => { try { geocodeCache[it.key.slice('geocode:'.length)] = JSON.parse(it.value); } catch (e) {} });
+      } catch (e) { /* 個別取得にフォールバック */ }
+
+      const allTargets = [...daySites, ...adjacentSites];
+      const needGeocode = allTargets.filter((s) => s.address && !isCoordOnlyAddress(s.address) && !geocodeCache[geocodeQuery(s.address)]);
+      await runWithLimit(needGeocode, 5, async (s) => {
+        const q = geocodeQuery(s.address);
+        const loc = await geocodeAddress(q);
+        if (loc) geocodeCache[q] = loc;
+      });
+
+      const locOf = (s) => {
+        if (!s.address) return null;
+        return isCoordOnlyAddress(s.address) ? coordFromAddressStr(s.address) : geocodeCache[geocodeQuery(s.address)];
+      };
+
+      const hints = [];
+      daySites.forEach((today) => {
+        const todayLoc = locOf(today);
+        if (!todayLoc) return;
+        adjacentSites.forEach((other) => {
+          const otherLoc = locOf(other);
+          if (!otherLoc) return;
+          const km = haversineKm(todayLoc, otherLoc);
+          if (km <= NEARBY_KM_THRESHOLD) {
+            hints.push({ today, other, km, when: other.date === yesterday ? '前日' : '翌日' });
+          }
+        });
+      });
+      hints.sort((a, b) => a.km - b.km);
+      setNearbyHints(hints);
+    } catch (e) {
+      showToast('近くの現場の確認に失敗しました');
+      setNearbyHints([]);
+    } finally {
+      setNearbyHintsLoading(false);
+    }
   }
 
   function saveCollectNote(value) {
@@ -3742,6 +3903,32 @@ function autoAssignTrucks() {
             <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowAddExtraSite(true)}>＋ 他の日の現場を追加</button>
             <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowDispatchMap(true)}>🗺️ 地図で見る</button>
           </div>
+          <div style={styles.toolRow}>
+            {assignmentsUndoSnapshot && (
+              <button style={styles.linkBtnSmall} onClick={undoAutoAssign}>↩️ 元に戻す</button>
+            )}
+            <button style={{ ...styles.linkBtnSmall, marginLeft: assignmentsUndoSnapshot ? 16 : 0, color: '#E63946' }} onClick={resetAllAssignments}>
+              🗑️ 割り振りを全てリセット
+            </button>
+          </div>
+          <div style={styles.toolRow}>
+            <button style={styles.linkBtnSmall} onClick={findNearbyAdjacentSites} disabled={nearbyHintsLoading}>
+              {nearbyHintsLoading ? '確認中…' : '📍 前後の日で近い現場を確認'}
+            </button>
+          </div>
+          {nearbyHints && (
+            nearbyHints.length === 0 ? (
+              <div style={{ ...styles.empty, padding: '8px 0' }}>前後の日に{NEARBY_KM_THRESHOLD}km以内の現場はありませんでした</div>
+            ) : (
+              <div style={{ marginBottom: 12 }}>
+                {nearbyHints.map((h, i) => (
+                  <div key={i} style={styles.nearbyHintRow}>
+                    📍 <b>{h.other.name}</b>（{h.when}・{h.other.date}）が今日の<b>{h.today.name}</b>から約{h.km.toFixed(1)}kmです
+                  </div>
+                ))}
+              </div>
+            )
+          )}
 
           {Object.keys(byArea).length === 0 && <div style={styles.empty}>この日の予定がまだ登録されていません。</div>}
 
@@ -5405,6 +5592,7 @@ const styles = {
   // dispatch
   dispatchSummary: { display: 'flex', justifyContent: 'space-between', background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13 },
   satHint: { fontSize: 12, color: '#457B9D', marginTop: 6 },
+  nearbyHintRow: { fontSize: 12, color: '#5A5A54', background: '#F5F4EF', border: '1px solid #E5E3DC', borderRadius: 8, padding: '6px 10px', marginBottom: 6 },
   stepperRow: { display: 'flex', alignItems: 'center', gap: 12 },
   stepperBtn: { width: 36, height: 36, borderRadius: 8, border: '1px solid #E5E3DC', background: '#fff', fontSize: 18, cursor: 'pointer' },
   stepperValue: { fontSize: 15, fontWeight: 700, minWidth: 40, textAlign: 'center' },
