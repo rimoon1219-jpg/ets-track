@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-98';
+  window.__APP_VERSION__ = '2026-09-19-100';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1705,7 +1705,14 @@ function GenbaTracker() {
     });
     const newPhotos = uploadResults.filter(Boolean);
     if (newPhotos.length === 0) { showToast('写真の添付に失敗しました'); return; }
-    const updated = { ...match, photos: [...(match.photos || []), ...newPhotos] };
+    // 他のスタッフが直前・同時に同じ現場へ写真を追加しているかもしれないので、サーバーの最新状態を
+    // 取り直してから合体する（同時に追加した相手の写真が消えてしまう事故を防ぐため）
+    let latest = match;
+    try {
+      const fresh = await storage.get(`sched:${match.id}`, true);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    const updated = { ...latest, photos: [...(latest.photos || []), ...newPhotos] };
     await storage.set(`sched:${match.id}`, JSON.stringify(updated), true);
     applyLocalRecordUpdate('sched', updated);
     showToast('工程表の写真を添付しました');
@@ -2122,6 +2129,19 @@ function autoAssignTrucks() {
       extraPhotos = uploadResults.filter(Boolean);
       if (queuedCount > 0) showToast(`一部の写真（${queuedCount}枚）は保留中です。あとで自動的に追加されます`);
     }
+    if (editingId) {
+      // 編集フォームを開いている間に他のスタッフが同じ現場へ写真を追加しているかもしれない。
+      // このフォーム自体は写真を削除する手段がないので、保存直前にサーバーの最新の写真一覧を
+      // 取り直してベースにし、そこにこの端末で新しく撮った分だけ追加する
+      // （フォームを開いた時点の古い写真一覧で丸ごと上書きして消してしまう事故を防ぐため）
+      try {
+        const fresh = await storage.get(`${prefix}:${id}`, true);
+        if (fresh && fresh.value) {
+          const freshRecord = JSON.parse(fresh.value);
+          record = { ...record, photos: freshRecord.photos || [] };
+        }
+      } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    }
     if (extraPhotos.length > 0) {
       record = { ...record, photos: [...(record.photos || []), ...extraPhotos] };
     }
@@ -2239,20 +2259,18 @@ function autoAssignTrucks() {
       showToast(skipped > 0 ? `全て重複のため取り込みませんでした（${skipped}件）` : '取り込めるデータがありませんでした');
       return;
     }
-    setBulkImportBusy(true);
-    // 以前は1件ずつ順番にサーバーへ送ってから最後にload()で全部読み直していたため、
-    // 件数が多いほど「登録しました」が出るまでも、実際にカレンダーに出てくるまでも遅くなっていた。
-    // 先に画面（予定表・工程表）へその場で反映しておき、サーバーへの保存は裏で並行して進める形に変更。
+    // 以前は「サーバーへの保存が全部終わるまで」件数入りのトースト（＝完了の合図）を待たせていたため、
+    // 件数が多いほど画面にドット（取り込み中…）が出てから実際に「◯件取り込みました」と出るまでが長く感じた。
+    // 画面（予定表・工程表）へはこの時点でもう反映済みなので、サーバー保存の完了を待たずに先に完了を知らせ、
+    // 保存自体は裏で並行して進める（万が一失敗した分は自動リトライされる）。
     records.forEach((record) => applyLocalRecordUpdate('sched', record));
     setShowBulkImport(false);
     setBulkImportText('');
-    let count = 0;
-    await runWithLimit(records, 4, async (record) => {
-      await storage.set(`sched:${record.id}`, JSON.stringify(record));
-      count++;
-    });
     setBulkImportBusy(false);
-    showToast(skipped > 0 ? `${count}件取り込みました（重複${skipped}件はスキップ）` : `${count}件取り込みました`);
+    showToast(skipped > 0 ? `${records.length}件取り込みました（重複${skipped}件はスキップ）` : `${records.length}件取り込みました`);
+    runWithLimit(records, 6, async (record) => {
+      await storage.set(`sched:${record.id}`, JSON.stringify(record));
+    }).catch(() => {});
   }
 
   function copyUpdateTemplate() {
@@ -2336,19 +2354,17 @@ function autoAssignTrucks() {
       });
     });
     if (records.length === 0) { showToast('登録できるデータがありませんでした'); return; }
-    setMgmtBulkImportBusy(true);
-    // 予定表側と同じく、先に画面へ反映してからサーバー保存は並行して裏で進める
+    // 予定表側と同じく、先に画面へ反映し、完了の合図（トースト）もサーバー保存を待たずにすぐ出す。
+    // 保存自体は裏で並行して進める（万が一失敗した分は自動リトライされる）。
     records.forEach((record) => applyLocalRecordUpdate('mgmt', record));
     setShowMgmtBulkImport(false);
     setMgmtBulkImportText('');
     setMgmtBulkImportPreview(null);
-    let count = 0;
-    await runWithLimit(records, 4, async (record) => {
-      await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
-      count++;
-    });
     setMgmtBulkImportBusy(false);
-    showToast(`${count}件、管理表に登録しました`);
+    showToast(`${records.length}件、管理表に登録しました`);
+    runWithLimit(records, 6, async (record) => {
+      await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
+    }).catch(() => {});
   }
 
   async function runBulkUpdate() {
@@ -2588,11 +2604,19 @@ function autoAssignTrucks() {
     });
     if (queuedCount > 0) showToast(`一部の写真（${queuedCount}枚）は保留中です。あとで自動的に追加されます`);
     const newPhotos = uploadResults.filter(Boolean);
-    const photos = [...(record.photos || []), ...newPhotos];
-    const updated = { ...record, photos };
+    // 他のスタッフが直前・同時に同じ現場へ写真を追加しているかもしれないので、手元の（古いかもしれない）
+    // データにそのまま追加するのではなく、上書き直前にサーバーの最新状態を取り直してから合体する
+    // （同時に追加した相手の写真が消えてしまう事故を防ぐため）
+    let latest = record;
+    try {
+      const fresh = await storage.get(`${prefix}:${id}`, true);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    const photos = [...(latest.photos || []), ...newPhotos];
+    const updated = { ...latest, photos };
     await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
+    applyLocalRecordUpdate(prefix, updated);
     showToast(`写真を${newPhotos.length}枚追加しました`);
-    load();
   }
 
   function buildExportText() {
