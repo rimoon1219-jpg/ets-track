@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-93';
+  window.__APP_VERSION__ = '2026-09-19-97';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2066,6 +2066,22 @@ function autoAssignTrucks() {
   async function saveRecord() {
     if (!form.name.trim()) { showToast('現場名を入力してください'); return; }
     setSaving(true);
+    // 新規登録の直前にサーバーの最新データを取り直して重複チェックする。
+    // 端末のローカルデータ（schedRecords）だけを見ると、他の端末やパソコンで少し前に
+    // 登録されたばかりの現場がまだ反映されておらず、重複に気づけないことがあるため
+    // （例：パソコンで一括インポートした直後、スマホ側はまだ古いデータのまま）。
+    if (tab === 'sched' && !editingId) {
+      try {
+        const freshSched = await storage.listWithValues('sched:');
+        const key = `${form.name.trim()}__${form.date || ''}`;
+        const dup = freshSched.find((r) => `${(r.name || '').trim()}__${r.date || ''}` === key);
+        if (dup) {
+          const when = dup.createdAt ? formatDateTime(dup.createdAt) : '不明';
+          const proceed = window.confirm(`「${form.name.trim()}」（${form.date}）はすでに登録されているようです（工務店：${dup.kumiten || '未設定'}／担当：${dup.staff || '不明'}／登録：${when}）。\nそれでも新規登録しますか？`);
+          if (!proceed) { setSaving(false); return; }
+        }
+      } catch (e) { /* 確認に失敗しても登録自体は止めない */ }
+    }
     const prefix = tab === 'sched' ? 'sched' : 'mgmt';
     const id = editingId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const { _moveFromId, ...formRest } = form;
@@ -2391,6 +2407,46 @@ function autoAssignTrucks() {
     } catch (e) {
       showToast('削除に失敗しました。もう一度お試しください');
       load(); // 失敗した場合は一覧をサーバーの状態に戻す
+    }
+  }
+
+  // 重複登録モーダルの「これを削除」用。重複チェックは常に予定表(sched)のデータが対象のため、
+  // モーダルを開いた時点でタブが管理表などに切り替わっていても誤って管理表側を削除しないよう、
+  // 汎用のdeleteRecord()（現在のタブに依存）は使わずprefixを'sched'に固定する。
+  async function deleteFromDuplicateGroup(r) {
+    if (!window.confirm(`「${r.name}」（${r.date}）を削除しますか？（あとでゴミ箱から復元できます）`)) return;
+    lastLocalWriteRef.current = Date.now();
+    setSchedRecords((prev) => prev.filter((x) => x.id !== r.id));
+    try {
+      const [, deleteResult] = await Promise.all([
+        storage.set(`trash:${r.id}`, JSON.stringify({ ...r, _type: 'sched', deletedAt: new Date().toISOString() }), true),
+        storage.delete(`sched:${r.id}`, true),
+      ]);
+      showToast(deleteResult.queued ? '削除を保留しました。電波が戻り次第、自動的に反映されます' : '削除しました（ゴミ箱に30日間残ります）');
+    } catch (e) {
+      showToast('削除に失敗しました。もう一度お試しください');
+      load();
+    }
+  }
+
+  // 重複登録モーダルの「これを残して他を削除」用。個別に確認ダイアログを出さず、
+  // グループ内の選んだ1件以外をまとめてゴミ箱送りにする（30日間は復元可能）。
+  async function keepOnlyInDuplicateGroup(group, keepId) {
+    const others = group.filter((r) => r.id !== keepId);
+    if (others.length === 0) return;
+    if (!window.confirm(`「${group[0].name}」（${group[0].date}）の重複${others.length}件を削除して、選んだ1件だけ残します。よろしいですか？（削除した分はゴミ箱から30日間復元できます）`)) return;
+    lastLocalWriteRef.current = Date.now();
+    const ids = others.map((r) => r.id);
+    setSchedRecords((prev) => prev.filter((r) => !ids.includes(r.id)));
+    try {
+      await Promise.all(others.map((r) => Promise.all([
+        storage.set(`trash:${r.id}`, JSON.stringify({ ...r, _type: 'sched', deletedAt: new Date().toISOString() }), true),
+        storage.delete(`sched:${r.id}`, true),
+      ])));
+      showToast(`${others.length}件を削除しました（ゴミ箱に30日間残ります）`);
+    } catch (e) {
+      showToast('削除に失敗しました。もう一度お試しください');
+      load();
     }
   }
 
@@ -3430,23 +3486,26 @@ function autoAssignTrucks() {
                     {tab === 'sched' && r.keiTruckRequired && <span style={styles.keiBadge}>🚚 軽トラ指定</span>}
                     {tab === 'sched' && r.garaRequired && <span style={styles.garaBadge}>🧺 ガラ袋必須</span>}
                     {tab === 'sched' && GARA_RECYCLE_OK.includes(r.kumiten) && <span style={styles.recycleBadge}>♻️ リサイクルガラ袋</span>}
+                    <span style={styles.badge}><span style={{ ...styles.dot, background: statusColor(statusList, r.status) }} />{r.status}</span>
+                    <span style={styles.kumitenTag}>{r.kumiten}</span>
+                    {r.area && <span style={styles.areaTag}>{r.area}</span>}
+                    <span style={styles.dateText}>{r.date}</span>
+                    {r.staff && <span style={styles.staffInline}>・{r.staff}</span>}
                     {tab === 'sched' && (() => {
+                      // 回数バッジは以前、時間・軽トラ・ガラ袋バッジのすぐ後ろ（左はじ寄り）に出ていて
+                      // 見つけにくかったので、管理表の「◯回目」と同じく右端（日付・担当者の後ろ）に
+                      // まとめて出すようにした。
                       const count = mgmtReliableVisitCount(r.name);
                       if (count === null) return null; // 新規の記録がなく、正しい回数が分からない現場は出さない
                       const isSingle = r.status === '単発';
                       const expected = isSingle ? 0 : (Number(r.expectedVisits) || 0);
                       const over = expected > 0 && count > expected;
                       return (
-                        <span style={{ ...styles.visitBadge, ...(over ? styles.visitBadgeOver : {}) }}>
+                        <span style={{ ...styles.visitBadge, marginLeft: 'auto', ...(over ? styles.visitBadgeOver : {}) }}>
                           {expected > 0 ? `${count}/${expected}` : `${count}回`}
                         </span>
                       );
                     })()}
-                    <span style={styles.badge}><span style={{ ...styles.dot, background: statusColor(statusList, r.status) }} />{r.status}</span>
-                    <span style={styles.kumitenTag}>{r.kumiten}</span>
-                    {r.area && <span style={styles.areaTag}>{r.area}</span>}
-                    <span style={styles.dateText}>{r.date}</span>
-                    {r.staff && <span style={styles.staffInline}>・{r.staff}</span>}
                     {tab === 'mgmt' && (() => {
                       const visitNo = mgmtVisitNumber(r);
                       // 新規の記録が見つかっていて回数が分かる現場だけ、右端に独立して出す。
@@ -3546,9 +3605,22 @@ function autoAssignTrucks() {
                     {tab === 'sched' && <button style={styles.handoffBtn} onClick={() => handoffToMgmt(r)}>→ 今日の管理表を作成</button>}
                     <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 移動（1週間後）</button>
                     <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 移動（連棟・数日後）</button>
+                    {/* 写真を貼るのは主に工程表で使う現場だけで、貼らない現場の方が多い。
+                        写真が0枚のうちは専用の帯（枠線・余白つき）を出さず、他のボタンと同じ
+                        1行に収まる小さいボタンにして、縦のスペースを取らないようにする。 */}
+                    {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length === 0 && (
+                      <label style={styles.dupBtn}>
+                        📷 写真を追加
+                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (file) { const staffName = window.prompt('担当者名を入力してください', deviceStaff || r.staff || ''); if (staffName !== null) addPhotoToMgmt(r.id, staffName, file); }
+                          e.target.value = '';
+                        }} />
+                      </label>
+                    )}
                   </div>
                 </div>
-                {(tab === 'sched' || tab === 'mgmt') && (
+                {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
                       <div key={i} style={styles.photoItem}><img src={p.img} alt="" style={styles.threadImg} /><span style={styles.photoStaff}>{p.staff}</span></div>
@@ -4912,13 +4984,22 @@ function autoAssignTrucks() {
               {findDuplicateGroups().map((group, gi) => (
                 <div key={gi} style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #EFEDE6' }}>
                   <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>{group[0].date}／{group[0].name}（{group.length}件）</div>
+                  {/* 見比べても内容が同じに見えることが多いので、いつ登録された分かが分かるように
+                      登録日時（createdAt）を出す。あわせて「開く」だけでなく、その場で片付けられる
+                      よう「これを残して他を削除」「これを削除」ボタンを付けた（削除はすべてゴミ箱経由
+                      なので誤操作しても30日間は復元できる）。 */}
                   {group.map((r) => (
                     <div key={r.id} style={styles.extraPickRow}>
                       <div>
                         <div style={{ fontSize: 12.5 }}>{r.kumiten || '工務店未設定'}／担当：{r.staff || '不明'}</div>
                         <div style={{ fontSize: 11.5, color: '#8A8A83' }}>監督：{r.supervisorName || '未入力'}／住所：{r.address || '未入力'}</div>
+                        <div style={{ fontSize: 11.5, color: '#8A8A83' }}>登録：{r.createdAt ? formatDateTime(r.createdAt) : '不明'}</div>
                       </div>
-                      <button style={styles.pickTempBtn} onClick={() => { setShowDuplicateModal(false); openEdit(r); }}>開く</button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                        <button style={styles.pickTempBtn} onClick={() => { setShowDuplicateModal(false); openEdit(r); }}>開く</button>
+                        <button style={styles.pickTempBtn} onClick={() => keepOnlyInDuplicateGroup(group, r.id)}>これを残して他を削除</button>
+                        <button style={{ ...styles.pickTempBtn, color: '#C1121F', borderColor: '#E8B4B4' }} onClick={() => deleteFromDuplicateGroup(r)}>🗑 これを削除</button>
+                      </div>
                     </div>
                   ))}
                 </div>
