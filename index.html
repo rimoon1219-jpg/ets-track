@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-85';
+  window.__APP_VERSION__ = '2026-09-19-86';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -183,6 +183,14 @@ async function reliableSend(body) {
   notifyPendingChange();
   try {
     const result = await sendToServer(body);
+    // サーバー側が明示的に失敗（{ok:false}）を返してきた場合（例：他の書き込みと重なって
+    // ロックが取れなかった等）も、これまではfetch自体が例外を投げない限り「成功」として
+    // 扱ってしまい、削除・保存が実際には反映されていないのに画面上は成功表示になる不具合があった。
+    // サーバーの返事の中身も見て、失敗ならキューに残して自動再送信に回す。
+    if (result && result.ok === false) {
+      scheduleRetry();
+      return { ok: false, queued: true };
+    }
     removeFromQueue(id);
     return { ok: true, result };
   } catch (e) {
@@ -211,7 +219,8 @@ async function retryQueue() {
   const q = getQueue();
   for (const item of q) {
     try {
-      await sendToServer(item.body);
+      const result = await sendToServer(item.body);
+      if (result && result.ok === false) { scheduleRetry(); continue; } // サーバーがまだ失敗を返す場合は残して次回に回す
       removeFromQueue(item.id);
     } catch (e) {
       scheduleRetry();
