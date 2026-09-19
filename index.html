@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-91';
+  window.__APP_VERSION__ = '2026-09-19-93';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3455,37 +3455,49 @@ function autoAssignTrucks() {
                       return visitNo ? <span style={{ ...styles.visitBadge, marginLeft: 'auto' }}>{visitNo}回目</span> : null;
                     })()}
                   </div>
-                  <div style={styles.cardName}>{r.name}</div>
-                  {tab === 'sched' && r.address && (
-                    <div style={styles.addrRow}>
-                      <span style={styles.addrText}>📍 {r.address}</span>
-                      <a
-                        href={mapUrl(r.address)}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={styles.mapOpenBtn}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        🗺 地図
-                      </a>
+                  {tab === 'mgmt' && r.supervisorName ? (
+                    // 管理表は住所を表示しないため、監督名だけのために1行増やすのはもったいない。
+                    // 現場名と同じ行にまとめ、監督名は右端に寄せてカードの高さを詰める。
+                    <div style={styles.cardNameRow}>
+                      <span style={styles.cardName}>{r.name}</span>
+                      <span style={styles.supervisorInline}>
+                        <span style={styles.supervisorName}>監督：{r.supervisorName}</span>
+                      </span>
                     </div>
+                  ) : (
+                    <div style={styles.cardName}>{r.name}</div>
                   )}
-                  {tab === 'sched' && (r.supervisorName || r.supervisorPhone) && (
-                    <div style={styles.supervisorRow}>
-                      {r.supervisorName && <span style={styles.supervisorName}>監督：{r.supervisorName}</span>}
-                      {r.supervisorPhone && (
-                        <a href={`tel:${r.supervisorPhone}`} style={styles.phoneLink} onClick={(e) => e.stopPropagation()}>
-                          📞 {r.supervisorPhone}
-                        </a>
+                  {tab === 'sched' && (r.address || r.supervisorName || r.supervisorPhone) && (
+                    // 住所と監督名・電話番号は、以前は別々の行で表示していたためカードの縦の高さが
+                    // その分だけ増えていた。1行にまとめ、監督名・電話番号は marginLeft: 'auto' で
+                    // 右側に寄せることで、カード全体を縦に詰められるようにした。
+                    <div style={styles.addrRow}>
+                      {r.address && (
+                        <React.Fragment>
+                          <span style={styles.addrText}>📍 {r.address}</span>
+                          <a
+                            href={mapUrl(r.address)}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={styles.mapOpenBtn}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            🗺 地図
+                          </a>
+                        </React.Fragment>
+                      )}
+                      {(r.supervisorName || r.supervisorPhone) && (
+                        <span style={styles.supervisorInline}>
+                          {r.supervisorName && <span style={styles.supervisorName}>監督：{r.supervisorName}</span>}
+                          {r.supervisorPhone && (
+                            <a href={`tel:${r.supervisorPhone}`} style={styles.phoneLink} onClick={(e) => e.stopPropagation()}>
+                              📞 {r.supervisorPhone}
+                            </a>
+                          )}
+                        </span>
                       )}
                     </div>
                   )}
-                  {tab === 'mgmt' && r.supervisorName && (
-                    <div style={styles.supervisorRow}>
-                      <span style={styles.supervisorName}>監督：{r.supervisorName}</span>
-                    </div>
-                  )}
-
                   {tab === 'sched' && r.note && (
                     expandedNoteIds[r.id] ? (
                       <div>
@@ -5183,12 +5195,14 @@ const styles = {
   dateText: { fontSize: 12, color: '#A5A59C', marginLeft: 'auto' },
   staffInline: { fontSize: 12, color: '#A5A59C' },
   cardName: { fontSize: 16, fontWeight: 700, marginBottom: 4 },
+  cardNameRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
   addrLink: { fontSize: 13, color: '#457B9D', display: 'block', marginBottom: 4, textDecoration: 'none' },
   addrRow: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
   addrText: { fontSize: 13, color: '#5A5A54' },
   coordWarnTag: { fontSize: 11.5, color: '#B5680A', background: '#FDF1DE', border: '1px solid #EFD4A2', borderRadius: 6, padding: '2px 7px', fontWeight: 700, whiteSpace: 'nowrap' },
   mapOpenBtn: { fontSize: 12, color: '#457B9D', textDecoration: 'none', border: '1px solid #C7DCE5', borderRadius: 6, padding: '4px 9px', background: '#F3F9FB', flexShrink: 0, whiteSpace: 'nowrap' },
   supervisorRow: { display: 'flex', gap: 12, alignItems: 'center', marginBottom: 6 },
+  supervisorInline: { display: 'flex', gap: 10, alignItems: 'center', marginLeft: 'auto', paddingLeft: 12, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' },
   supervisorName: { fontSize: 12.5, color: '#5A5A54' },
   phoneLink: { fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, textDecoration: 'none' },
   noteText: { fontSize: 13, color: '#6B6B63', marginBottom: 6, whiteSpace: 'pre-wrap' },
