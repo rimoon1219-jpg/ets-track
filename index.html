@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-18-73';
+  window.__APP_VERSION__ = '2026-09-18-74';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1061,6 +1061,11 @@ function GenbaTracker() {
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [invoiceExportText, setInvoiceExportText] = useState('');
   const [invoiceEdits, setInvoiceEdits] = useState({}); // recordId -> lineItems編集中バッファ
+  const [showDismissedInvoice, setShowDismissedInvoice] = useState(false);
+  const [showInvoiceAddSite, setShowInvoiceAddSite] = useState(false);
+  const [invoiceAddName, setInvoiceAddName] = useState('');
+  const [invoiceAddDate, setInvoiceAddDate] = useState('');
+  const [invoiceAddStatus, setInvoiceAddStatus] = useState('追加');
   const [showSummaryView, setShowSummaryView] = useState(false);
   const [summaryFrom, setSummaryFrom] = useState('');
   const [summaryTo, setSummaryTo] = useState('');
@@ -2911,6 +2916,60 @@ function autoAssignTrucks() {
   const truckOptions = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
 
   // ---- invoice derived data ----
+  // 「追加」「単発」で入力されたのに、まだ金額（項目）が入力されていない記録＝請求の確認待ち一覧
+  // 工務店・月をまたいで全部まとめて出すことで、いちいち工務店・月を選び直して探しに行かなくても気づけるようにする
+  function needsInvoicePrice(r) {
+    return (r.status === '追加' || r.status === '単発') && !r.invoiceDismissed && !(r.lineItems && r.lineItems.length > 0);
+  }
+  const invoicePendingItems = mgmtRecords.filter(needsInvoicePrice).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const invoiceDismissedItems = mgmtRecords.filter((r) => (r.status === '追加' || r.status === '単発') && r.invoiceDismissed)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  async function dismissInvoiceItem(record) {
+    const updated = { ...record, invoiceDismissed: true };
+    try {
+      await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      applyLocalRecordUpdate('mgmt', updated);
+      showToast('請求の確認待ちから外しました');
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+
+  async function restoreInvoiceItem(record) {
+    const updated = { ...record };
+    delete updated.invoiceDismissed;
+    try {
+      await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      applyLocalRecordUpdate('mgmt', updated);
+      showToast('確認待ちに戻しました');
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+
+  function jumpToInvoiceItem(record) {
+    setInvoiceKumiten(record.kumiten);
+    setInvoiceMonth((record.date || todayStr()).slice(0, 7));
+  }
+
+  async function addAdhocInvoiceSite() {
+    const name = invoiceAddName.trim();
+    if (!name) { showToast('現場名を入力してください'); return; }
+    const date = invoiceAddDate || todayStr();
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const record = {
+      id, name, kumiten: invoiceKumiten, date, status: invoiceAddStatus,
+      staff: deviceStaff || '', items: '', lineItems: [], photos: [], supervisorName: '',
+    };
+    try {
+      await storage.set(`mgmt:${id}`, JSON.stringify(record));
+      applyLocalRecordUpdate('mgmt', record);
+      showToast('請求の項目を追加しました');
+      setInvoiceMonth(date.slice(0, 7));
+      setShowInvoiceAddSite(false);
+      setInvoiceAddName('');
+      setInvoiceAddDate('');
+      setInvoiceAddStatus('追加');
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+
   const invoiceRecords = mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発'));
   const invoiceBySite = {};
   invoiceRecords.forEach((r) => {
@@ -3111,7 +3170,10 @@ function autoAssignTrucks() {
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
         )}
-        <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">🔒</button>
+        <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">
+          🔒
+          {invoicePendingItems.length > 0 && <span style={styles.todoTabBadge}>{invoicePendingItems.length}</span>}
+        </button>
         <button onClick={tryUnlockStaffManager} style={styles.lockIconBtn} title="スタッフ管理">🔒👤</button>
       </div>
 
@@ -3815,6 +3877,22 @@ function autoAssignTrucks() {
             </div>
           ) : (
             <>
+              <div style={styles.areaGroupTitle}>🔔 確認待ち（「追加」「単発」で金額未入力のもの・全工務店）</div>
+              {invoicePendingItems.length === 0 && <div style={styles.empty}>確認待ちの項目はありません</div>}
+              {invoicePendingItems.map((record) => (
+                <div key={record.id} style={styles.invoiceRow}>
+                  <div style={styles.invoiceName}>{record.name}</div>
+                  <div style={styles.invoiceMeta}>{record.kumiten}／{record.date}／{record.status}</div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                    <button type="button" style={styles.handoffBtn} onClick={() => jumpToInvoiceItem(record)}>ここで確認する</button>
+                    <button type="button" style={styles.kumitenDeleteBtn} onClick={() => dismissInvoiceItem(record)}>不要にする</button>
+                  </div>
+                </div>
+              ))}
+              <button style={{ ...styles.linkBtnSmall, marginTop: 4, marginBottom: 14 }} onClick={() => setShowDismissedInvoice(true)}>
+                🗑 不要にした項目を見る（{invoiceDismissedItems.length}件）
+              </button>
+
               <div style={styles.searchBox}>
                 <label style={styles.label}>工務店</label>
                 <div style={styles.chipRow}>
@@ -3826,6 +3904,10 @@ function autoAssignTrucks() {
                 <label style={styles.label}>対象月</label>
                 <input type="month" style={styles.input} value={invoiceMonth} onChange={(e) => setInvoiceMonth(e.target.value)} />
               </div>
+
+              <button style={{ ...styles.linkBtn, marginBottom: 10 }} onClick={() => { setInvoiceAddDate(`${invoiceMonth}-01`); setShowInvoiceAddSite(true); }}>
+                ＋ 現場を追加（管理表に無いものを請求だけしたい時）
+              </button>
 
               <button style={{ ...styles.linkBtn, marginBottom: 14 }} onClick={() => setShowSummaryView(true)}>
                 📊 工務店・現場・日付ごとの集計を見る（期間自由指定）
@@ -3979,6 +4061,59 @@ function autoAssignTrucks() {
             <div style={styles.exportHint}>Excelや工務店フォーマットに貼り付けると、そのまま列が揃います。実際のフォーマットを見せてもらえれば、列の並びをもっと合わせ込めます。</div>
             <textarea style={{ ...styles.input, minHeight: 220, fontSize: 12 }} value={invoiceExportText} readOnly />
             <div style={styles.sheetActions}><button style={styles.saveBtn} onClick={copyInvoiceExport}>コピーする</button></div>
+          </div>
+        </div>
+      )}
+
+      {showInvoiceAddSite && (
+        <div style={styles.overlay} onClick={() => setShowInvoiceAddSite(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>請求だけしたい項目を追加</div>
+              <button style={styles.closeBtn} onClick={() => setShowInvoiceAddSite(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>
+              管理表に記録が無いけど請求だけしたいもの（例：追加で発生した費用）を、ここから直接作れます。作った後は管理表にも「{invoiceKumiten}」の記録として残ります。
+            </div>
+            <label style={styles.label}>現場名・項目名</label>
+            <input style={styles.input} value={invoiceAddName} onChange={(e) => setInvoiceAddName(e.target.value)} placeholder="例：〇〇邸" />
+            <label style={styles.label}>工務店</label>
+            <div style={styles.chipRow}>
+              {kumitenList.map((k) => (
+                <button key={k} onClick={() => setInvoiceKumiten(k)} style={{ ...styles.chip, ...(invoiceKumiten === k ? styles.chipActive : {}) }}>{k}</button>
+              ))}
+            </div>
+            <label style={styles.label}>日付</label>
+            <input type="date" style={styles.input} value={invoiceAddDate} onChange={(e) => setInvoiceAddDate(e.target.value)} />
+            <label style={styles.label}>区分</label>
+            <div style={styles.chipRow}>
+              {['追加', '単発'].map((s) => (
+                <button key={s} onClick={() => setInvoiceAddStatus(s)} style={{ ...styles.chip, ...(invoiceAddStatus === s ? styles.chipActive : {}) }}>{s}</button>
+              ))}
+            </div>
+            <button style={{ ...styles.saveBtn, marginTop: 14 }} onClick={addAdhocInvoiceSite}>＋ この内容で作成</button>
+          </div>
+        </div>
+      )}
+
+      {showDismissedInvoice && (
+        <div style={styles.overlay} onClick={() => setShowDismissedInvoice(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>不要にした項目</div>
+              <button style={styles.closeBtn} onClick={() => setShowDismissedInvoice(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>
+              「不要にする」を押した項目です。管理表の記録自体は消えていないので、間違えた場合はここから戻せます。
+            </div>
+            {invoiceDismissedItems.length === 0 && <div style={styles.empty}>不要にした項目はありません</div>}
+            {invoiceDismissedItems.map((record) => (
+              <div key={record.id} style={styles.invoiceRow}>
+                <div style={styles.invoiceName}>{record.name}</div>
+                <div style={styles.invoiceMeta}>{record.kumiten}／{record.date}／{record.status}</div>
+                <button type="button" style={{ ...styles.handoffBtn, marginTop: 6 }} onClick={() => restoreInvoiceItem(record)}>確認待ちに戻す</button>
+              </div>
+            ))}
           </div>
         </div>
       )}
