@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-101';
+  window.__APP_VERSION__ = '2026-09-19-102';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -398,6 +398,15 @@ const TODO_PASSWORD = '4455';
 // 個別に気づいてほしい伝達だけここで宛先を絞る運用を想定）
 // 名前は各端末の「担当者名」設定と完全一致させる必要がある（すぐる→本城さん、社長→酒井さん）
 const TODO_RECIPIENTS = ['全員', '本城', '酒井'];
+// アプリの修正内容など「社長とすぐる君だけに気づいてほしい」時用のまとめ宛先。
+// 毎回2人を個別に選ぶ手間＆選び忘れの心配をなくすためのワンタップ用プリセット。
+// 実際の中身は「本城,酒井」のカンマ区切り文字列（複数宛先はこの形式で保存する）
+const DEV_TEAM_TARGET = '本城,酒井';
+function memoTargetsMe(t, me) {
+  if (!t.target || t.target === '全員') return true;
+  if (!me) return false;
+  return t.target.split(',').map((s) => s.trim()).includes(me);
+}
 // TODO（伝達）を実際に見に来る人だけの一覧。ヘッダーの「📢伝達」バッジは、この中の担当者名が
 // 設定されている端末にしか出さない（他の現場スタッフには一切気にさせたくないため）。
 // TODOを見る人が増えたらここに名前を足すだけでOK
@@ -3390,7 +3399,7 @@ function autoAssignTrucks() {
             // 派手すぎると他のスタッフも気になってしまうので、色は目立たせすぎず小さめに。
             const me = deviceStaff;
             const unseen = sortedMemos()
-              .filter((t) => !t.target || t.target === '全員' || t.target === me)
+              .filter((t) => memoTargetsMe(t, me))
               .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
             if (unseen === 0) return null;
             return (
@@ -3834,10 +3843,10 @@ function autoAssignTrucks() {
         const gapSites = infoGapSites();
         const gapGroups = gapSites.length > 0 ? infoGapsByKumiten() : [];
         const unseenCount = memos
-          .filter((t) => !t.target || t.target === '全員' || t.target === me)
+          .filter((t) => memoTargetsMe(t, me))
           .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
         const visibleMemos = todoFilter === 'unseen'
-          ? memos.filter((t) => (!t.target || t.target === '全員' || t.target === me) && !(me && seenIncludes(t.seenBy, me)))
+          ? memos.filter((t) => memoTargetsMe(t, me) && !(me && seenIncludes(t.seenBy, me)))
           : memos;
         const showMemoSection = todoFilter === 'all' || todoFilter === 'unseen';
         const showTaskSection = todoFilter === 'all' || todoFilter === 'task';
@@ -3897,7 +3906,7 @@ function autoAssignTrucks() {
                       )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                         <div style={{ fontSize: 10.5, color: '#B5B5AC' }}>
-                          {t.staff || ''}{t.target && t.target !== '全員' ? `→${t.target}` : ''}・{formatDateTime(t.createdAt)}
+                          {t.staff || ''}{t.target && t.target !== '全員' ? `→${t.target === DEV_TEAM_TARGET ? '社長・すぐる' : t.target}` : ''}・{formatDateTime(t.createdAt)}
                         </div>
                         <button
                           style={{ ...styles.iconToggleBtn, ...(t.important ? styles.iconToggleBtnActive : {}) }}
@@ -4074,7 +4083,7 @@ function autoAssignTrucks() {
                         style={styles.linkBtnSmall}
                         onClick={() => setShowTargetPicker(true)}
                       >
-                        🎯 誰か一人に気づいてほしい時はこちら{todoTarget !== '全員' ? `（今：${todoTarget}）` : ''}
+                        🎯 誰かに気づいてほしい時はこちら{todoTarget !== '全員' ? `（今：${todoTarget === DEV_TEAM_TARGET ? '社長・すぐる' : todoTarget}）` : ''}
                       </button>
                     ) : (
                       <>
@@ -4089,6 +4098,12 @@ function autoAssignTrucks() {
                               {name}
                             </button>
                           ))}
+                          <button
+                            onClick={() => setTodoTarget(DEV_TEAM_TARGET)}
+                            style={{ ...styles.quickTagBtn, ...(todoTarget === DEV_TEAM_TARGET ? styles.quickTagBtnActive : {}) }}
+                          >
+                            🔧社長・すぐるだけ
+                          </button>
                         </div>
                       </>
                     )}
