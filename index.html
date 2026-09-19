@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-19-100';
+  window.__APP_VERSION__ = '2026-09-19-101';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1543,11 +1543,11 @@ function GenbaTracker() {
   // 不足項目チェックは、以後はTODOに保存せず、その場で計算して表示する方式に変更（詳しくはinfoGapSites参照）
   async function syncAutoTodos(sItems, tItems) {
     const legacyGapTodos = tItems.filter((t) => t.auto && t.siteId && t.checkType !== 'feature');
-    await runWithLimit(legacyGapTodos, 6, async (t) => { await completeTodo(t.id); });
+    await runWithLimit(legacyGapTodos, 1, async (t) => { await completeTodo(t.id); });
 
     // もう確認不要になった動作確認（RETIRED_FEATURE_TEXTS）が残っていれば片付ける
     const retiredTodos = tItems.filter((t) => RETIRED_FEATURE_TEXTS.includes(t.text));
-    await runWithLimit(retiredTodos, 6, async (t) => { await completeTodo(t.id); });
+    await runWithLimit(retiredTodos, 1, async (t) => { await completeTodo(t.id); });
 
     // 完了済み（やった済み）の動作確認は、二度と作り直さない
     let dismissedFeatures = [];
@@ -1571,7 +1571,7 @@ function GenbaTracker() {
         if (seenFeatureText.has(t.text)) featureDupes.push(t);
         else seenFeatureText.add(t.text);
       });
-    await runWithLimit(featureDupes, 6, async (t) => { await completeTodo(t.id); });
+    await runWithLimit(featureDupes, 1, async (t) => { await completeTodo(t.id); });
 
     // まだ一度も追加されておらず、完了済みでもない機能があれば追加する。既存の生き残りがcheckType未設定の古いデータなら補完する
     for (const f of FEATURE_CHECKLIST) {
@@ -2268,7 +2268,10 @@ function autoAssignTrucks() {
     setBulkImportText('');
     setBulkImportBusy(false);
     showToast(skipped > 0 ? `${records.length}件取り込みました（重複${skipped}件はスキップ）` : `${records.length}件取り込みました`);
-    runWithLimit(records, 6, async (record) => {
+    // サーバー（スプレッドシート）側は同時に複数件書き込むと、お互いの書き込みが競合して
+    // 一部が消えてしまうことがあるため、裏での保存は同時並行ではなく1件ずつ順番に行う。
+    // 画面には既に反映済みなので、待たされている感覚はない。
+    runWithLimit(records, 1, async (record) => {
       await storage.set(`sched:${record.id}`, JSON.stringify(record));
     }).catch(() => {});
   }
@@ -2362,7 +2365,8 @@ function autoAssignTrucks() {
     setMgmtBulkImportPreview(null);
     setMgmtBulkImportBusy(false);
     showToast(`${records.length}件、管理表に登録しました`);
-    runWithLimit(records, 6, async (record) => {
+    // 予定表側と同じ理由で、裏での保存は同時並行ではなく1件ずつ順番に行う（競合で消える事故を防ぐ）
+    runWithLimit(records, 1, async (record) => {
       await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
     }).catch(() => {});
   }
@@ -2567,7 +2571,7 @@ function autoAssignTrucks() {
     if (targets.length === 0) { showToast('対象がありません（すでに全部埋まっています）'); return; }
     if (!window.confirm(`メルディアの現場${targets.length}件のハウスNoに「対象外」を入れます。よろしいですか？`)) return;
     let count = 0;
-    await runWithLimit(targets, 4, async (r) => {
+    await runWithLimit(targets, 1, async (r) => {
       const updated = { ...r, houseNumber: '対象外' };
       try {
         await storage.set(`sched:${r.id}`, JSON.stringify(updated));
