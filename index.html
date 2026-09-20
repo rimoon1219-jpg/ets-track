@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-124';
+  window.__APP_VERSION__ = '2026-09-20-125';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -405,6 +405,40 @@ const storage = {
 // 立米数（請求書関連）を編集するための合言葉。後で洋子さんの希望のものに変更します。
 const RYUBEI_PASSWORD = '8989';
 const TODO_PASSWORD = '4455';
+
+// 社長・洋子さん専用の使い方メモ（8989でだけ開ける「📖使い方メモ」に表示）。
+// 内容を直すときはここを書き換えるだけでOK。
+const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
+使うタイミング：工務店から複数現場分まとめて監督変更やハウスNo連絡が来た時
+やり方：予定表の現場名と完全に同じ文字列で
+現場名（タブ）監督名（タブ）監督電話（タブ）ハウスNo
+を1行ずつ貼り付けて実行。現場名が完全一致するものだけ反映。空欄の項目は上書きしない。
+
+■ 特定済み現場データを編集／特定済み現場と照合（セット運用）
+・特定済み現場データを編集＝マニフェスト調査でわかった「現場名・ハウスNo・監督名・確認日」を工務店ごとに保存しておく虎の巻。参考ファイルの行をほぼそのまま貼り付けOK。
+・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。
+順番：虎の巻を最新化→照合を実行、の流れ。
+
+■ 請求書タブ（社長・洋子さん専用）
+・上部「確認待ち」＝ステータスが追加/単発なのに金額未入力の現場が全工務店分まとめて出る
+・工務店＋対象月を選ぶと、その追加/単発の記録だけ表示→品目名・数量・単位・単価を入力すると自動計算
+・「請求書フォーマット用にコピー」で集計結果をタブ区切りテキストでコピー
+・「📊集計を見る」は期間自由指定の確認用（請求書とは別物）
+・「締め日が近い工務店」は自動リマインド。OHA・OHDは件数が多いので早め対応の注意書きあり
+
+■ 伝達のルール
+・宛先を選べるのは洋子さんの端末だけ。選ばなければ自動的に「全員」宛て
+・「全員」宛てだと、TODOビューア（洋子・本城・酒井）全員に既読が付くまで表示され続ける
+・他の人が「見た」を押すと✓既読で名前と時刻が表示される
+・まだ誰も見てないうちに編集すると日時も更新される。誰か見た後に編集すると日時はそのまま
+・不要になった伝達は「📦アーカイブ」へ（全員共通で消える。未読者がいると確認ダイアログが出る）
+・アーカイブ内の「🗑削除」は洋子さんの端末だけに表示。削除してもゴミ箱に30日残る
+
+■ 伝達バッジ（開かなくても気づける表示）が出る条件
+1. 端末の担当者が「洋子・本城・酒井」のいずれか
+2. 今いるタブがTODO以外
+3. 自分宛て（全員 or 自分指定）で未読の伝達が1件以上ある
+→この3つが揃った時だけ画面上部に「📢伝達◯件」と出る。タスクはカウント対象外。`;
 // 伝達（TODOタブ）を実際に見に来る人の宛先候補。今後TODOを見る人が増えたらここに名前を足すだけでOK。
 // 「全員」を選ぶと今まで通りみんなに見えるバッジになる（グループLINEで済む話は基本そちらで、
 // 個別に気づいてほしい伝達だけここで宛先を絞る運用を想定）
@@ -1276,6 +1310,7 @@ function GenbaTracker() {
   const [supervisorBulkText, setSupervisorBulkText] = useState('');
   const [showSupervisorDeleteHistory, setShowSupervisorDeleteHistory] = useState(false);
   const [supervisorDeleteHistory, setSupervisorDeleteHistory] = useState([]);
+  const [showUsageGuide, setShowUsageGuide] = useState(false);
   const [identifiedSites, setIdentifiedSites] = useState(DEFAULT_IDENTIFIED_SITES);
   const [showIdentifiedSitesEditor, setShowIdentifiedSitesEditor] = useState(false);
   const [identifiedSitesKumiten, setIdentifiedSitesKumiten] = useState('OHA');
@@ -3958,6 +3993,7 @@ async function autoAssignTrucks() {
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアのハウスNoに一括で「対象外」を入れる</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
+            {ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowUsageGuide(true)}>📖 使い方メモ</button>}
           </div>
 
           {!loading && filtered.length === 0 && <div style={styles.empty}>該当する現場がありません。</div>}
@@ -5382,6 +5418,20 @@ async function autoAssignTrucks() {
             />
             <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importSupervisorBulkText}>＋ この内容を登録</button>
             <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => { setShowSupervisorDeleteHistory(true); loadSupervisorDeleteHistory(); }}>🕘 削除履歴（誰がいつ消したか・元に戻す）</button>
+          </div>
+        </div>
+      )}
+
+      {showUsageGuide && (
+        <div style={styles.overlay} onClick={() => setShowUsageGuide(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>📖 使い方メモ（社長・洋子さん専用）</div>
+              <button style={styles.closeBtn} onClick={() => setShowUsageGuide(false)}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.8, whiteSpace: 'pre-wrap', maxHeight: 480, overflowY: 'auto' }}>
+              {USAGE_GUIDE_TEXT}
+            </div>
           </div>
         </div>
       )}
