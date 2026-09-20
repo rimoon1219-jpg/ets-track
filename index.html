@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-125';
+  window.__APP_VERSION__ = '2026-09-20-126';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1688,13 +1688,16 @@ function GenbaTracker() {
         fetchGroup('mgmt'),
         fetchGroup('todo'),
       ]);
-      sItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      // 同じ日付の現場が複数ある場合、並び替えの基準が日付だけだと、裏側の自動更新のたびに
+      // 順番が入れ替わって画面がガクッと動いて見えることがあった（id を並び順のタイブレークに
+      // 使うことで、同じ日付内は常に同じ順番になり、自動更新で並びが変わらないようにする）。
+      sItems.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.id || '').localeCompare(b.id || ''));
       setSchedRecords(sItems);
 
-      mItems.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      mItems.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.id || '').localeCompare(b.id || ''));
       setMgmtRecords(mItems);
 
-      tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || (a.id || '').localeCompare(b.id || ''));
       setTodos(tItems);
       syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
 
