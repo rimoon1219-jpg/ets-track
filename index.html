@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-120';
+  window.__APP_VERSION__ = '2026-09-20-122';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1252,6 +1252,8 @@ function GenbaTracker() {
   const [showSupervisorEditor, setShowSupervisorEditor] = useState(false);
   const [supervisorEditorKumiten, setSupervisorEditorKumiten] = useState('OHA');
   const [supervisorBulkText, setSupervisorBulkText] = useState('');
+  const [showSupervisorDeleteHistory, setShowSupervisorDeleteHistory] = useState(false);
+  const [supervisorDeleteHistory, setSupervisorDeleteHistory] = useState([]);
   const [identifiedSites, setIdentifiedSites] = useState(DEFAULT_IDENTIFIED_SITES);
   const [showIdentifiedSitesEditor, setShowIdentifiedSitesEditor] = useState(false);
   const [identifiedSitesKumiten, setIdentifiedSitesKumiten] = useState('OHA');
@@ -3114,6 +3116,18 @@ async function autoAssignTrucks() {
     await storage.set('meta:supervisors', JSON.stringify(next), true);
   }
 
+  // 現場ごとに手入力した監督名（まだ名簿には入っていないもの）を、その場で名簿に追加する。
+  // 「監督名簿を編集」からまとめて貼り付けなくても、現場の登録画面から直接1件ずつ足せるように。
+  async function addSupervisorToDirectory(kumiten, name, phone) {
+    const trimmedName = (name || '').trim();
+    if (!kumiten || !trimmedName) return;
+    const existing = supervisorDirectory[kumiten] || [];
+    if (existing.some((s) => s.name === trimmedName)) { showToast('すでに監督名簿に登録されています'); return; }
+    const next = { ...supervisorDirectory, [kumiten]: [...existing, { name: trimmedName, phone: (phone || '').trim() }] };
+    await saveSupervisorDirectory(next);
+    showToast(`「${trimmedName}」を${kumiten}の監督名簿に追加しました`);
+  }
+
   // 現在の工務店で使える監督名の候補一覧（監督名簿＋実際に入力済みの現場データの両方から集める）
   function supervisorOptionsFor(kumiten) {
     if (!kumiten) return [];
@@ -3171,10 +3185,45 @@ async function autoAssignTrucks() {
     }
   }
 
+  // 監督名簿の削除を誰でもできるようにする代わりに、「誰が・いつ・何を消したか」を
+  // 履歴として残しておき、あとから確認・復元できるようにする（4455パスワードでも使えるようにするための安全策）。
   async function removeSupervisorEntry(kumiten, name) {
-    if (!window.confirm(`「${name}」を監督名簿から削除しますか？`)) return;
+    if (!window.confirm(`「${name}」を監督名簿から削除しますか？（削除履歴に残るので、あとで元に戻せます）`)) return;
+    const removed = (supervisorDirectory[kumiten] || []).find((s) => s.name === name);
     const next = { ...supervisorDirectory, [kumiten]: (supervisorDirectory[kumiten] || []).filter((s) => s.name !== name) };
     await saveSupervisorDirectory(next);
+    const logId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      await storage.set(`supervisorDeleteLog:${logId}`, JSON.stringify({
+        id: logId, kumiten, name, phone: (removed && removed.phone) || '',
+        deletedBy: deviceStaff || '不明', at: new Date().toISOString(),
+      }), true);
+    } catch (e) { /* 履歴の保存に失敗しても削除自体は完了しているので、そのまま進める */ }
+  }
+
+  async function loadSupervisorDeleteHistory() {
+    const list = await storage.list('supervisorDeleteLog:', true);
+    const items = (await Promise.all(
+      ((list && list.keys) || []).map(async (k) => {
+        try {
+          const r = await storage.get(k, true);
+          return r && r.value ? JSON.parse(r.value) : null;
+        } catch (e) { return null; }
+      })
+    )).filter(Boolean);
+    items.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+    setSupervisorDeleteHistory(items.slice(0, 30));
+  }
+
+  async function undoSupervisorDelete(entry) {
+    const existing = supervisorDirectory[entry.kumiten] || [];
+    if (!existing.some((s) => s.name === entry.name)) {
+      const next = { ...supervisorDirectory, [entry.kumiten]: [...existing, { name: entry.name, phone: entry.phone || '' }] };
+      await saveSupervisorDirectory(next);
+    }
+    try { await storage.delete(`supervisorDeleteLog:${entry.id}`, true); } catch (e) { /* 無視してよい */ }
+    setSupervisorDeleteHistory((prev) => prev.filter((h) => h.id !== entry.id));
+    showToast(`「${entry.name}」を${entry.kumiten}の監督名簿に戻しました`);
   }
 
   // ここから「特定済み現場データ」（マニフェスト業務プロジェクトの参考ファイルの内容をETS TRACK側にも持たせたもの）
@@ -3851,7 +3900,7 @@ async function autoAssignTrucks() {
             {ryubeiUnlocked && <button style={styles.linkBtn} onClick={() => setShowBulkDelete(true)}>期間を指定して一括削除</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkImport(true)}>TimeTreeから一括インポート</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkUpdate(true)}>監督名・ハウスNoを一括更新</button>}
-        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
+        {tab === 'sched' && (ryubeiUnlocked || todoUnlocked) && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアのハウスNoに一括で「対象外」を入れる</button>}
@@ -4977,6 +5026,15 @@ async function autoAssignTrucks() {
                     <input style={styles.input} value={form.supervisorPhone || ''} onChange={(e) => setForm({ ...form, supervisorPhone: e.target.value })} placeholder="090-1234-5678" inputMode="tel" />
                   </div>
                 </div>
+                {form.kumiten && (form.supervisorName || '').trim() && !(supervisorDirectory[form.kumiten] || []).some((s) => s.name === form.supervisorName.trim()) && (
+                  <button
+                    type="button"
+                    style={{ ...styles.linkBtn, marginTop: 4 }}
+                    onClick={() => addSupervisorToDirectory(form.kumiten, form.supervisorName, form.supervisorPhone)}
+                  >
+                    ＋「{form.supervisorName.trim()}」を{form.kumiten}の監督名簿に追加
+                  </button>
+                )}
 
 
                 <label style={styles.label}>ハウスNo／事業場コード</label>
@@ -5090,6 +5148,15 @@ async function autoAssignTrucks() {
               <>
                 <label style={styles.label}>監督名（わかる場合のみ）</label>
                 <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} placeholder="例：岡田" />
+                {form.kumiten && (form.supervisorName || '').trim() && !(supervisorDirectory[form.kumiten] || []).some((s) => s.name === form.supervisorName.trim()) && (
+                  <button
+                    type="button"
+                    style={{ ...styles.linkBtn, marginTop: 4 }}
+                    onClick={() => addSupervisorToDirectory(form.kumiten, form.supervisorName, form.supervisorPhone)}
+                  >
+                    ＋「{form.supervisorName.trim()}」を{form.kumiten}の監督名簿に追加
+                  </button>
+                )}
 
                 <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
@@ -5262,6 +5329,30 @@ async function autoAssignTrucks() {
               onChange={(e) => setSupervisorBulkText(e.target.value)}
             />
             <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importSupervisorBulkText}>＋ この内容を登録</button>
+            <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => { setShowSupervisorDeleteHistory(true); loadSupervisorDeleteHistory(); }}>🕘 削除履歴（誰がいつ消したか・元に戻す）</button>
+          </div>
+        </div>
+      )}
+
+      {showSupervisorDeleteHistory && (
+        <div style={styles.overlay} onClick={() => setShowSupervisorDeleteHistory(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>監督名簿の削除履歴</div>
+              <button style={styles.closeBtn} onClick={() => setShowSupervisorDeleteHistory(false)}>✕</button>
+            </div>
+            <div style={{ marginTop: 4, maxHeight: 420, overflowY: 'auto' }}>
+              {supervisorDeleteHistory.length === 0 && <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>削除履歴はありません</div>}
+              {supervisorDeleteHistory.map((h) => (
+                <div key={h.id} style={styles.extraPickRow}>
+                  <div>
+                    <div style={{ fontSize: 13 }}>{h.kumiten}／{h.name}{h.phone ? `／${h.phone}` : ''}</div>
+                    <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{h.deletedBy}が削除／{formatDateTime(h.at)}</div>
+                  </div>
+                  <button style={styles.pickTempBtn} onClick={() => undoSupervisorDelete(h)}>元に戻す</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
