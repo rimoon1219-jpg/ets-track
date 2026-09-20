@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-113';
+  window.__APP_VERSION__ = '2026-09-20-117';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1775,7 +1775,46 @@ function GenbaTracker() {
     return sortedTodosBase().filter((t) => t.todoType !== 'memo');
   }
   function sortedMemos() {
-    return sortedTodosBase().filter((t) => t.todoType === 'memo');
+    return sortedTodosBase().filter((t) => t.todoType === 'memo' && !t.archived);
+  }
+  // 「📦 アーカイブ」で片付けた伝達（削除はせず、見返せるように残す）
+  function archivedMemos() {
+    return sortedTodosBase().filter((t) => t.todoType === 'memo' && t.archived)
+      .sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || ''));
+  }
+  // 伝達をアーカイブ／元に戻す。伝達は全員共有の一覧なので、誰かがアーカイブするとみんなの画面からも片付く
+  // （消えるわけではなく、「📦 アーカイブ」から後で見返せる）
+  async function archiveMemo(t) {
+    const me = getDeviceStaff();
+    // 宛先のうち、まだ「見た」を押していない人がいたら念のため確認する（うっかり見落としを防ぐため）
+    const intendedViewers = (!t.target || t.target === '全員')
+      ? TODO_VIEWERS
+      : t.target.split(',').map((s) => s.trim());
+    const unseenNames = intendedViewers.filter((name) => name && name !== t.staff && !seenIncludes(t.seenBy, name));
+    if (unseenNames.length > 0) {
+      if (!window.confirm(`${unseenNames.join('・')}さんがまだ「見た」を押していません。それでもアーカイブしますか？（アーカイブすると通常の一覧からは見えなくなります。「📦 アーカイブ」からはいつでも見返せます）`)) return;
+    }
+    const updated = { ...t, archived: true, archivedAt: new Date().toISOString(), archivedBy: me || '' };
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+    lastLocalWriteRef.current = Date.now();
+    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    showToast('アーカイブしました（「📦 アーカイブ」からいつでも見返せます）');
+  }
+  async function unarchiveMemo(t) {
+    const updated = { ...t, archived: false, archivedAt: '', archivedBy: '' };
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+    lastLocalWriteRef.current = Date.now();
+    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    showToast('伝達に戻しました');
+  }
+  // アーカイブの中身を完全に削除する（洋子さんの端末だけに出す。ゴミ箱に30日間残して復元もできるようにする）
+  async function deleteArchivedMemo(t) {
+    if (!window.confirm('このアーカイブ済みの伝達を削除します。よろしいですか？（ゴミ箱に30日間残ります）')) return;
+    lastLocalWriteRef.current = Date.now();
+    await storage.set(`trash:${t.id}`, JSON.stringify({ ...t, name: t.text, _type: 'todo', deletedAt: new Date().toISOString() }), true);
+    await storage.delete(`todo:${t.id}`, true);
+    setTodos((prev) => prev.filter((x) => x.id !== t.id));
+    showToast('削除しました（ゴミ箱に30日間残ります）');
   }
   function sortedTodosBase() {
     return [...todos]
@@ -4133,10 +4172,13 @@ async function autoAssignTrucks() {
         const unseenCount = memos
           .filter((t) => memoTargetsMe(t, me))
           .filter((t) => !(me && seenIncludes(t.seenBy, me))).length;
+        const archived = archivedMemos();
         const visibleMemos = todoFilter === 'unseen'
           ? memos.filter((t) => memoTargetsMe(t, me) && !(me && seenIncludes(t.seenBy, me)))
+          : todoFilter === 'archived'
+          ? archived
           : memos;
-        const showMemoSection = todoFilter === 'all' || todoFilter === 'unseen';
+        const showMemoSection = todoFilter === 'all' || todoFilter === 'unseen' || todoFilter === 'archived';
         const showTaskSection = todoFilter === 'all' || todoFilter === 'task';
         const showGapSection = todoFilter === 'all' || todoFilter === 'gap';
         return (
@@ -4146,18 +4188,24 @@ async function autoAssignTrucks() {
             <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'unseen' ? styles.todoFilterBtnActive : {}) }} onClick={() => setTodoFilter('unseen')}>📢 未確認だけ</button>
             <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'task' ? styles.todoFilterBtnActive : {}) }} onClick={() => setTodoFilter('task')}>✅ タスクだけ</button>
             <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'gap' ? styles.todoFilterBtnActive : {}) }} onClick={() => { setTodoFilter('gap'); setShowInfoGaps(true); }}>📋 情報不足だけ</button>
+            <button style={{ ...styles.todoFilterBtn, ...(todoFilter === 'archived' ? styles.todoFilterBtnActive : {}) }} onClick={() => setTodoFilter('archived')}>📦 アーカイブ{archivedMemos().length > 0 ? `（${archivedMemos().length}）` : ''}</button>
           </div>
           {showMemoSection && (
           <div style={{ marginTop: 10 }}>
             <div style={{ ...styles.memoSectionBanner, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>📢 伝達{unseenCount > 0 && <span style={styles.memoUnseenCountTag}>未確認 {unseenCount}件</span>}</span>
+              <span>{todoFilter === 'archived' ? '📦 アーカイブ（過去の伝達）' : `📢 伝達${unseenCount > 0 ? '' : ''}`}{todoFilter !== 'archived' && unseenCount > 0 && <span style={styles.memoUnseenCountTag}>未確認 {unseenCount}件</span>}</span>
             </div>
-            {memos.length === 0 && (
+            {todoFilter === 'archived' && archived.length === 0 && (
+              <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
+                アーカイブはまだありません
+              </div>
+            )}
+            {todoFilter !== 'archived' && memos.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
                 {loading ? '読み込み中…' : '今はありません'}
               </div>
             )}
-            {memos.length > 0 && visibleMemos.length === 0 && (
+            {todoFilter !== 'archived' && memos.length > 0 && visibleMemos.length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 14px' }}>
                 未確認の伝達はありません
               </div>
@@ -4204,12 +4252,35 @@ async function autoAssignTrucks() {
                           ⚠️
                         </button>
                       </div>
+                      {(() => {
+                        // 自分（書いた本人は自動で「見た」扱いになっているので除く）以外の人が
+                        // 実際に「見た」を押した記録。洋子さんが自分の画面から他の人の既読状況を確認できるように表示する
+                        const others = (t.seenBy || []).filter((s) => seenName(s) && seenName(s) !== t.staff);
+                        if (others.length === 0) return null;
+                        return (
+                          <div style={{ fontSize: 10.5, color: '#5A8A3C', marginTop: 2 }}>
+                            ✓ 既読：{others.map((s) => `${seenName(s)}(${formatDateTime(seenAt(s))})`).join('、')}
+                          </div>
+                        );
+                      })()}
                     </div>
                     {editingTodoId !== t.id && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                        {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
-                        {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
-                        <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
+                        {todoFilter === 'archived' ? (
+                          <React.Fragment>
+                            <button style={styles.switchTypeBtn} onClick={() => unarchiveMemo(t)}>↩️ 伝達に戻す</button>
+                            {deviceStaff === TODO_TARGET_PICKER_STAFF && (
+                              <button style={styles.deleteArchivedBtn} onClick={() => deleteArchivedMemo(t)}>🗑 削除</button>
+                            )}
+                          </React.Fragment>
+                        ) : (
+                          <React.Fragment>
+                            {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
+                            <button style={styles.switchTypeBtn} onClick={() => archiveMemo(t)} title="片付けて「📦 アーカイブ」に移す（消さずに後で見返せます）">📦 アーカイブ</button>
+                            {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
+                            <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
+                          </React.Fragment>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5363,7 +5434,7 @@ async function autoAssignTrucks() {
                     />
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{item.name}</div>
-                      <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.date}／{item._type === 'sched' ? '予定表' : '管理表'}／削除:{(item.deletedAt || '').slice(0, 10)}</div>
+                      <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.date}{item.date ? '／' : ''}{item._type === 'sched' ? '予定表' : item._type === 'mgmt' ? '管理表' : '伝達'}／削除:{(item.deletedAt || '').slice(0, 10)}</div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -5675,6 +5746,8 @@ const styles = {
   importantBtnActive: { background: '#E63946', color: '#fff', borderColor: '#E63946' },
   seenBtn: { fontSize: 11, padding: '5px 10px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   switchTypeBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #D8D6CC', color: '#8A8A83', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  // アーカイブ内の削除ボタン（洋子さんの端末にしか出さないので、他のボタンより目立たせて誤操作にも気づきやすくする）
+  deleteArchivedBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #E8B4B4', color: '#B33A3A', background: '#FFF5F5', cursor: 'pointer', whiteSpace: 'nowrap' },
   attachPhotoBtn: { fontSize: 10.5, padding: '4px 9px', borderRadius: 8, border: '1px solid #2A9D8F', color: '#2A9D8F', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-block' },
   gapSummaryCard: { background: '#FFF8E6', border: '1px solid #F0DDA0', borderRadius: 10, padding: 12, marginTop: 10 },
   gapSummaryHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, fontWeight: 700, color: '#8A6D00', cursor: 'pointer' },
