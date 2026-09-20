@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-123';
+  window.__APP_VERSION__ = '2026-09-20-124';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1190,6 +1190,28 @@ function GenbaTracker() {
   const [exportText, setExportText] = useState('');
   const [ryubeiUnlocked, setRyubeiUnlocked] = useState(false);
   const [todoUnlocked, setTodoUnlocked] = useState(false);
+  // ロック解除の状態はパスワードを消すまでどこにも保存されず、この画面を開いている間だけの
+  // 一時的なものだが、スマホの「閉じる」がアプリを裏に回しただけ（完全終了ではない）の場合、
+  // 開き直した時も解除されたままになってしまう。誰かが後でその端末を触った時に見えてしまわないよう、
+  // 裏に回してから一定時間（10分）経って戻ってきた時は、自動でロックし直す。
+  const hiddenAtRef = useRef(null);
+  useEffect(() => {
+    const AUTO_RELOCK_MS = 10 * 60 * 1000;
+    function handleVisibility() {
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+      } else if (hiddenAtRef.current) {
+        const elapsed = Date.now() - hiddenAtRef.current;
+        hiddenAtRef.current = null;
+        if (elapsed > AUTO_RELOCK_MS) {
+          setRyubeiUnlocked(false);
+          setTodoUnlocked(false);
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
   const [showStaffManager, setShowStaffManager] = useState(false);
   const [revokedStaff, setRevokedStaff] = useState([]);
   const [dismissedClosings, setDismissedClosings] = useState([]); // 「もうやった」で消した締め日リマインドの一覧（"工務店__締め日"の形。次の締め日が来たら自動的にまた出る）
