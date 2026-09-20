@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-122';
+  window.__APP_VERSION__ = '2026-09-20-123';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1304,6 +1304,36 @@ function GenbaTracker() {
   // 未送信のままの時だけ表示する（すぐ消えるものはそもそも表示しない）
   const [showPendingBadge, setShowPendingBadge] = useState(false);
   const pendingSinceRef = useRef(null);
+  const [showPendingQueueModal, setShowPendingQueueModal] = useState(false);
+
+  // 「未送信」がずっと消えない時に中身を確認できるように（例：電波の悪い端末に古い送信データが
+  // ずっと残ってしまい、電波が戻るたびに何度も再送信されて、消したはずのデータが復活する原因になることがある）。
+  function pendingQueueItemsForDisplay() {
+    const writes = getQueue().map((item) => {
+      let label = '（内容不明）';
+      try {
+        const b = item.body || {};
+        if (b.action === 'set') {
+          let preview = '';
+          try { preview = (JSON.parse(b.value).name || '').slice(0, 30); } catch (e) {}
+          label = `保存：${b.key}${preview ? `（${preview}）` : ''}`;
+        } else if (b.action === 'delete') {
+          label = `削除：${b.key}`;
+        } else {
+          label = `${b.action || '不明な操作'}：${b.key || ''}`;
+        }
+      } catch (e) {}
+      return { id: item.id, kind: 'write', label, createdAt: item.createdAt };
+    });
+    const photos = getPhotoQueue().map((item) => ({ id: item.id, kind: 'photo', label: `写真：${item.filename || ''}`, createdAt: item.createdAt || 0 }));
+    return [...writes, ...photos].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  }
+
+  function discardPendingQueueItem(item) {
+    if (!window.confirm('この未送信データを破棄します。よろしいですか？（サーバーには反映されなくなります）')) return;
+    if (item.kind === 'photo') removeFromPhotoQueue(item.id);
+    else removeFromQueue(item.id);
+  }
 
   useEffect(() => {
     const listener = (count) => setPendingCount(count);
@@ -3780,7 +3810,7 @@ async function autoAssignTrucks() {
             {deviceStaff ? `担当：${deviceStaff}（変更）` : '担当者名を設定'}
           </button>
           {showPendingBadge && (
-            <span style={styles.pendingBadge}>⏳ 未送信 {pendingCount}件</span>
+            <button style={{ ...styles.pendingBadge, border: 'none', cursor: 'pointer' }} onClick={() => setShowPendingQueueModal(true)}>⏳ 未送信 {pendingCount}件（タップで確認）</button>
           )}
           {tab !== 'todo' && TODO_VIEWERS.includes(deviceStaff) && (() => {
             // 現場が忙しくてTODOタブ（パスワード付き）を開かない人にも、伝達が来ていることだけは
@@ -5330,6 +5360,34 @@ async function autoAssignTrucks() {
             />
             <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importSupervisorBulkText}>＋ この内容を登録</button>
             <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => { setShowSupervisorDeleteHistory(true); loadSupervisorDeleteHistory(); }}>🕘 削除履歴（誰がいつ消したか・元に戻す）</button>
+          </div>
+        </div>
+      )}
+
+      {showPendingQueueModal && (
+        <div style={styles.overlay} onClick={() => setShowPendingQueueModal(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>未送信データの確認</div>
+              <button style={styles.closeBtn} onClick={() => setShowPendingQueueModal(false)}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: '#8A8A83', marginBottom: 8 }}>
+              電波が悪い状態が続くと、ここに残ったままになることがあります。電波の良い場所でこの画面を開き直せば自動的に送信されます。もし何日も消えない・明らかにおかしい内容が残っている場合だけ、右の「破棄」で送信を取りやめられます（一度破棄すると、その内容はサーバーに反映されません）。
+            </div>
+            <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+              {pendingQueueItemsForDisplay().length === 0 && (
+                <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>未送信のデータはありません</div>
+              )}
+              {pendingQueueItemsForDisplay().map((item) => (
+                <div key={item.id} style={styles.extraPickRow}>
+                  <div>
+                    <div style={{ fontSize: 13 }}>{item.label}</div>
+                    <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.createdAt ? formatDateTime(new Date(item.createdAt).toISOString()) : ''}</div>
+                  </div>
+                  <button style={styles.deleteArchivedBtn} onClick={() => discardPendingQueueItem(item)}>破棄</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
