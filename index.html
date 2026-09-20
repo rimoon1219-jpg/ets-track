@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-109';
+  window.__APP_VERSION__ = '2026-09-20-110';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1204,6 +1204,7 @@ function GenbaTracker() {
   const [assignmentsUndoSnapshot, setAssignmentsUndoSnapshot] = useState(null); // 自動割り振り直前の状態（「元に戻す」用、1回分だけ）
   const [showAddExtraSite, setShowAddExtraSite] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [showAddressDupModal, setShowAddressDupModal] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [trashItems, setTrashItems] = useState([]);
   const [trashSelected, setTrashSelected] = useState([]);
@@ -2248,6 +2249,21 @@ async function autoAssignTrucks() {
       map[key].push(r);
     });
     return Object.values(map).filter((g) => g.length > 1);
+  }
+
+  // 同じ住所で日付が違う登録（TimeTreeの日程変更で古い日付の分が消えずに残った時など、
+  // 現場名の表記が微妙に違っていても住所は同じなので、こちらは名前ではなく住所で突き合わせる）。
+  // 予定表（sched）は基本的に1現場につき「次の予定」が1件だけのはずなので、同じ住所が
+  // 違う日付で複数残っているのは重複の可能性が高い。
+  function findAddressDuplicateGroups() {
+    const map = {};
+    schedRecords.forEach((r) => {
+      const addr = (r.address || '').trim();
+      if (!addr) return; // 住所未入力・座標のみでないものだけ対象
+      if (!map[addr]) map[addr] = [];
+      map[addr].push(r);
+    });
+    return Object.values(map).filter((g) => g.length > 1 && new Set(g.map((r) => r.date)).size > 1);
   }
 
   function openEdit(r) {
@@ -3671,6 +3687,11 @@ async function autoAssignTrucks() {
       {findDuplicateGroups().length > 0 && (
         <div style={styles.dupWarningBar} onClick={() => setShowDuplicateModal(true)}>
           ⚠️ 同じ現場・同じ日付の重複登録の可能性が{findDuplicateGroups().length}件あります（タップで確認）
+        </div>
+      )}
+      {findAddressDuplicateGroups().length > 0 && (
+        <div style={styles.dupWarningBar} onClick={() => setShowAddressDupModal(true)}>
+          📍 同じ住所で日付違いの登録が{findAddressDuplicateGroups().length}件あります（タップで確認）
         </div>
       )}
 
@@ -5368,6 +5389,44 @@ async function autoAssignTrucks() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                         <button style={styles.pickTempBtn} onClick={() => { setShowDuplicateModal(false); openEdit(r); }}>開く</button>
+                        <button style={styles.pickTempBtn} onClick={() => keepOnlyInDuplicateGroup(group, r.id)}>これを残して他を削除</button>
+                        <button style={{ ...styles.pickTempBtn, color: '#C1121F', borderColor: '#E8B4B4' }} onClick={() => deleteFromDuplicateGroup(r)}>🗑 これを削除</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddressDupModal && (
+        <div style={styles.overlay} onClick={() => setShowAddressDupModal(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>同じ住所で日付違いの登録</div>
+              <button style={styles.closeBtn} onClick={() => setShowAddressDupModal(false)}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: '#8A8A83', marginBottom: 8 }}>
+              日程変更などで古い日付の分が消えずに残っている可能性があります。同じ予定であれば片方を削除してください（別の棟・別の予定であれば、そのままで問題ありません）。
+            </div>
+            <div style={{ marginTop: 4, maxHeight: 420, overflowY: 'auto' }}>
+              {findAddressDuplicateGroups().length === 0 && (
+                <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>今は住所違いの重複はなさそうです</div>
+              )}
+              {findAddressDuplicateGroups().map((group, gi) => (
+                <div key={gi} style={{ marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #EFEDE6' }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>{group[0].address}（{group.length}件）</div>
+                  {group.map((r) => (
+                    <div key={r.id} style={styles.extraPickRow}>
+                      <div>
+                        <div style={{ fontSize: 12.5 }}>{r.date}／{r.name}</div>
+                        <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.kumiten || '工務店未設定'}／担当：{r.staff || '不明'}／監督：{r.supervisorName || '未入力'}</div>
+                        <div style={{ fontSize: 11.5, color: '#8A8A83' }}>登録：{r.createdAt ? formatDateTime(r.createdAt) : '不明'}</div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                        <button style={styles.pickTempBtn} onClick={() => { setShowAddressDupModal(false); openEdit(r); }}>開く</button>
                         <button style={styles.pickTempBtn} onClick={() => keepOnlyInDuplicateGroup(group, r.id)}>これを残して他を削除</button>
                         <button style={{ ...styles.pickTempBtn, color: '#C1121F', borderColor: '#E8B4B4' }} onClick={() => deleteFromDuplicateGroup(r)}>🗑 これを削除</button>
                       </div>
