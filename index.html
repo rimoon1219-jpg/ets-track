@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-117';
+  window.__APP_VERSION__ = '2026-09-20-119';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1168,6 +1168,8 @@ function GenbaTracker() {
   const [schedRecords, setSchedRecords] = useState([]);
   const [mgmtRecords, setMgmtRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  // 起動直後、前回のキャッシュを即表示している間だけtrue。件数が古い可能性があることに気づけるよう表示する
+  const [syncingFromCache, setSyncingFromCache] = useState(false);
   const [toast, setToast] = useState('');
 
   const [search, setSearch] = useState('');
@@ -1205,6 +1207,10 @@ function GenbaTracker() {
   const [showAddExtraSite, setShowAddExtraSite] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [showAddressDupModal, setShowAddressDupModal] = useState(false);
+  // 「これを残して他を削除」のタップ確認。一部端末（タブレット等）でwindow.confirm()の
+  // ネイティブダイアログが表示・反応しないことがあるため、window.confirmに頼らず
+  // アプリ内の確認モーダルで代用する。
+  const [dupConfirm, setDupConfirm] = useState(null); // { group, keepId }
   const [showTrash, setShowTrash] = useState(false);
   const [trashItems, setTrashItems] = useState([]);
   const [trashSelected, setTrashSelected] = useState([]);
@@ -1359,6 +1365,7 @@ function GenbaTracker() {
       if (cached.kumiten) setKumitenList(cached.kumiten);
       if (cached.todos) setTodos(cached.todos);
       setLoading(false);
+      setSyncingFromCache(true);
     }
     // 裏側で最新データを取りに行き、取れ次第差し替える
     load();
@@ -1605,6 +1612,7 @@ function GenbaTracker() {
       setCachedRecords(sItems, mItems, list, tItems);
     } catch (e) { console.error(e); }
     setLoading(false);
+    setSyncingFromCache(false);
   }
 
   const QUICK_TODO_TAGS = ['工程表画像添付', '監督連絡', '社長連絡'];
@@ -2744,7 +2752,7 @@ async function autoAssignTrucks() {
     const keep = group.find((r) => r.id === keepId);
     const others = group.filter((r) => r.id !== keepId);
     if (!keep || others.length === 0) return;
-    if (!window.confirm(`「${group[0].name}」（${group[0].date}）の重複${others.length}件を削除して、選んだ1件だけ残します。他の項目にしか入っていない監督名・電話などは自動で引き継ぎます。よろしいですか？（削除した分はゴミ箱から30日間復元できます）`)) return;
+    // 確認はアプリ内の専用モーダル（dupConfirm）側で先に済ませているので、ここでは実行するだけ。
     lastLocalWriteRef.current = Date.now();
     const { merged, changed } = mergeFilledFields(keep, others);
     const ids = others.map((r) => r.id);
@@ -3679,6 +3687,9 @@ async function autoAssignTrucks() {
           <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
           <div style={styles.brandSub}>
             {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'todo' ? 'TODO・伝達（新規入力スタッフ用）' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
+            {!loading && syncingFromCache && (tab === 'sched' || tab === 'mgmt') && (
+              <span style={styles.syncingTag}>🔄 最新件数を確認中…</span>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
@@ -5475,7 +5486,7 @@ async function autoAssignTrucks() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                         <button style={styles.pickTempBtn} onClick={() => { setShowDuplicateModal(false); openEdit(r); }}>開く</button>
-                        <button style={styles.pickTempBtn} onClick={() => keepOnlyInDuplicateGroup(group, r.id)}>これを残して他を削除</button>
+                        <button style={styles.pickTempBtn} onClick={() => setDupConfirm({ group, keepId: r.id })}>これを残して他を削除</button>
                       </div>
                     </div>
                   ))}
@@ -5512,12 +5523,39 @@ async function autoAssignTrucks() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                         <button style={styles.pickTempBtn} onClick={() => { setShowAddressDupModal(false); openEdit(r); }}>開く</button>
-                        <button style={styles.pickTempBtn} onClick={() => keepOnlyInDuplicateGroup(group, r.id)}>これを残して他を削除</button>
+                        <button style={styles.pickTempBtn} onClick={() => setDupConfirm({ group, keepId: r.id })}>これを残して他を削除</button>
                       </div>
                     </div>
                   ))}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dupConfirm && (
+        <div style={{ ...styles.overlay, zIndex: 4000 }} onClick={() => setDupConfirm(null)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>確認</div>
+              <button style={styles.closeBtn} onClick={() => setDupConfirm(null)}>✕</button>
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.7, margin: '6px 0 18px' }}>
+              「{dupConfirm.group[0].name}」（{dupConfirm.group[0].date}）の重複{dupConfirm.group.length - 1}件を削除して、選んだ1件だけ残します。他の項目にしか入っていない監督名・電話などは自動で引き継ぎます。よろしいですか？（削除した分はゴミ箱から30日間復元できます）
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button style={styles.pickTempBtn} onClick={() => setDupConfirm(null)}>キャンセル</button>
+              <button
+                style={{ ...styles.pickTempBtn, background: '#B33A3A', color: '#fff', borderColor: '#B33A3A' }}
+                onClick={() => {
+                  const { group, keepId } = dupConfirm;
+                  setDupConfirm(null);
+                  keepOnlyInDuplicateGroup(group, keepId);
+                }}
+              >
+                削除する
+              </button>
             </div>
           </div>
         </div>
@@ -5718,6 +5756,8 @@ const styles = {
   brand: { fontSize: 22, fontWeight: 700, letterSpacing: '0.01em' },
   brandTag: { fontSize: 10.5, color: '#2A9D8F', fontWeight: 700, letterSpacing: '0.06em', marginTop: 1 },
   brandSub: { fontSize: 13, color: '#8A8A83', marginTop: 3 },
+  // 起動直後、前回のキャッシュ件数を表示している間だけ出す控えめな注記
+  syncingTag: { fontSize: 11, color: '#B08A2E', marginLeft: 6 },
   addBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 14px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   tabRow: { display: 'flex', gap: 8, marginBottom: 14 },
   tabBtn: { flex: 1, background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, padding: '10px', fontSize: 14, fontWeight: 600, color: '#8A8A83', cursor: 'pointer' },
