@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-106';
+  window.__APP_VERSION__ = '2026-09-20-108';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -427,6 +427,49 @@ const TODO_VIEWERS = ['洋子', '本城', '酒井'];
 const TODO_TARGET_PICKER_STAFF = '洋子';
 
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
+
+// 工務店ごとの請求締め日（社長から確認済みの分だけ。'eom'＝月末、数字＝毎月その日）。
+// 未確認・未指定の工務店はここに含めず、締め日リマインドの対象外にする
+// （曖昧なまま「多分月末だろう」と決めつけると、実際に違った時に見落としの原因になるため）。
+const KUMITEN_CLOSING_DAY = {
+  'アール': 'eom',
+  '成也': 20,
+  'グローバル': 25,
+  'レジェンド': 'eom',
+  '根本': 'eom',
+  'リムクラフト': 'eom',
+  'ルークリア': 'eom',
+  'メルディア': 20,
+  'ケイアイ': 'eom',
+  'アオイ': 25,
+  'カマクラ': 'eom',
+  'スキルド': 'eom',
+  'ひかり': 25,
+  'OHA': 25,
+  'OHD': 25,
+  '一般': 'eom',
+  'レイオン': 'eom',
+  'ビルド': 20,
+};
+// 締め日の何日前からリマインドを出すか
+const CLOSING_REMINDER_LEAD_DAYS = 5;
+// dayRule（'eom' or 1〜31）から見て、fromDateStr（YYYY-MM-DD）以降で一番近い締め日を計算する
+function nextClosingDate(dayRule, fromDateStr) {
+  const from = new Date(`${fromDateStr}T00:00:00`);
+  const lastDayOfMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+  let y = from.getFullYear();
+  let m = from.getMonth();
+  let day = dayRule === 'eom' ? lastDayOfMonth(y, m) : dayRule;
+  let candidate = new Date(y, m, day);
+  if (candidate < from) {
+    m += 1;
+    if (m > 11) { m = 0; y += 1; }
+    day = dayRule === 'eom' ? lastDayOfMonth(y, m) : dayRule;
+    candidate = new Date(y, m, day);
+  }
+  const diffDays = Math.round((candidate - from) / 86400000);
+  return { dateStr: `${candidate.getFullYear()}-${String(candidate.getMonth() + 1).padStart(2, '0')}-${String(candidate.getDate()).padStart(2, '0')}`, diffDays };
+}
 // 電子マニフェストを使っている工務店（この4社だけは、ハウスNo・監督名が必須。今後増える可能性あり）
 const MANIFEST_KUMITEN = ['OHA', 'OHD', 'アオイ', 'メルディア'];
 //↑のうち、実際にETS TRACK側でハウスNo・監督名を管理する必要があるのはこの3社だけ。
@@ -3345,6 +3388,12 @@ async function autoAssignTrucks() {
   const invoiceDismissedItems = mgmtRecords.filter((r) => (r.status === '追加' || r.status === '単発') && r.invoiceDismissed)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
+  // 締め日が近い工務店のリマインド（請求書タブの中だけに出す。TODO/伝達には出さない＝新規入力スタッフには関係ないため）
+  const closingReminders = Object.entries(KUMITEN_CLOSING_DAY)
+    .map(([kumiten, dayRule]) => ({ kumiten, ...nextClosingDate(dayRule, todayStr()) }))
+    .filter((x) => x.diffDays <= CLOSING_REMINDER_LEAD_DAYS)
+    .sort((a, b) => a.diffDays - b.diffDays);
+
   async function dismissInvoiceItem(record) {
     const updated = { ...record, invoiceDismissed: true };
     try {
@@ -4390,6 +4439,18 @@ async function autoAssignTrucks() {
             </div>
           ) : (
             <>
+              {closingReminders.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={styles.areaGroupTitle}>📅 締め日が近い工務店</div>
+                  {closingReminders.map((c) => (
+                    <div key={c.kumiten} style={{ ...styles.nearbyHintRow, ...(c.diffDays <= 0 ? { borderColor: '#E63946', background: '#E639461A', fontWeight: 700 } : {}) }}>
+                      {c.diffDays <= 0 ? '⚠️ 本日締め：' : `あと${c.diffDays}日で締め：`}<b>{c.kumiten}</b>（{c.dateStr}）
+                      {c.kumiten === 'OHA' || c.kumiten === 'OHD' ? '　※件数が多いので締め日を待たず早めに' : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div style={styles.areaGroupTitle}>🔔 確認待ち（「追加」「単発」で金額未入力のもの・全工務店）</div>
               {invoicePendingItems.length === 0 && <div style={styles.empty}>確認待ちの項目はありません</div>}
               {invoicePendingItems.map((record) => (
@@ -4682,11 +4743,27 @@ async function autoAssignTrucks() {
                     // 確認する運用のため、ハウスNoが未入力の時だけ「対象外」を自動で入れておく（情報不足リストにも出なくなる）
                     houseNumber: (tab === 'sched' && k === 'メルディア' && !(f.houseNumber || '').trim()) ? '対象外' : f.houseNumber,
                   }))}
-                  style={{ ...styles.statusOption, borderColor: form.kumiten === k ? '#2A9D8F' : '#E5E3DC', background: form.kumiten === k ? '#2A9D8F1A' : '#fff' }}
+                  style={{
+                    ...styles.statusOption,
+                    // 「その他」は、タブに登録していない工務店名を直接入力した場合もアクティブ表示にする
+                    borderColor: (form.kumiten === k || (k === 'その他' && form.kumiten && !kumitenList.includes(form.kumiten))) ? '#2A9D8F' : '#E5E3DC',
+                    background: (form.kumiten === k || (k === 'その他' && form.kumiten && !kumitenList.includes(form.kumiten))) ? '#2A9D8F1A' : '#fff',
+                  }}
                 >{k}</button>
               ))}
               <button type="button" onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
             </div>
+            {(form.kumiten === 'その他' || (form.kumiten && !kumitenList.includes(form.kumiten))) && (
+              <input
+                style={styles.input}
+                value={form.kumiten === 'その他' ? '' : form.kumiten}
+                onChange={(e) => {
+                  const typed = e.target.value;
+                  setForm((f) => ({ ...f, kumiten: typed.trim() ? typed : 'その他' }));
+                }}
+                placeholder="工務店名を入力（タブに無い工務店の時。あとで「編集・並び替え」から正式にタブへ追加もできます）"
+              />
+            )}
 
             {tab === 'sched' && (
               <>
