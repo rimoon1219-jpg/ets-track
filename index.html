@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-112';
+  window.__APP_VERSION__ = '2026-09-20-113';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1657,13 +1657,17 @@ function GenbaTracker() {
   async function saveEditTodo(t) {
     const text = editingTodoText.trim();
     if (!text) { showToast('内容を入力してください'); return; }
-    const next = { ...t, text };
+    // 自分以外の誰かがすでに「見た」を押していたら、その人はもう一度見に来てくれるとは限らないので日時はそのまま。
+    // 逆に、まだ自分しか見ていない（＝相手にまだ届いていない）うちに直した場合は、書き直した今の日時に更新する。
+    const me = getDeviceStaff();
+    const othersSeen = (t.seenBy || []).some((s) => seenName(s) && seenName(s) !== me);
+    const next = othersSeen ? { ...t, text } : { ...t, text, createdAt: new Date().toISOString() };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
     setEditingTodoId(null);
     setEditingTodoText('');
-    showToast('修正しました');
+    showToast(othersSeen ? '修正しました' : '修正しました（日時も更新しました）');
   }
 
   // 座標だけが入っていて、ちゃんとした住所になっていないものを検出（例：35.331,139.445 など）
