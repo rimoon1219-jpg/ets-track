@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-108';
+  window.__APP_VERSION__ = '2026-09-20-109';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1190,6 +1190,7 @@ function GenbaTracker() {
   const [todoUnlocked, setTodoUnlocked] = useState(false);
   const [showStaffManager, setShowStaffManager] = useState(false);
   const [revokedStaff, setRevokedStaff] = useState([]);
+  const [dismissedClosings, setDismissedClosings] = useState([]); // 「もうやった」で消した締め日リマインドの一覧（"工務店__締め日"の形。次の締め日が来たら自動的にまた出る）
 
   // dispatch state
   const [dispatchDate, setDispatchDate] = useState(todayStr());
@@ -1575,6 +1576,12 @@ function GenbaTracker() {
         const rv = await storage.get('meta:revokedStaff', true);
         setRevokedStaff(rv && rv.value ? JSON.parse(rv.value) : []);
       } catch (e) { setRevokedStaff([]); }
+
+      // 「もうやった」で消した締め日リマインド（"工務店__締め日"の組み合わせ。次の月の締め日になったら自動でまた表示される）
+      try {
+        const dc = await storage.get('meta:dismissedClosings', true);
+        setDismissedClosings(dc && dc.value ? JSON.parse(dc.value) : []);
+      } catch (e) { setDismissedClosings([]); }
 
       async function fetchGroup(prefix) {
         return storage.listWithValues(`${prefix}:`);
@@ -3389,10 +3396,19 @@ async function autoAssignTrucks() {
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   // 締め日が近い工務店のリマインド（請求書タブの中だけに出す。TODO/伝達には出さない＝新規入力スタッフには関係ないため）
+  // 「もうやった」で消した分（今回の締め日と一致するもの）は表示しない。次の月の締め日になれば自動的にまた出る
   const closingReminders = Object.entries(KUMITEN_CLOSING_DAY)
     .map(([kumiten, dayRule]) => ({ kumiten, ...nextClosingDate(dayRule, todayStr()) }))
     .filter((x) => x.diffDays <= CLOSING_REMINDER_LEAD_DAYS)
+    .filter((x) => !dismissedClosings.includes(`${x.kumiten}__${x.dateStr}`))
     .sort((a, b) => a.diffDays - b.diffDays);
+
+  async function dismissClosingReminder(kumiten, dateStr) {
+    const key = `${kumiten}__${dateStr}`;
+    const next = [...dismissedClosings, key];
+    setDismissedClosings(next);
+    try { await storage.set('meta:dismissedClosings', JSON.stringify(next), true); } catch (e) { /* 保存に失敗しても表示上は消えたままにしておく */ }
+  }
 
   async function dismissInvoiceItem(record) {
     const updated = { ...record, invoiceDismissed: true };
@@ -4443,9 +4459,12 @@ async function autoAssignTrucks() {
                 <div style={{ marginBottom: 14 }}>
                   <div style={styles.areaGroupTitle}>📅 締め日が近い工務店</div>
                   {closingReminders.map((c) => (
-                    <div key={c.kumiten} style={{ ...styles.nearbyHintRow, ...(c.diffDays <= 0 ? { borderColor: '#E63946', background: '#E639461A', fontWeight: 700 } : {}) }}>
-                      {c.diffDays <= 0 ? '⚠️ 本日締め：' : `あと${c.diffDays}日で締め：`}<b>{c.kumiten}</b>（{c.dateStr}）
-                      {c.kumiten === 'OHA' || c.kumiten === 'OHD' ? '　※件数が多いので締め日を待たず早めに' : ''}
+                    <div key={c.kumiten} style={{ ...styles.nearbyHintRow, ...(c.diffDays <= 0 ? { borderColor: '#E63946', background: '#E639461A', fontWeight: 700 } : {}), display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span>
+                        {c.diffDays <= 0 ? '⚠️ 本日締め：' : `あと${c.diffDays}日で締め：`}<b>{c.kumiten}</b>（{c.dateStr}）
+                        {c.kumiten === 'OHA' || c.kumiten === 'OHD' ? '　※件数が多いので締め日を待たず早めに' : ''}
+                      </span>
+                      <button type="button" style={styles.lineItemRemove} onClick={() => dismissClosingReminder(c.kumiten, c.dateStr)} title="もうやった（今回の締め日分だけ消します）">✓</button>
                     </div>
                   ))}
                 </div>
@@ -4923,6 +4942,33 @@ async function autoAssignTrucks() {
 
                 <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
+
+                {editingId && (form.status === '追加' || form.status === '単発') && (() => {
+                  const invRecord = mgmtRecords.find((r) => r.id === editingId);
+                  if (!invRecord) return null;
+                  const items = getEditItems(invRecord);
+                  const dirty = invoiceEdits[invRecord.id] !== undefined;
+                  return (
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={styles.label}>数量・単価（請求書タブの金額入力と同じ内容です）</label>
+                      {items.length === 0 && <div style={{ ...styles.empty, padding: '6px 0' }}>まだ項目がありません</div>}
+                      {items.map((item, idx) => (
+                        <div key={idx} style={styles.lineItemRow}>
+                          <input style={styles.lineItemName} placeholder="名称（例：混合）" value={item.name} onChange={(e) => updateInvoiceLineItem(invRecord, idx, 'name', e.target.value)} />
+                          <input style={styles.lineItemSmall} placeholder="数量" value={item.qty} onChange={(e) => updateInvoiceLineItem(invRecord, idx, 'qty', e.target.value)} inputMode="decimal" />
+                          <input style={styles.lineItemSmall} placeholder="単位" value={item.unit} onChange={(e) => updateInvoiceLineItem(invRecord, idx, 'unit', e.target.value)} />
+                          <input style={styles.lineItemSmall} placeholder="単価" value={item.unitPrice} onChange={(e) => updateInvoiceLineItem(invRecord, idx, 'unitPrice', e.target.value)} inputMode="decimal" />
+                          <span style={styles.lineItemAmount}>¥{lineItemAmount(item).toLocaleString()}</span>
+                          <button type="button" style={styles.lineItemRemove} onClick={() => removeInvoiceLineItem(invRecord, idx)}>✕</button>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                        <button type="button" style={styles.dupBtn} onClick={() => addInvoiceLineItem(invRecord)}>＋ 項目を追加</button>
+                        {dirty && <button type="button" style={styles.handoffBtn} onClick={() => saveInvoiceLineItems(invRecord)}>保存</button>}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <label style={styles.label}>写真（この場でまとめて追加できます。保存時にアップロードされます）</label>
                 <input
