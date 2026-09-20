@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-119';
+  window.__APP_VERSION__ = '2026-09-20-120';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2749,8 +2749,41 @@ async function autoAssignTrucks() {
   // グループ内の選んだ1件以外をまとめてゴミ箱送りにする（30日間は復元可能）。
   // その際、削除する方にしか入っていなかった情報は残す方へ自動で引き継ぐ。
   async function keepOnlyInDuplicateGroup(group, keepId) {
-    const keep = group.find((r) => r.id === keepId);
+    const sameIdAsKeep = group.filter((r) => r.id === keepId);
     const others = group.filter((r) => r.id !== keepId);
+    // まれに、保存時の通信トラブルなどでバックエンド側に「同じキーの行」が2つできてしまうことがある。
+    // その場合、グループ内の全レコードが同じidを持つため、id基準の比較では「残す方／消す方」を
+    // 区別できず、通常の削除ロジック（idで絞り込む）が静かに何もしないまま終わってしまう。
+    // このケースでは、同じidの行を一旦削除してから、新しいidを振り直して1件だけ保存し直すことで、
+    // バックエンド側の二重行を確実に1件へ統合する。
+    if (others.length === 0 && sameIdAsKeep.length > 1) {
+      const keep = sameIdAsKeep[0];
+      lastLocalWriteRef.current = Date.now();
+      const newId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const resaved = { ...keep, id: newId };
+      setSchedRecords((prev) => {
+        let kept = false;
+        return prev
+          .filter((r) => {
+            if (r.id !== keepId) return true;
+            if (kept) return false; // 同じidの2件目以降は画面から消す
+            kept = true;
+            return false; // 元の1件目もいったん外し、下でnewIdの1件に差し替える
+          })
+          .concat([resaved]);
+      });
+      try {
+        await storage.set(`trash:${keepId}`, JSON.stringify({ ...keep, _type: 'sched', deletedAt: new Date().toISOString() }), true);
+        await storage.delete(`sched:${keepId}`, true);
+        await storage.set(`sched:${newId}`, JSON.stringify(resaved), true);
+        showToast('重複していたデータを1件にまとめました（元のデータはゴミ箱に30日間残ります）');
+      } catch (e) {
+        showToast('統合に失敗しました。もう一度お試しください');
+        load();
+      }
+      return;
+    }
+    const keep = sameIdAsKeep[0];
     if (!keep || others.length === 0) return;
     // 確認はアプリ内の専用モーダル（dupConfirm）側で先に済ませているので、ここでは実行するだけ。
     lastLocalWriteRef.current = Date.now();
