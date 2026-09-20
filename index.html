@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-20-126';
+  window.__APP_VERSION__ = '2026-09-21-127';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1606,15 +1606,19 @@ function GenbaTracker() {
       try {
         const km = await storage.get('meta:kumiten', true);
         list = DEFAULT_KUMITEN;
+        let kumitenChanged = !km || !km.value; // まだ何も保存されていない時だけ新規保存が必要
         if (km && km.value) {
           list = JSON.parse(km.value);
           const missing = DEFAULT_KUMITEN.filter((n) => n !== 'その他' && !list.includes(n));
           if (missing.length > 0) {
             const others = list.filter((k) => k !== 'その他');
             list = list.includes('その他') ? [...others, ...missing, 'その他'] : [...list, ...missing];
+            kumitenChanged = true;
           }
         }
-        await storage.set('meta:kumiten', JSON.stringify(list), true);
+        // 変更がない時は毎回書き込まない（自動更新（45秒ごと）のたびに不要な送信が発生し、
+        // 「未送信」バッジが一瞬出て画面がガクッと動く原因になっていたため）
+        if (kumitenChanged) await storage.set('meta:kumiten', JSON.stringify(list), true);
         setKumitenList(list);
       } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
 
@@ -6025,7 +6029,9 @@ const styles = {
   memoHintBadge: { background: '#F0EFE9', color: '#5A5A54', border: '1px solid #D8D5CB', borderRadius: 999, padding: '3px 10px', fontSize: 11.5, cursor: 'pointer' },
   lockIconBtn: { background: '#fff', border: '1px solid #E5E3DC', borderRadius: 10, width: 40, fontSize: 14, cursor: 'pointer' },
   staffChip: { background: 'none', border: 'none', color: '#457B9D', fontSize: 11.5, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
-  pendingBadge: { fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '2px 7px', fontWeight: 700 },
+  // position:fixed にして、表示・非表示が切り替わってもページ全体のレイアウトが動かないようにする
+  // （以前は他のボタンと同じ並びに置いていたため、出現・消滅のたびに画面がガクッと上下していた）
+  pendingBadge: { position: 'fixed', top: 8, right: 8, zIndex: 3000, fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '4px 9px', fontWeight: 700, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' },
   dupWarningBar: { background: '#FDECEA', color: '#B3261E', fontSize: 13, fontWeight: 700, padding: '10px 14px', margin: '0 16px 8px', borderRadius: 8, cursor: 'pointer' },
   todoAddBox: { background: '#F7F6F1', borderRadius: 10, padding: 12, marginTop: 10 },
   showMoreBtn: { display: 'block', width: '100%', textAlign: 'center', background: '#fff', border: '1px dashed #D8D6CC', color: '#457B9D', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', marginTop: 4 },
