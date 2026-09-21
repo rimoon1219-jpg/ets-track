@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-129';
+  window.__APP_VERSION__ = '2026-09-21-131';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -442,6 +442,10 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・特定済み現場データを編集＝マニフェスト調査でわかった「現場名・ハウスNo・監督名・確認日」を工務店ごとに保存しておく虎の巻。参考ファイルの行をほぼそのまま貼り付けOK。
 ・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。
 順番：虎の巻を最新化→照合を実行、の流れ。
+
+■ 📎 工程表添付（予定表・管理表のカードから直接ON/OFF）
+・各カードの「📎工程表添付」タグをタップするだけで、現場名・日付が自動で入った状態でTODO（タスク）に追加される。もう一度タップすると外れる（TODO側も自動で消える）
+・TODO側で「工程表画像添付」タスクの専用添付ボタンから写真を選ぶと、その現場（予定表）に写真が追加されてタスクも自動で「やった」になる（現場名・日付が完全一致する予定表の記録に添付される）
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -1792,6 +1796,26 @@ function GenbaTracker() {
     setTodos((prev) => [record, ...prev]);
     if (!overrides) { setTodoText(''); setTodoSiteName(''); setTodoDate(''); }
     return record;
+  }
+
+  // 予定表・管理表のカードから直接「工程表添付」をON/OFFするための機能。
+  // 以前はTODOタブを開いて現場名・曜日を自分で入力し直す必要があり手間だったため、
+  // カード側のタグをワンタップするだけで、現場名・日付が入った状態でTODOに追加／削除できるようにする。
+  // （TODO側のクイックタグ「工程表画像添付」で手動追加された分も同じ条件でここに反映される）
+  // 現場名＋日付の完全一致で判定する（予定表・管理表は別々の記録なので、idでは紐付けない。
+  // TODO側の「工程表画像添付」タスクからの写真添付〜自動完了も現場名＋日付でマッチさせているため、揃えている）
+  function ganttAttachTodoFor(r) {
+    return todos.find((t) => !t.archived && t.text === '工程表画像添付' && t.siteName === r.name && (!t.date || t.date === r.date));
+  }
+  async function toggleGanttAttach(r) {
+    const existing = ganttAttachTodoFor(r);
+    if (existing) {
+      await completeTodo(existing.id);
+      showToast('工程表添付タスクを外しました');
+    } else {
+      await addTodo({ text: '工程表画像添付', siteName: r.name, date: r.date, todoType: 'task' });
+      showToast('工程表添付タスクをTODOに追加しました');
+    }
   }
 
   // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
@@ -4148,6 +4172,20 @@ async function autoAssignTrucks() {
                     {r.area && <span style={styles.areaTag}>{r.area}</span>}
                     <span style={styles.dateText}>{r.date}</span>
                     {r.staff && <span style={styles.staffInline}>・{r.staff}</span>}
+                    {(tab === 'sched' || tab === 'mgmt') && (ryubeiUnlocked || todoUnlocked) && (() => {
+                      // TODOタブを開けない（合言葉を知らない）スタッフが誤って触ると、本人には見えない
+                      // タスクが黙って追加／削除されてしまい気付きにくいため、TODOタブを開ける人
+                      // （8989または4455を解除済み）にだけこのタグを表示する。
+                      const active = !!ganttAttachTodoFor(r);
+                      return (
+                        <span
+                          onClick={(e) => { e.stopPropagation(); toggleGanttAttach(r); }}
+                          style={{ ...styles.ganttAttachBadge, ...(active ? styles.ganttAttachBadgeActive : {}) }}
+                        >
+                          {active ? '✓ 📎工程表添付' : '📎工程表添付'}
+                        </span>
+                      );
+                    })()}
                     {tab === 'sched' && (() => {
                       // 回数バッジは以前、時間・軽トラ・ガラ袋バッジのすぐ後ろ（左はじ寄り）に出ていて
                       // 見つけにくかったので、管理表の「◯回目」と同じく右端（日付・担当者の後ろ）に
@@ -6382,6 +6420,8 @@ const styles = {
   garaBadge: { fontSize: 12, background: '#FF8C00', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800, boxShadow: '0 0 0 1px #C96A00 inset' },
   recycleBadge: { fontSize: 12, background: '#0E9F6E', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800, marginLeft: 6, boxShadow: '0 0 0 1px #0B7A55 inset' },
   keiBadge: { fontSize: 12, background: '#5B21B6', color: '#fff', borderRadius: 6, padding: '3px 8px', fontWeight: 800, boxShadow: '0 0 0 1px #3F1583 inset' },
+  ganttAttachBadge: { fontSize: 12, background: '#F0F0EC', color: '#8A8A83', borderRadius: 6, padding: '3px 8px', fontWeight: 700, cursor: 'pointer', border: 'none' },
+  ganttAttachBadgeActive: { background: '#EDE7F6', color: '#5E35B1', boxShadow: '0 0 0 1px #B39DDB inset' },
   keiToggleOn: { borderColor: '#5B21B6', background: '#EFE7FB', color: '#3F1583', fontWeight: 700 },
   visitBadge: { fontSize: 11, color: '#6B6B63', fontWeight: 700, background: '#F0EFE9', borderRadius: 6, padding: '2px 6px' },
   visitBadgeOver: { color: '#fff', background: '#E63946' },
