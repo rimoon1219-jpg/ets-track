@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-142';
+  window.__APP_VERSION__ = '2026-09-21-143';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -455,7 +455,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・「工程表添付」タグを付けた後に、予定表側で編集してその現場の日付を変えても、TODO側の表示（日付・現場名・写真の有無）はちゃんと今の内容に追従する。「移動」ボタンで新しい現場データとして複製した場合も、タグは自動的に新しい現場の方へ引き継がれるので、付け直す必要はない
 ・「移動」すると現場写真は基本リセットされる（新しい現場でまた撮り直す前提のため）が、工程表として貼った画像は自動でそのままコピーされるので貼り直し不要。駐車禁止の写真など「移動しても絶対に残しておきたい写真」は、写真の下にある「📌固定する」ボタンを押しておくと、工程表画像と同じように移動時も自動でコピーされる（固定を外したい時はもう一度押す）
 ・間違えて普通の「＋写真」から工程表画像を貼ってしまった時は、その写真の下の「📋工程表にする」ボタンを押せば、あとから工程表として登録し直せる（押すと、その現場に「工程表画像添付」タスクが残っていれば自動で「やった」になり、次の「移動」でも自動コピーの対象になる）
-・カード本体の写真は、小さいサムネイルのままでは結局タップしないと中身が読めないため、普段は「📷 N枚 ▼開く」という小さいボタンだけにして畳んである。タップすると横スクロールの写真帯が開き、もう一度タップすると閉じる（写真のないカードと見た目の高さが揃うので、一覧が写真の枚数で間延びしない）
+・カード本体の写真は、小さいサムネイルのままでは結局タップしないと中身が読めないため、普段は「📷 N枚 ▼開く」という小さいボタンだけにして畳んである。タップすると横スクロールの写真帯が開き、もう一度タップすると閉じる（写真のないカードと見た目の高さが揃うので、一覧が写真の枚数で間延びしない）。同時に開けるのは常に1件だけで、別のカードを開くと前に開いていたカードは自動で閉じる。「閉じる」を押し忘れても、タブを切り替えると自動的に閉じる
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -1319,15 +1319,13 @@ function GenbaTracker() {
   const [editingId, setEditingId] = useState(null);
   // カード本体の写真帯は、小さいサムネイルだけでは結局中身が読めない（工程表の文字など）ため、
   // デフォルトは「📷 N枚」の小さいボタンだけにして畳んでおき、タップした時だけ帯を開く。
-  // 写真がないカードと高さが揃うので、一覧が縦に間延びしない。
-  const [expandedPhotoIds, setExpandedPhotoIds] = useState(() => new Set());
+  // 「閉じる」を押し忘れても画面が間延びしないよう、同時に開けるのは常に1件だけにする
+  // （別のカードを開くと、前に開いていたカードは自動で閉じる）。タブを切り替えた時も自動で閉じる。
+  const [expandedPhotoId, setExpandedPhotoId] = useState(null);
   function togglePhotoExpand(id) {
-    setExpandedPhotoIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    setExpandedPhotoId((prev) => (prev === id ? null : id));
   }
+  useEffect(() => { setExpandedPhotoId(null); }, [tab]);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkFrom, setBulkFrom] = useState('');
   const [bulkTo, setBulkTo] = useState('');
@@ -4500,12 +4498,12 @@ async function autoAssignTrucks() {
                         普段は「📷 N枚」の小さいボタンだけにして畳んでおく。写真がないカードと高さが揃う。 */}
                     {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && (
                       <button type="button" style={styles.dupBtn} onClick={() => togglePhotoExpand(r.id)}>
-                        📷 {(r.photos || []).length}枚 {expandedPhotoIds.has(r.id) ? '▲閉じる' : '▼開く'}
+                        📷 {(r.photos || []).length}枚 {expandedPhotoId === r.id ? '▲閉じる' : '▼開く'}
                       </button>
                     )}
                   </div>
                 </div>
-                {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && expandedPhotoIds.has(r.id) && (
+                {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && expandedPhotoId === r.id && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
                       <PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} />
