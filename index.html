@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-127';
+  window.__APP_VERSION__ = '2026-09-21-128';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -418,6 +418,11 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・特定済み現場データを編集＝マニフェスト調査でわかった「現場名・ハウスNo・監督名・確認日」を工務店ごとに保存しておく虎の巻。参考ファイルの行をほぼそのまま貼り付けOK。
 ・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。
 順番：虎の巻を最新化→照合を実行、の流れ。
+
+■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
+・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
+・開いてチェックが入った分を「コピーして一覧から消す」→そのままClaudeのチャットに貼り付ければ、マニフェスト業務プロジェクトの該当ファイルを更新してもらえる
+・気付いた瞬間に言わなくても、後でまとめて確認して貼ればOK。コピーした内容は自動で一覧から消える（また値が変わったら改めて出てくる）
 
 ■ 請求書タブ（社長・洋子さん専用）
 ・上部「確認待ち」＝ステータスが追加/単発なのに金額未入力の現場が全工務店分まとめて出る
@@ -1320,6 +1325,12 @@ function GenbaTracker() {
   const [reconcileChecked, setReconcileChecked] = useState({});
   const [reconcileBusy, setReconcileBusy] = useState(false);
   const [nearMatches, setNearMatches] = useState([]);
+  // 「監督名・ハウスNoがETS TRACK側では入力／変更されたのに、マニフェスト業務プロジェクトの
+  // 特定済み現場データ（虎の巻）にまだ反映されていない」ものを溜めておき、洋子さんの好きな
+  // タイミングでまとめてコピーしてClaudeに貼れるようにする機能。
+  const [showManifestPushModal, setShowManifestPushModal] = useState(false);
+  const [manifestPushChecked, setManifestPushChecked] = useState({});
+  const [dismissedManifestPush, setDismissedManifestPush] = useState([]);
   const [todos, setTodos] = useState([]);
   const [todoText, setTodoText] = useState('');
   const [todoSiteName, setTodoSiteName] = useState('');
@@ -1683,6 +1694,13 @@ function GenbaTracker() {
         const dc = await storage.get('meta:dismissedClosings', true);
         setDismissedClosings(dc && dc.value ? JSON.parse(dc.value) : []);
       } catch (e) { setDismissedClosings([]); }
+
+      // 「マニフェスト側に反映した」とマークした内容（工務店＋現場名＋監督名＋ハウスNoの組み合わせ）。
+      // 同じ内容のうちはもう一覧に出さないが、また値が変わればそれは新しい未反映として出す
+      try {
+        const mp = await storage.get('meta:dismissedManifestPush', true);
+        setDismissedManifestPush(mp && mp.value ? JSON.parse(mp.value) : []);
+      } catch (e) { setDismissedManifestPush([]); }
 
       async function fetchGroup(prefix) {
         return storage.listWithValues(`${prefix}:`);
@@ -3448,6 +3466,68 @@ async function autoAssignTrucks() {
     });
     return near;
   }
+
+  // 「監督名・ハウスNoがETS TRACK側では入力／変更されたのに、マニフェスト業務プロジェクトの
+  // 特定済み現場データ（虎の巻）にまだ反映されていない」ものを一覧にする。現場名完全一致のみ対象
+  // （あいまい一致はしない）。虎の巻を最新化してこの画面に貼り直せば自動的に一致して消えるが、
+  // それを待たずに「反映した」と自分でマークして一覧から消すこともできる（dismissedManifestPush）。
+  function findManifestPushCandidates() {
+    const map = new Map();
+    schedRecords.forEach((r) => {
+      if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
+      const siteName = (r.name || '').trim();
+      const supervisorName = (r.supervisorName || '').trim();
+      const houseNumber = (r.houseNumber || '').trim();
+      if (!siteName || (!supervisorName && !houseNumber)) return;
+      const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === siteName);
+      const siteSupervisor = (site && site.supervisorName || '').trim();
+      const siteHouseNumber = (site && site.houseNumber || '').trim();
+      if (supervisorName === siteSupervisor && houseNumber === siteHouseNumber) return; // 虎の巻と同じなら対象外
+      const fingerprint = `${r.kumiten}__${siteName}__${supervisorName}__${houseNumber}`;
+      if (dismissedManifestPush.includes(fingerprint)) return; // 「反映した」とマーク済みの内容と同じならスキップ
+      const key = `${r.kumiten}__${siteName}`;
+      const existing = map.get(key);
+      if (!existing || (r.date || '') > (existing.date || '')) {
+        map.set(key, {
+          fingerprint,
+          kumiten: r.kumiten,
+          siteName,
+          supervisorName,
+          houseNumber,
+          supervisorPhone: (r.supervisorPhone || '').trim(),
+          date: r.date || '',
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.kumiten.localeCompare(b.kumiten) || a.siteName.localeCompare(b.siteName));
+  }
+
+  function manifestPushClipboardText(items) {
+    const lines = items.map((it) => `${it.kumiten}\t${it.siteName}\t${it.supervisorName}\t${it.houseNumber}\t${it.supervisorPhone}`);
+    return ['工務店\t現場名\t監督名\tハウスNo\t監督電話', ...lines].join('\n');
+  }
+
+  // 選択した分をクリップボードにコピーし、同時に「反映済み」としてマークして一覧から消す
+  // （このチャットに貼り付けてもらえば、マニフェスト業務プロジェクトの該当ファイルをこちらで更新する運用）
+  async function copyAndDismissManifestPush(items) {
+    if (items.length === 0) return;
+    const text = manifestPushClipboardText(items);
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch (e) { /* 下のフォールバックで手動コピーしてもらう */ }
+    const fps = items.map((it) => it.fingerprint);
+    const next = Array.from(new Set([...dismissedManifestPush, ...fps]));
+    setDismissedManifestPush(next);
+    try { await storage.set('meta:dismissedManifestPush', JSON.stringify(next), true); } catch (e) { /* 保存に失敗しても表示上は消えたままにしておく */ }
+    if (copied) {
+      showToast(`${items.length}件コピーしました。このままClaudeのチャットに貼り付けてください`);
+    } else {
+      window.prompt('自動コピーできなかったので、下の内容を選択してコピーしてください', text);
+    }
+  }
+
   async function applyNearMatch(nm) {
     const rec = schedRecords.find((r) => r.id === nm.recordId);
     if (!rec) return;
@@ -3997,6 +4077,19 @@ async function autoAssignTrucks() {
         {tab === 'sched' && (ryubeiUnlocked || todoUnlocked) && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
+        {tab === 'sched' && ryubeiUnlocked && findManifestPushCandidates().length > 0 && (
+          <button
+            style={{ ...styles.linkBtn, marginLeft: 16, color: '#B3261E', fontWeight: 700 }}
+            onClick={() => {
+              const checked = {};
+              findManifestPushCandidates().forEach((it) => { checked[it.fingerprint] = true; });
+              setManifestPushChecked(checked);
+              setShowManifestPushModal(true);
+            }}
+          >
+            📤 マニ側未反映 {findManifestPushCandidates().length}件
+          </button>
+        )}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアのハウスNoに一括で「対象外」を入れる</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
@@ -5616,6 +5709,53 @@ async function autoAssignTrucks() {
           </div>
         </div>
       )}
+
+      {showManifestPushModal && (() => {
+        const items = findManifestPushCandidates();
+        const selected = items.filter((it) => manifestPushChecked[it.fingerprint]);
+        return (
+          <div style={styles.overlay} onClick={() => setShowManifestPushModal(false)}>
+            <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.sheetHeader}>
+                <div style={styles.sheetTitle}>📤 マニフェスト側へ追加が必要な情報</div>
+                <button style={styles.closeBtn} onClick={() => setShowManifestPushModal(false)}>✕</button>
+              </div>
+              <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+                ETS TRACK側で監督名・ハウスNoが入力／変更されたのに、特定済み現場データ（虎の巻）にまだ反映されていないものです。
+                チェックした分をコピーしてこのままClaudeのチャットに貼り付ければ、マニフェスト業務プロジェクトの該当ファイルを更新します。
+                コピーすると、その内容は自動でこの一覧から消えます（値がまた変わったら改めて出てきます）。
+              </div>
+              {items.length === 0 && <div style={{ padding: '16px 4px', color: '#8A8A83', fontSize: 13 }}>今のところありません</div>}
+              <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+                {items.map((it) => (
+                  <label key={it.fingerprint} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!manifestPushChecked[it.fingerprint]}
+                      onChange={(e) => setManifestPushChecked({ ...manifestPushChecked, [it.fingerprint]: e.target.checked })}
+                      style={{ marginTop: 3 }}
+                    />
+                    <div style={{ fontSize: 13 }}>
+                      <div style={{ fontWeight: 700 }}>{it.siteName}（{it.kumiten}）</div>
+                      <div>監督名：{it.supervisorName || '（なし）'}{it.supervisorPhone ? `／電話：${it.supervisorPhone}` : ''}</div>
+                      <div>ハウスNo：{it.houseNumber || '（なし）'}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {items.length > 0 && (
+                <button
+                  style={{ ...styles.saveBtn, marginTop: 10 }}
+                  disabled={selected.length === 0}
+                  onClick={() => copyAndDismissManifestPush(selected)}
+                >
+                  📋 選択した{selected.length}件をコピーして一覧から消す
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {showRenameHistory && (
         <div style={styles.overlay} onClick={() => setShowRenameHistory(false)}>
