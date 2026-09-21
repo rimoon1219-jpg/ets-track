@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-131';
+  window.__APP_VERSION__ = '2026-09-21-134';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -443,9 +443,14 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。
 順番：虎の巻を最新化→照合を実行、の流れ。
 
+■ 監督が1人だけの工務店（例：リムクラフト＝武田さん）
+・予定表・管理表で工務店を選んだ時、監督名がまだ空欄なら「◯◯さんでいいですか？」と確認したうえで自動で監督名・電話番号を入れる（監督名簿にちょうど1人しか登録がない工務店だけ）
+・その工務店の監督が増えたら「⚙監督名簿を編集」でもう1人追加するだけでOK。候補が2人以上になった時点でこの自動確認は出なくなり、以後は通常通り一覧から選ぶ形に戻る
+
 ■ 📎 工程表添付（予定表・管理表のカードから直接ON/OFF）
 ・各カードの「📎工程表添付」タグをタップするだけで、現場名・日付が自動で入った状態でTODO（タスク）に追加される。もう一度タップすると外れる（TODO側も自動で消える）
-・TODO側で「工程表画像添付」タスクの専用添付ボタンから写真を選ぶと、その現場（予定表）に写真が追加されてタスクも自動で「やった」になる（現場名・日付が完全一致する予定表の記録に添付される）
+・「📎工程表添付」タグがON（チェック済み）のカードには、そのすぐ横に専用の「📷工程表を貼る」ボタンが出る。これで貼るとTODO側のタスクも自動で「やった」になる（TODO側の専用添付ボタンから貼った時と同じ）
+・普通の「＋写真」（カードの写真欄）で貼った現場写真は、工程表の画像かどうか見分けがつかないため自動完了の対象にならない。工程表を貼った時はこの専用ボタンを使うのがコツ
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -595,6 +600,12 @@ const DEFAULT_SUPERVISORS = {
     { name: '尾形', phone: '07088352721' },
     { name: '内野', phone: '08065103870' },
     { name: '山中', phone: '08034267252' },
+  ],
+  // リムクラフトは小さい会社で、監督は武田さん1人だけ（洋子さんの指示）。
+  // 監督が増えた時は、ここを直さなくても「⚙監督名簿を編集」からもう1人追加すれば、
+  // 下の「工務店選択時の自動提案」は候補が2人以上になった時点で自然に出なくなり、通常通り一覧から選ぶ形になる。
+  リムクラフト: [
+    { name: '武田優也', phone: '08078527042' },
   ],
   メルディア: [
     { name: '並木', phone: '09021544639' },
@@ -3086,7 +3097,7 @@ async function autoAssignTrucks() {
     showToast(`${count}件に「対象外」を入れました`);
   }
 
-  async function addPhotoToMgmt(id, staffName, files, recordTab) {
+  async function addPhotoToMgmt(id, staffName, files, recordTab, asGanttAttach) {
     const activeTab = recordTab || tab;
     const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
     const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
@@ -3102,7 +3113,7 @@ async function autoAssignTrucks() {
         const dataUrl = await compressImage(file);
         const url = await storage.uploadPhoto(dataUrl, `${id}_${Date.now()}_${idx}.jpg`, id, staffName, prefix);
         if (url) {
-          uploadResults[idx] = { staff: staffName || '担当者', img: url, at: Date.now() };
+          uploadResults[idx] = { staff: staffName || '担当者', img: url, at: Date.now(), ...(asGanttAttach ? { kind: 'gantt' } : {}) };
         } else {
           queuedCount++;
         }
@@ -3124,7 +3135,13 @@ async function autoAssignTrucks() {
     const updated = { ...latest, photos };
     await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
     applyLocalRecordUpdate(prefix, updated);
-    showToast(`写真を${newPhotos.length}枚追加しました`);
+    // 現場写真（回収の様子など）と工程表の画像は見分けがつかないため、普通の「＋写真」からの追加では
+    // 自動完了させない。専用の「📎工程表を貼る」ボタン（asGanttAttach=trueで呼ばれた時）から貼った時だけ、
+    // TODO側をわざわざ開いて「やった」を押さなくても自動で完了にする
+    // （TODO専用の添付ボタンから貼った時（attachGanttPhotoAndComplete）と同じ挙動に揃える）。
+    const linkedTodo = (asGanttAttach && newPhotos.length > 0) ? ganttAttachTodoFor(updated) : null;
+    if (linkedTodo) await completeTodo(linkedTodo.id);
+    showToast(`写真を${newPhotos.length}枚追加しました${linkedTodo ? '(工程表添付タスクも完了にしました)' : ''}`);
   }
 
   function buildExportText() {
@@ -4176,14 +4193,34 @@ async function autoAssignTrucks() {
                       // TODOタブを開けない（合言葉を知らない）スタッフが誤って触ると、本人には見えない
                       // タスクが黙って追加／削除されてしまい気付きにくいため、TODOタブを開ける人
                       // （8989または4455を解除済み）にだけこのタグを表示する。
-                      const active = !!ganttAttachTodoFor(r);
+                      const activeTodo = ganttAttachTodoFor(r);
                       return (
-                        <span
-                          onClick={(e) => { e.stopPropagation(); toggleGanttAttach(r); }}
-                          style={{ ...styles.ganttAttachBadge, ...(active ? styles.ganttAttachBadgeActive : {}) }}
-                        >
-                          {active ? '✓ 📎工程表添付' : '📎工程表添付'}
-                        </span>
+                        <React.Fragment>
+                          <span
+                            onClick={(e) => { e.stopPropagation(); toggleGanttAttach(r); }}
+                            style={{ ...styles.ganttAttachBadge, ...(activeTodo ? styles.ganttAttachBadgeActive : {}) }}
+                          >
+                            {activeTodo ? '✓ 📎工程表添付' : '📎工程表添付'}
+                          </span>
+                          {/* 現場写真（回収の様子）と工程表の画像は見分けがつかないため、普通の「＋写真」ではなく
+                              ここ専用のボタンから貼った時だけ「工程表の画像だ」と分かり、タスクを自動で完了にできる */}
+                          {activeTodo && (
+                            <label style={{ ...styles.ganttAttachBadge, background: '#fff', border: '1px dashed #B39DDB', color: '#5E35B1' }} onClick={(e) => e.stopPropagation()}>
+                              📷 工程表を貼る
+                              <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                style={{ display: 'none' }}
+                                onChange={(e) => {
+                                  const files = e.target.files;
+                                  if (files && files.length > 0) addPhotoToMgmt(r.id, deviceStaff || r.staff || '担当者', files, tab, true);
+                                  e.target.value = '';
+                                }}
+                              />
+                            </label>
+                          )}
+                        </React.Fragment>
                       );
                     })()}
                     {tab === 'sched' && (() => {
@@ -5215,14 +5252,24 @@ async function autoAssignTrucks() {
               {kumitenList.map((k) => (
                 <button
                   key={k}
-                  onClick={() => setForm((f) => ({
-                    ...f,
-                    kumiten: k,
-                    garaRequired: editingId ? f.garaRequired : !GARA_DEFAULT_EXCLUDE.includes(k),
-                    // メルディアは実際の番号がすぐ分からないことが多く、正式な番号は別途（マニフェスト自動化側の検索で）
-                    // 確認する運用のため、ハウスNoが未入力の時だけ「対象外」を自動で入れておく（情報不足リストにも出なくなる）
-                    houseNumber: (tab === 'sched' && k === 'メルディア' && !(f.houseNumber || '').trim()) ? '対象外' : f.houseNumber,
-                  }))}
+                  onClick={() => {
+                    // 監督名簿にちょうど1人しか登録されていない工務店（例：リムクラフト＝武田さん1人だけ）は、
+                    // まだ監督名が空欄の時だけ「その人でいいか」を確認してから自動で入れる。
+                    // 監督が増えたら「⚙監督名簿を編集」でもう1人足せば、候補が2人以上になった時点でこの自動提案は
+                    // 自動的に出なくなり、以後は普通に一覧（オートコンプリート）から選ぶ形に戻る。
+                    const onlySupervisors = supervisorDirectory[k] || [];
+                    const onlySupervisor = onlySupervisors.length === 1 && !(form.supervisorName || '').trim() ? onlySupervisors[0] : null;
+                    const confirmed = onlySupervisor ? window.confirm(`${k}の監督は${onlySupervisor.name}さんでいいですか？`) : false;
+                    setForm((f) => ({
+                      ...f,
+                      kumiten: k,
+                      garaRequired: editingId ? f.garaRequired : !GARA_DEFAULT_EXCLUDE.includes(k),
+                      // メルディアは実際の番号がすぐ分からないことが多く、正式な番号は別途（マニフェスト自動化側の検索で）
+                      // 確認する運用のため、ハウスNoが未入力の時だけ「対象外」を自動で入れておく（情報不足リストにも出なくなる）
+                      houseNumber: (tab === 'sched' && k === 'メルディア' && !(f.houseNumber || '').trim()) ? '対象外' : f.houseNumber,
+                      ...(confirmed ? { supervisorName: onlySupervisor.name, supervisorPhone: onlySupervisor.phone || f.supervisorPhone } : {}),
+                    }));
+                  }}
                   style={{
                     ...styles.statusOption,
                     // 「その他」は、タブに登録していない工務店名を直接入力した場合もアクティブ表示にする
