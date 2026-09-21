@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-128';
+  window.__APP_VERSION__ = '2026-09-21-129';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -312,13 +312,25 @@ setInterval(retryPhotoQueue, 30000);
 window.addEventListener('online', retryPhotoQueue);
 setTimeout(retryPhotoQueue, 2500);
 
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
 // 同時アクセスしすぎてサーバー側が詰まらないよう、少しずつ順番に処理する（取得にも後片付けにも使う汎用版）
-async function runWithLimit(items, limit, fn) {
+// アプリを開いた直後など、通信が不安定なタイミングで1件だけ失敗すると、その1件だけ
+// 静かに読み飛ばされて「件数が少ない」状態になってしまっていたため、1件ごとに数回まで
+// 再試行してから諦めるようにする（後片付け系の呼び出しでは再試行してもすぐ諦めて問題ないよう、
+// 呼び出し側でretriesを指定できるようにする）。
+async function runWithLimit(items, limit, fn, retries) {
+  const maxTries = 1 + (retries || 0);
   let i = 0;
   async function worker() {
     while (i < items.length) {
       const idx = i++;
-      try { await fn(items[idx], idx); } catch (e) { /* ここでのエラーは無視して次へ */ }
+      for (let attempt = 1; attempt <= maxTries; attempt++) {
+        try { await fn(items[idx], idx); break; } catch (e) {
+          if (attempt < maxTries) { await sleep(300 * attempt); continue; }
+          /* 再試行しても失敗した分だけ諦めて次へ */
+        }
+      }
     }
   }
   const workers = [];
@@ -331,7 +343,7 @@ async function fetchWithLimit(keys, limit) {
   await runWithLimit(keys, limit, async (k, idx) => {
     const r = await storage.get(k, true);
     results[idx] = r && r.value ? JSON.parse(r.value) : null;
-  });
+  }, 2);
   return results.filter(Boolean);
 }
 
@@ -360,17 +372,29 @@ const storage = {
   // サーバー側のlistWithValuesは、対象のprefixに一致する分の値を1回のシート読み込みでまとめて返す。
   // 古いバージョンのバックエンド（listWithValues未対応）でも動くよう、失敗したら従来方式に自動で切り替える。
   async listWithValues(prefix) {
-    try {
-      const res = await fetch(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`);
-      const data = await res.json();
-      if (!data.items) throw new Error('listWithValues not supported');
-      return data.items
-        .map((it) => { try { return JSON.parse(it.value); } catch (e) { return null; } })
-        .filter(Boolean);
-    } catch (e) {
-      const listRes = await this.list(prefix);
-      return fetchWithLimit(listRes.keys || [], 8);
+    // 起動直後など通信が不安定なタイミングだと、通信そのものが失敗したり、途中で切れて
+    // 一部のデータだけ壊れて読めなかったりすることがあった。その場合に「件数が少ない状態」を
+    // そのまま返してしまうと、開くたびに現場が減って見える不具合になるため、
+    // 何度か自分で読み直してから、それでもダメな時だけ従来方式（1件ずつ取得）にフォールバックする。
+    const MAX_TRIES = 3;
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      try {
+        const res = await fetch(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`);
+        const data = await res.json();
+        if (!data.items) throw new Error('listWithValues not supported');
+        let parseFailures = 0;
+        const parsed = [];
+        data.items.forEach((it) => {
+          try { parsed.push(JSON.parse(it.value)); } catch (e) { parseFailures++; }
+        });
+        if (parseFailures > 0 && attempt < MAX_TRIES) { await sleep(500 * attempt); continue; }
+        return parsed;
+      } catch (e) {
+        if (attempt < MAX_TRIES) { await sleep(500 * attempt); continue; }
+      }
     }
+    const listRes = await this.list(prefix);
+    return fetchWithLimit(listRes.keys || [], 8);
   },
   // listWithValuesはキーを捨てて中身だけ返すが、geocodeキャッシュはキー（住所）自体が意味を持つデータなので、
   // キー付きのまま欲しい時はこちらを使う（1回のサーバー読み込みで済ませ、現場ごとに問い合わせずに済ませるため）
@@ -1702,13 +1726,24 @@ function GenbaTracker() {
         setDismissedManifestPush(mp && mp.value ? JSON.parse(mp.value) : []);
       } catch (e) { setDismissedManifestPush([]); }
 
-      async function fetchGroup(prefix) {
-        return storage.listWithValues(`${prefix}:`);
+      // listWithValues自体が正常に返ってきても、前回表示していた件数よりも明らかに少ない時は、
+      // サーバー側の一時的な取りこぼし（通信が不安定なタイミングでの部分的な失敗）を疑って
+      // もう一度だけ静かに取り直してから確定する。実際に大量削除した直後などは、
+      // 取り直しても同じ（少ない）件数のままなので、その場合はそのまま正しい件数として扱う。
+      const cachedForSanity = getCachedRecords();
+      async function fetchGroup(prefix, prevCount) {
+        let items = await storage.listWithValues(`${prefix}:`);
+        if (prevCount >= 5 && items.length < prevCount * 0.7) {
+          await sleep(800);
+          const retry = await storage.listWithValues(`${prefix}:`);
+          if (retry.length > items.length) items = retry;
+        }
+        return items;
       }
       const [sItems, mItems, tItems] = await Promise.all([
-        fetchGroup('sched'),
-        fetchGroup('mgmt'),
-        fetchGroup('todo'),
+        fetchGroup('sched', ((cachedForSanity && cachedForSanity.sched) || []).length),
+        fetchGroup('mgmt', ((cachedForSanity && cachedForSanity.mgmt) || []).length),
+        fetchGroup('todo', ((cachedForSanity && cachedForSanity.todos) || []).length),
       ]);
       // 同じ日付の現場が複数ある場合、並び替えの基準が日付だけだと、裏側の自動更新のたびに
       // 順番が入れ替わって画面がガクッと動いて見えることがあった（id を並び順のタイブレークに
