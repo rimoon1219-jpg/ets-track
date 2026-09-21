@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-136';
+  window.__APP_VERSION__ = '2026-09-21-140';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -452,6 +452,9 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・「📎工程表添付」タグがON（チェック済み）のカードには、そのすぐ横に専用の「📷工程表を貼る」ボタンが出る。これで貼るとTODO側のタスクも自動で「やった」になる（TODO側の専用添付ボタンから貼った時と同じ）
 ・普通の「＋写真」（カードの写真欄）で貼った現場写真は、工程表の画像かどうか見分けがつかないため自動完了の対象にならない。工程表を貼った時はこの専用ボタンを使うのがコツ
 ・TODO（タスク）一覧で、その現場にすでに写真がある「工程表画像添付」タスクには「📷すでにN枚あります」と出るので、開かなくてもダブり添付を避けられる。開いて編集画面に行った時も、既に登録済みの写真がサムネイルで見える
+・「工程表添付」タグを付けた後に、予定表側で編集してその現場の日付を変えても、TODO側の表示（日付・現場名・写真の有無）はちゃんと今の内容に追従する。「移動」ボタンで新しい現場データとして複製した場合も、タグは自動的に新しい現場の方へ引き継がれるので、付け直す必要はない
+・「移動」すると現場写真は基本リセットされる（新しい現場でまた撮り直す前提のため）が、工程表として貼った画像は自動でそのままコピーされるので貼り直し不要。駐車禁止の写真など「移動しても絶対に残しておきたい写真」は、写真の下にある「📌固定する」ボタンを押しておくと、工程表画像と同じように移動時も自動でコピーされる（固定を外したい時はもう一度押す）
+・間違えて普通の「＋写真」から工程表画像を貼ってしまった時は、その写真の下の「📋工程表にする」ボタンを押せば、あとから工程表として登録し直せる（押すと、その現場に「工程表画像添付」タスクが残っていれば自動で「やった」になり、次の「移動」でも自動コピーの対象になる）
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -1086,13 +1089,39 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
 // 写真サムネイル。タップで元画像を新しいタブで開けるようにし（今までは押しても何も起きなかった）、
 // 読み込みに失敗した時は空アイコンのまま気付けないのを防ぐため、はっきり分かる表示に切り替える
 // （権限やURLの問題を切り分けやすくするため、失敗時は元URLを開くリンクも出す）。
-function PhotoThumb({ photo }) {
+function PhotoThumb({ photo, onTogglePin, onToggleGantt }) {
   const [failed, setFailed] = React.useState(false);
+  // 📌固定：駐車禁止の写真など、現場が「移動」で複製されても消したくない写真に付ける印。
+  // 固定しておくと、工程表画像と同じように新しい現場側へ自動でコピーされる。
+  const pinBtn = onTogglePin && (
+    <button
+      type="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(); }}
+      style={photo.pinned ? styles.pinBtnActive : styles.pinBtn}
+      title={photo.pinned ? '固定中（移動してもこの写真は残ります）' : '固定する（移動してもこの写真を残したい時）'}
+    >
+      {photo.pinned ? '📌固定中' : '📌固定する'}
+    </button>
+  );
+  // 間違えて普通の「＋写真」から工程表を貼ってしまった時に、あとから「これは工程表です」に
+  // 変換できるようにする。変換すると、移動時の自動コピー対象になり、紐づくTODOがあれば自動完了させる。
+  const ganttBtn = onToggleGantt && (
+    <button
+      type="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleGantt(); }}
+      style={photo.kind === 'gantt' ? styles.pinBtnActive : styles.pinBtn}
+      title={photo.kind === 'gantt' ? '工程表として登録済み（移動しても自動でコピーされます）' : 'これは工程表の画像です（あとから変換する）'}
+    >
+      {photo.kind === 'gantt' ? '📋工程表です' : '📋工程表にする'}
+    </button>
+  );
   if (failed) {
     return (
       <div style={styles.photoItem}>
         <a href={photo.img} target="_blank" rel="noreferrer" style={styles.photoBroken}>⚠️開けない<br />タップで確認</a>
         <span style={styles.photoStaff}>{photo.staff}</span>
+        {pinBtn}
+        {ganttBtn}
       </div>
     );
   }
@@ -1102,6 +1131,8 @@ function PhotoThumb({ photo }) {
         <img src={photo.img} alt="" style={styles.threadImg} onError={() => setFailed(true)} />
       </a>
       <span style={styles.photoStaff}>{photo.staff}</span>
+      {pinBtn}
+      {ganttBtn}
     </div>
   );
 }
@@ -1837,10 +1868,19 @@ function GenbaTracker() {
   // 以前はTODOタブを開いて現場名・曜日を自分で入力し直す必要があり手間だったため、
   // カード側のタグをワンタップするだけで、現場名・日付が入った状態でTODOに追加／削除できるようにする。
   // （TODO側のクイックタグ「工程表画像添付」で手動追加された分も同じ条件でここに反映される）
-  // 現場名＋日付の完全一致で判定する（予定表・管理表は別々の記録なので、idでは紐付けない。
-  // TODO側の「工程表画像添付」タスクからの写真添付〜自動完了も現場名＋日付でマッチさせているため、揃えている）
+  // まずid（siteId）で紐付け、無ければ現場名＋日付で判定する。
+  // 以前は現場名＋日付だけで判定していたため、タグを付けた後に現場の日付を編集で変えると
+  // （idは変わらず日付だけ変わる）一致しなくなり、TODO側のバッジ・サムネイルが出なくなってしまっていた。
+  // idを優先することで、日付を編集で変えてもこのタグ・TODOはちゃんと同じ現場を指し続けるようにする
+  // （「移動」ボタンで新しい現場データとして複製した場合はidが変わるため、その時だけは再度タグを付け直す必要がある）
   function ganttAttachTodoFor(r) {
-    return todos.find((t) => !t.archived && t.text === '工程表画像添付' && t.siteName === r.name && (!t.date || t.date === r.date));
+    return todos.find((t) => !t.archived && t.text === '工程表画像添付' && (
+      (t.siteId && t.siteId === r.id)
+      || (!t.siteId && t.siteName === r.name && (!t.date || t.date === r.date))
+      // siteIdが無い古いタスクは、日付が編集で変わっていても現場名だけで拾えるようにする
+      // （同じ現場名が複数日にまたがる場合はやや大まかな判定になるが、タグが消えたままより安全）
+      || (!t.siteId && t.siteName === r.name)
+    ));
   }
   async function toggleGanttAttach(r) {
     const existing = ganttAttachTodoFor(r);
@@ -1848,9 +1888,24 @@ function GenbaTracker() {
       await completeTodo(existing.id);
       showToast('工程表添付タスクを外しました');
     } else {
-      await addTodo({ text: '工程表画像添付', siteName: r.name, date: r.date, todoType: 'task' });
+      await addTodo({ text: '工程表画像添付', siteId: r.id, siteName: r.name, date: r.date, todoType: 'task' });
       showToast('工程表添付タスクをTODOに追加しました');
     }
+  }
+
+  // 「移動」ボタンで現場を複製すると、新しい現場は別のID（siteId）を持つ新しいレコードになる。
+  // 元の現場に「📎工程表添付」タグ（siteId付きのTODO）が付いていた場合、そのままだと
+  // 新しい現場では紐付けが切れてしまい、毎回タグを付け直す必要があって大変なので、
+  // 保存成功時（saveRecord内、元レコードをゴミ箱に移すのと同じタイミング）で自動的に
+  // 新しい現場のIDへ引き継ぐ。siteNameを持たない旧式のTODO（v136以前に作られたもの）は
+  // 現場名だけで緩く一致させる仕組みが既にあるため、ここでの対象は siteId が設定済みのものだけでよい。
+  async function transferGanttAttachTag(oldId, newRecord) {
+    const existing = todos.find((t) => !t.archived && t.text === '工程表画像添付' && t.siteId === oldId);
+    if (!existing) return;
+    const next = { ...existing, siteId: newRecord.id, siteName: newRecord.name, date: newRecord.date };
+    setTodos((prev) => prev.map((x) => (x.id === existing.id ? next : x)));
+    lastLocalWriteRef.current = Date.now();
+    try { await storage.set(`todo:${existing.id}`, JSON.stringify(next), true); } catch (e) { console.error(e); }
   }
 
   // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
@@ -2551,7 +2606,11 @@ async function autoAssignTrucks() {
     const newDate = addDays(r.date, dayOffset);
     const entry = { from: r.date, to: newDate, by: deviceStaff || r.staff || '（担当者不明）', at: new Date().toISOString() };
     const dateHistory = [...(r.dateHistory || []), entry].slice(-10);
-    setForm({ ...rest, date: newDate, photos: [], dateHistory, _moveFromId: r.id });
+    // 現場写真（回収の様子など）は新しい現場でまた撮り直す前提でリセットするが、
+    // 工程表画像（kind:'gantt'）と📌固定した写真（駐車禁止の写真など、現場が変わっても
+    // 残しておきたいもの）だけは、そのまま新しい現場側にもコピーして持ち越す。
+    const carriedPhotos = (photos || []).filter((p) => p.kind === 'gantt' || p.pinned);
+    setForm({ ...rest, date: newDate, photos: carriedPhotos, dateHistory, _moveFromId: r.id });
     setEditingId(null);
     setPendingPhotos([]);
     setShowForm(true);
@@ -2648,6 +2707,7 @@ async function autoAssignTrucks() {
       const result = await storage.set(`${prefix}:${id}`, JSON.stringify(record), true);
       if (_moveFromId && _moveFromId !== id) {
         await moveOriginalToTrash(prefix, _moveFromId);
+        await transferGanttAttachTag(_moveFromId, record);
         showToast(result.queued ? '移動を保留しました。電波が戻り次第、自動的に送信されます' : '移動しました（元の予定はゴミ箱へ）');
       } else {
         showToast(result.queued ? '保存を保留しました。電波が戻り次第、自動的に送信されます' : '保存しました');
@@ -3170,6 +3230,52 @@ async function autoAssignTrucks() {
     const linkedTodo = (asGanttAttach && newPhotos.length > 0) ? ganttAttachTodoFor(updated) : null;
     if (linkedTodo) await completeTodo(linkedTodo.id);
     showToast(`写真を${newPhotos.length}枚追加しました${linkedTodo ? '(工程表添付タスクも完了にしました)' : ''}`);
+  }
+
+  // 駐車禁止の写真など、「移動」で現場が複製されても消えては困る写真に📌を付ける／外す。
+  // 📌が付いた写真は、工程表画像（kind:'gantt'）と同じく duplicateRecord() で新しい現場へコピーされる。
+  async function togglePinPhoto(id, index, recordTab) {
+    const activeTab = recordTab || tab;
+    const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
+    const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
+    const record = source.find((r) => r.id === id);
+    if (!record) return;
+    let latest = record;
+    try {
+      const fresh = await storage.get(`${prefix}:${id}`, true);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    const photos = (latest.photos || []).map((p, i) => (i === index ? { ...p, pinned: !p.pinned } : p));
+    const updated = { ...latest, photos };
+    await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
+    applyLocalRecordUpdate(prefix, updated);
+  }
+
+  // 間違えて普通の「＋写真」から工程表画像を貼ってしまった時、あとから「工程表です」に変換する。
+  // 変換すると（1）「移動」時に自動でコピーされる対象になり、（2）その現場に紐づく「工程表画像添付」
+  // TODOがまだ残っていれば、貼り忘れがなくなったとみなして自動で「やった」にする。
+  async function toggleGanttKindPhoto(id, index, recordTab) {
+    const activeTab = recordTab || tab;
+    const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
+    const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
+    const record = source.find((r) => r.id === id);
+    if (!record) return;
+    let latest = record;
+    try {
+      const fresh = await storage.get(`${prefix}:${id}`, true);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    const target = (latest.photos || [])[index];
+    const nowGantt = !(target && target.kind === 'gantt');
+    const photos = (latest.photos || []).map((p, i) => (i === index ? (nowGantt ? { ...p, kind: 'gantt' } : (() => { const { kind, ...rest } = p; return rest; })()) : p));
+    const updated = { ...latest, photos };
+    await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
+    applyLocalRecordUpdate(prefix, updated);
+    if (nowGantt) {
+      const linkedTodo = ganttAttachTodoFor(updated);
+      if (linkedTodo) { await completeTodo(linkedTodo.id); showToast('工程表として登録しました（工程表添付タスクも完了にしました）'); return; }
+    }
+    showToast(nowGantt ? '工程表として登録しました' : '工程表登録を解除しました');
   }
 
   function buildExportText() {
@@ -4383,7 +4489,7 @@ async function autoAssignTrucks() {
                 {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
-                      <PhotoThumb key={i} photo={p} />
+                      <PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} />
                     ))}
                     <label style={styles.addPhotoBtn}>
                       ＋写真
@@ -4654,11 +4760,22 @@ async function autoAssignTrucks() {
                           {t.important && <span style={styles.importantTag}>⚠️重要</span>}{!iSaw && <span style={styles.newTag}>未確認</span>}{t.text}
                         </div>
                       )}
-                      {(t.siteName || t.date) && (
-                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
-                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
-                        </div>
-                      )}
+                      {(t.siteName || t.date) && (() => {
+                        // 「工程表画像添付」タスクは、現場側で日付が編集で変わった時にここの表示も
+                        // 追従するよう、保存済みの日付ではなく今の予定表の記録から取り直して表示する
+                        // （それ以外の普通のTODOは、あくまでメモとして残した当時の日付のままでよい）
+                        let displayDate = t.date;
+                        let displaySite = t.siteName;
+                        if (t.text.includes('工程表画像添付')) {
+                          const live = matchedSchedRecordForGanttTodo(t);
+                          if (live) { displayDate = live.date; displaySite = live.name; }
+                        }
+                        return (
+                          <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
+                            📍 {displayDate ? `${displayDate}／` : ''}{displaySite || ''}{displaySite ? '（開く）' : ''}
+                          </div>
+                        );
+                      })()}
                       {t.text.includes('工程表画像添付') && (() => {
                         // 「開く」で編集画面に行かなくても、ダブって貼ってしまわないよう
                         // 一覧の時点で既に何枚あるか分かるようにする
@@ -4749,11 +4866,22 @@ async function autoAssignTrucks() {
                           {t.important && <span style={styles.importantTag}>⚠️重要</span>}{t.auto && <span style={styles.autoTag}>自動検出</span>}{t.text}
                         </div>
                       )}
-                      {(t.siteName || t.date) && (
-                        <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
-                          📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
-                        </div>
-                      )}
+                      {(t.siteName || t.date) && (() => {
+                        // 「工程表画像添付」タスクは、現場側で日付が編集で変わった時にここの表示も
+                        // 追従するよう、保存済みの日付ではなく今の予定表の記録から取り直して表示する
+                        // （それ以外の普通のTODOは、あくまでメモとして残した当時の日付のままでよい）
+                        let displayDate = t.date;
+                        let displaySite = t.siteName;
+                        if (t.text.includes('工程表画像添付')) {
+                          const live = matchedSchedRecordForGanttTodo(t);
+                          if (live) { displayDate = live.date; displaySite = live.name; }
+                        }
+                        return (
+                          <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
+                            📍 {displayDate ? `${displayDate}／` : ''}{displaySite || ''}{displaySite ? '（開く）' : ''}
+                          </div>
+                        );
+                      })()}
                       {t.text.includes('工程表画像添付') && (() => {
                         // 「開く」で編集画面に行かなくても、ダブって貼ってしまわないよう
                         // 一覧の時点で既に何枚あるか分かるようにする
@@ -5492,7 +5620,7 @@ async function autoAssignTrucks() {
                   <div>
                     <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（ダブって貼らないか下で確認してください。カード下の「＋写真」からも追加できます）</div>
                     <div style={{ ...styles.photoThread, marginTop: 4 }}>
-                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} />))}
+                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} />))}
                     </div>
                   </div>
                 )}
@@ -5573,7 +5701,7 @@ async function autoAssignTrucks() {
                   <div>
                     <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（ダブって貼らないか下で確認してください。カード下の「＋写真」からも追加できます）</div>
                     <div style={{ ...styles.photoThread, marginTop: 4 }}>
-                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} />))}
+                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} />))}
                     </div>
                   </div>
                 )}
@@ -6439,6 +6567,8 @@ const styles = {
   threadImg: { width: 56, height: 56, objectFit: 'cover', borderRadius: 8 },
   photoBroken: { width: 56, height: 56, borderRadius: 8, background: '#FFF3CD', color: '#8A6D00', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', lineHeight: 1.3, textDecoration: 'none', boxSizing: 'border-box', padding: 2 },
   photoStaff: { fontSize: 10, color: '#8A8A83' },
+  pinBtn: { border: '1px solid #D8D6CD', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#8A8A83', background: '#fff', cursor: 'pointer' },
+  pinBtnActive: { border: '1px solid #B08900', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#8A6D00', background: '#FFF3CD', fontWeight: 700, cursor: 'pointer' },
   addPhotoBtn: { border: '1px dashed #D8D6CD', borderRadius: 8, padding: '8px 10px', fontSize: 11.5, color: '#8A8A83', cursor: 'pointer' },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(20,20,18,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 },
   sheet: { background: '#fff', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: '18px 18px 24px' },
