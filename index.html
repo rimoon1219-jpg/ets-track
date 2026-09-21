@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-135';
+  window.__APP_VERSION__ = '2026-09-21-136';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -451,6 +451,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・各カードの「📎工程表添付」タグをタップするだけで、現場名・日付が自動で入った状態でTODO（タスク）に追加される。もう一度タップすると外れる（TODO側も自動で消える）
 ・「📎工程表添付」タグがON（チェック済み）のカードには、そのすぐ横に専用の「📷工程表を貼る」ボタンが出る。これで貼るとTODO側のタスクも自動で「やった」になる（TODO側の専用添付ボタンから貼った時と同じ）
 ・普通の「＋写真」（カードの写真欄）で貼った現場写真は、工程表の画像かどうか見分けがつかないため自動完了の対象にならない。工程表を貼った時はこの専用ボタンを使うのがコツ
+・TODO（タスク）一覧で、その現場にすでに写真がある「工程表画像添付」タスクには「📷すでにN枚あります」と出るので、開かなくてもダブり添付を避けられる。開いて編集画面に行った時も、既に登録済みの写真がサムネイルで見える
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -2078,11 +2079,15 @@ function GenbaTracker() {
   // その現場（予定表）に写真を追加してタスクを自動で「やった」にする。
   // 現場写真（回収スタッフが管理表・予定表から普通に追加するもの）とは別ルートなので、
   // 通常の写真追加ではタスクは完了にならない（誤って完了扱いになる心配がない）
-  async function attachGanttPhotoAndComplete(t, files) {
-    if (!files || files.length === 0) return;
-    const match = (t.siteId && schedRecords.find((r) => r.id === t.siteId))
+  // 「工程表画像添付」タスクが指している予定表の記録を探す（写真添付時とTODO一覧での既存枚数表示で共通利用）
+  function matchedSchedRecordForGanttTodo(t) {
+    return (t.siteId && schedRecords.find((r) => r.id === t.siteId))
       || schedRecords.find((r) => r.name === t.siteName && (!t.date || r.date === t.date))
       || schedRecords.find((r) => r.name === t.siteName);
+  }
+  async function attachGanttPhotoAndComplete(t, files) {
+    if (!files || files.length === 0) return;
+    const match = matchedSchedRecordForGanttTodo(t);
     if (!match) { showToast('現場が見つかりませんでした。予定表から直接添付してください'); return; }
     const staffName = deviceStaff || '担当者';
     const fileArray = Array.from(files);
@@ -4654,6 +4659,13 @@ async function autoAssignTrucks() {
                           📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
                         </div>
                       )}
+                      {t.text.includes('工程表画像添付') && (() => {
+                        // 「開く」で編集画面に行かなくても、ダブって貼ってしまわないよう
+                        // 一覧の時点で既に何枚あるか分かるようにする
+                        const matched = matchedSchedRecordForGanttTodo(t);
+                        const count = matched && (matched.photos || []).length;
+                        return count > 0 ? <div style={styles.existingPhotoHint}>📷 すでに{count}枚あります</div> : null;
+                      })()}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                         <div style={{ fontSize: 10.5, color: '#B5B5AC' }}>
                           {t.staff || ''}{t.target && t.target !== '全員' ? `→${t.target === DEV_TEAM_TARGET ? '社長・すぐる' : t.target}` : ''}・{formatDateTime(t.createdAt)}
@@ -4742,6 +4754,13 @@ async function autoAssignTrucks() {
                           📍 {t.date ? `${t.date}／` : ''}{t.siteName || ''}{t.siteName ? '（開く）' : ''}
                         </div>
                       )}
+                      {t.text.includes('工程表画像添付') && (() => {
+                        // 「開く」で編集画面に行かなくても、ダブって貼ってしまわないよう
+                        // 一覧の時点で既に何枚あるか分かるようにする
+                        const matched = matchedSchedRecordForGanttTodo(t);
+                        const count = matched && (matched.photos || []).length;
+                        return count > 0 ? <div style={styles.existingPhotoHint}>📷 すでに{count}枚あります</div> : null;
+                      })()}
                       {t.inProgress && <div style={styles.inProgressTag}>🔧 対応中：{t.inProgressBy}</div>}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                         <div style={{ fontSize: 10.5, color: '#B5B5AC' }}>{t.staff ? `${t.staff}／` : ''}{formatDateTime(t.createdAt)}</div>
@@ -5470,7 +5489,12 @@ async function autoAssignTrucks() {
                   </div>
                 )}
                 {editingId && (form.photos || []).length > 0 && (
-                  <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（カード下の「＋写真」からも追加できます）</div>
+                  <div>
+                    <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（ダブって貼らないか下で確認してください。カード下の「＋写真」からも追加できます）</div>
+                    <div style={{ ...styles.photoThread, marginTop: 4 }}>
+                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} />))}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -5546,7 +5570,12 @@ async function autoAssignTrucks() {
                   </div>
                 )}
                 {editingId && (form.photos || []).length > 0 && (
-                  <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（カード下の「＋写真」からも追加できます）</div>
+                  <div>
+                    <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（ダブって貼らないか下で確認してください。カード下の「＋写真」からも追加できます）</div>
+                    <div style={{ ...styles.photoThread, marginTop: 4 }}>
+                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} />))}
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -6320,6 +6349,7 @@ const styles = {
   showMoreBtn: { display: 'block', width: '100%', textAlign: 'center', background: '#fff', border: '1px dashed #D8D6CC', color: '#457B9D', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', marginTop: 4 },
   todoRow: { display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fff', border: '1px solid #EFEDE6', borderRadius: 10, padding: 12, marginBottom: 10 },
   todoMeta: { fontSize: 12, color: '#2A9D8F', marginTop: 4, cursor: 'pointer', fontWeight: 600 },
+  existingPhotoHint: { fontSize: 11.5, color: '#8A6D00', background: '#FFF3CD', display: 'inline-block', borderRadius: 6, padding: '2px 7px', marginTop: 3, fontWeight: 700 },
   todoDoneBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
   // 現場スタッフが一番よく使う「やった」だけ大きく・押しやすくして、他の操作と迷わないようにする
   todoDoneBtnBig: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: '0 1px 0 rgba(0,0,0,0.08)' },
