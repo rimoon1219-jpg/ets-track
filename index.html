@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-143';
+  window.__APP_VERSION__ = '2026-09-21-145';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -440,7 +440,8 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 
 ■ 特定済み現場データを編集／特定済み現場と照合（セット運用）
 ・特定済み現場データを編集＝マニフェスト調査でわかった「現場名・ハウスNo・監督名・確認日」を工務店ごとに保存しておく虎の巻。参考ファイルの行をほぼそのまま貼り付けOK。
-・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。
+・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。完全一致0件でも、スペース・全角半角・連棟現場の頭の○/〇マークの有無だけの違いや、住所の追記などの部分一致（⚠️部分一致のみと表示、要確認）は「表記ゆれの可能性がある候補」に出るので、そちらも確認する
+・それでも見つからない虎の巻データは「予定表にまだ見当たらない現場」として別枠に出る。これは表記の問題ではなく、そもそも予定表にその現場のデータをまだ作っていない可能性が高いことを意味する（監督名・ハウスNoがすでに正しく埋まっていて候補に出ない場合とは区別される）
 順番：虎の巻を最新化→照合を実行、の流れ。
 
 ■ 監督が1人だけの工務店（例：リムクラフト＝武田さん）
@@ -779,6 +780,7 @@ function normalizeForCompare(str) {
   return (str || '')
     .normalize('NFKC')
     .replace(/[\s　]/g, '')
+    .replace(/^[○〇]+/, '') // 連棟現場の頭に付ける○/〇マークは、虎の巻側にはコピーされていないことが多いため、表記ゆれ判定では無視する
     .toLowerCase();
 }
 
@@ -1429,6 +1431,7 @@ function GenbaTracker() {
   const [reconcileChecked, setReconcileChecked] = useState({});
   const [reconcileBusy, setReconcileBusy] = useState(false);
   const [nearMatches, setNearMatches] = useState([]);
+  const [unmatchedSites, setUnmatchedSites] = useState([]);
   // 「監督名・ハウスNoがETS TRACK側では入力／変更されたのに、マニフェスト業務プロジェクトの
   // 特定済み現場データ（虎の巻）にまだ反映されていない」ものを溜めておき、洋子さんの好きな
   // タイミングでまとめてコピーしてClaudeに貼れるようにする機能。
@@ -3657,8 +3660,10 @@ async function autoAssignTrucks() {
     });
     return matches;
   }
-  // 現場名が完全一致はしないが、全角/半角やスペースの違いだけで「実質同じ表記」に見えるものを
-  // 候補として拾う。ここは自動で反映せず、必ず見比べて自分で判断してもらう（ボタンを押した時だけ反映）
+  // 現場名が完全一致はしないが、全角/半角やスペースの違い・○/〇マークの有無だけで「実質同じ表記」に
+  // 見えるものに加えて、片方がもう片方の一部を含んでいるだけ(住所の追記など)の「部分一致」も候補として拾う。
+  // 部分一致は誤判定のリスクがあるぶん isLoose を付けて区別し、必ず見比べて自分で判断してもらう
+  // （どちらもボタンを押した時だけ反映。自動では反映しない）
   function findNearMatches(exactMatches) {
     const matchedIds = new Set((exactMatches || []).map((m) => m.recordId));
     const near = [];
@@ -3673,7 +3678,13 @@ async function autoAssignTrucks() {
       identifiedSites.forEach((s) => {
         if (s.kumiten !== r.kumiten) return;
         if (s.siteName.trim() === r.name.trim()) return; // 完全一致は上のfindReconcileMatchesの方で扱う
-        if (normalizeForCompare(s.siteName) !== normRecord) return;
+        const normSite = normalizeForCompare(s.siteName);
+        if (!normSite) return;
+        const isExactNorm = normSite === normRecord;
+        const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
+        const longer = normSite.length <= normRecord.length ? normRecord : normSite;
+        const isLoose = !isExactNorm && shorter.length >= 4 && longer.includes(shorter);
+        if (!isExactNorm && !isLoose) return;
         near.push({
           recordId: r.id,
           etsName: r.name,
@@ -3681,10 +3692,30 @@ async function autoAssignTrucks() {
           kumiten: r.kumiten,
           date: r.date,
           site: s,
+          isLoose,
         });
       });
     });
     return near;
+  }
+  // 虎の巻(特定済み現場データ)にはあるのに、予定表側に完全一致・表記ゆれ一致・部分一致のどれも
+  // 1件も見つからない現場。監督名・ハウスNoが「すでに埋まっているから候補に出ない」のではなく、
+  // そもそも予定表にその現場のデータをまだ作っていない可能性が高いものを区別して出す。
+  function findUnmatchedIdentifiedSites() {
+    return identifiedSites.filter((s) => {
+      if (!HOUSE_NUMBER_KUMITEN.includes(s.kumiten)) return false;
+      const normSite = normalizeForCompare(s.siteName);
+      return !schedRecords.some((r) => {
+        if (r.kumiten !== s.kumiten) return false;
+        if (r.name.trim() === s.siteName.trim()) return true;
+        const normRecord = normalizeForCompare(r.name);
+        if (!normRecord || !normSite) return false;
+        if (normRecord === normSite) return true;
+        const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
+        const longer = normSite.length <= normRecord.length ? normRecord : normSite;
+        return shorter.length >= 4 && longer.includes(shorter);
+      });
+    });
   }
 
   // 「監督名・ハウスNoがETS TRACK側では入力／変更されたのに、マニフェスト業務プロジェクトの
@@ -3766,8 +3797,9 @@ async function autoAssignTrucks() {
   function openReconcileModal() {
     const matches = findReconcileMatches();
     const near = findNearMatches(matches);
-    if (matches.length === 0 && near.length === 0) {
-      showToast('照合できる候補が見つかりませんでした（現場名が完全一致する未登録データがありません）');
+    const unmatched = findUnmatchedIdentifiedSites();
+    if (matches.length === 0 && near.length === 0 && unmatched.length === 0) {
+      showToast('照合できる候補はありません（虎の巻の内容はすべて予定表に反映済みです）');
       return;
     }
     setReconcileMatches(matches);
@@ -3777,6 +3809,7 @@ async function autoAssignTrucks() {
     matches.forEach((m) => { checked[m.recordId] = !m.isChange; });
     setReconcileChecked(checked);
     setNearMatches(near);
+    setUnmatchedSites(unmatched);
     setShowReconcileModal(true);
   }
   async function applyReconcile() {
@@ -5999,11 +6032,12 @@ async function autoAssignTrucks() {
               <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #F0EFE9' }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>表記ゆれの可能性がある候補</div>
                 <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
-                  現場名が完全には一致しませんが、スペースや全角/半角の違いだけかもしれません。見比べて、同じ現場だと判断できたら「同じ現場として反映」を押してください（自動では反映しません）。
+                  現場名が完全には一致しませんが、スペースや全角/半角の違い、または連棟現場の頭に付ける○/〇マークの有無だけかもしれません。見比べて、同じ現場だと判断できたら「同じ現場として反映」を押してください（自動では反映しません）。
                 </div>
                 <div style={{ maxHeight: 280, overflowY: 'auto' }}>
                   {nearMatches.map((nm, i) => (
                     <div key={`${nm.recordId}_${i}`} style={{ padding: '10px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
+                      {nm.isLoose && <div style={{ color: '#B8860B', fontWeight: 700, marginBottom: 2 }}>⚠️部分一致のみ（要確認）</div>}
                       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
                         <span style={{ color: '#8A8A83' }}>ETS側：</span>
                         <span style={{ fontWeight: 700 }}>{nm.etsName}</span>
@@ -6018,6 +6052,22 @@ async function autoAssignTrucks() {
                       <button style={{ ...styles.linkBtn, marginTop: 6 }} onClick={() => applyNearMatch(nm)}>
                         ✓ 同じ現場として反映
                       </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {unmatchedSites.length > 0 && (
+              <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #F0EFE9' }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>予定表にまだ見当たらない現場（{unmatchedSites.length}件）</div>
+                <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+                  虎の巻には登録されていますが、表記ゆれ・部分一致も含めて予定表側に同じ現場が1件も見つかりませんでした。まだ予定表にその現場のデータを作っていないか、現場名が大きく違う（住所ベースと施主名ベースなど）可能性があります。
+                </div>
+                <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  {unmatchedSites.map((s, i) => (
+                    <div key={`${s.kumiten}_${s.siteName}_${i}`} style={{ padding: '6px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
+                      <span style={{ fontWeight: 700 }}>{s.siteName}</span>　（{s.kumiten}／No:{s.houseNumber || '不明'}／監督：{s.supervisorName || '不明'}）
                     </div>
                   ))}
                 </div>
