@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-140';
+  window.__APP_VERSION__ = '2026-09-21-142';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -455,6 +455,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・「工程表添付」タグを付けた後に、予定表側で編集してその現場の日付を変えても、TODO側の表示（日付・現場名・写真の有無）はちゃんと今の内容に追従する。「移動」ボタンで新しい現場データとして複製した場合も、タグは自動的に新しい現場の方へ引き継がれるので、付け直す必要はない
 ・「移動」すると現場写真は基本リセットされる（新しい現場でまた撮り直す前提のため）が、工程表として貼った画像は自動でそのままコピーされるので貼り直し不要。駐車禁止の写真など「移動しても絶対に残しておきたい写真」は、写真の下にある「📌固定する」ボタンを押しておくと、工程表画像と同じように移動時も自動でコピーされる（固定を外したい時はもう一度押す）
 ・間違えて普通の「＋写真」から工程表画像を貼ってしまった時は、その写真の下の「📋工程表にする」ボタンを押せば、あとから工程表として登録し直せる（押すと、その現場に「工程表画像添付」タスクが残っていれば自動で「やった」になり、次の「移動」でも自動コピーの対象になる）
+・カード本体の写真は、小さいサムネイルのままでは結局タップしないと中身が読めないため、普段は「📷 N枚 ▼開く」という小さいボタンだけにして畳んである。タップすると横スクロールの写真帯が開き、もう一度タップすると閉じる（写真のないカードと見た目の高さが揃うので、一覧が写真の枚数で間延びしない）
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -1118,7 +1119,7 @@ function PhotoThumb({ photo, onTogglePin, onToggleGantt }) {
   if (failed) {
     return (
       <div style={styles.photoItem}>
-        <a href={photo.img} target="_blank" rel="noreferrer" style={styles.photoBroken}>⚠️開けない<br />タップで確認</a>
+        <a href={photo.img} target="_blank" rel="noreferrer" style={styles.photoBroken}>⚠️表示失敗<br />タップで開く</a>
         <span style={styles.photoStaff}>{photo.staff}</span>
         {pinBtn}
         {ganttBtn}
@@ -1316,6 +1317,17 @@ function GenbaTracker() {
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  // カード本体の写真帯は、小さいサムネイルだけでは結局中身が読めない（工程表の文字など）ため、
+  // デフォルトは「📷 N枚」の小さいボタンだけにして畳んでおき、タップした時だけ帯を開く。
+  // 写真がないカードと高さが揃うので、一覧が縦に間延びしない。
+  const [expandedPhotoIds, setExpandedPhotoIds] = useState(() => new Set());
+  function togglePhotoExpand(id) {
+    setExpandedPhotoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkFrom, setBulkFrom] = useState('');
   const [bulkTo, setBulkTo] = useState('');
@@ -4484,9 +4496,16 @@ async function autoAssignTrucks() {
                         }} />
                       </label>
                     )}
+                    {/* 小さいサムネイルのままだと結局タップして開かないと中身（工程表の文字など）が読めないので、
+                        普段は「📷 N枚」の小さいボタンだけにして畳んでおく。写真がないカードと高さが揃う。 */}
+                    {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && (
+                      <button type="button" style={styles.dupBtn} onClick={() => togglePhotoExpand(r.id)}>
+                        📷 {(r.photos || []).length}枚 {expandedPhotoIds.has(r.id) ? '▲閉じる' : '▼開く'}
+                      </button>
+                    )}
                   </div>
                 </div>
-                {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && (
+                {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && expandedPhotoIds.has(r.id) && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
                       <PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} />
@@ -6562,14 +6581,14 @@ const styles = {
   editOpenBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
   actionRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   dupBtn: { background: '#fff', color: '#457B9D', border: '1px solid #C7D7E0', borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
-  photoThread: { display: 'flex', gap: 8, padding: '0 14px 12px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid #F0EFE9', paddingTop: 10 },
-  photoItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 },
+  photoThread: { display: 'flex', gap: 8, padding: '0 14px 12px', flexWrap: 'nowrap', overflowX: 'auto', alignItems: 'center', borderTop: '1px solid #F0EFE9', paddingTop: 10, WebkitOverflowScrolling: 'touch' },
+  photoItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0 },
   threadImg: { width: 56, height: 56, objectFit: 'cover', borderRadius: 8 },
   photoBroken: { width: 56, height: 56, borderRadius: 8, background: '#FFF3CD', color: '#8A6D00', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', lineHeight: 1.3, textDecoration: 'none', boxSizing: 'border-box', padding: 2 },
   photoStaff: { fontSize: 10, color: '#8A8A83' },
   pinBtn: { border: '1px solid #D8D6CD', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#8A8A83', background: '#fff', cursor: 'pointer' },
   pinBtnActive: { border: '1px solid #B08900', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#8A6D00', background: '#FFF3CD', fontWeight: 700, cursor: 'pointer' },
-  addPhotoBtn: { border: '1px dashed #D8D6CD', borderRadius: 8, padding: '8px 10px', fontSize: 11.5, color: '#8A8A83', cursor: 'pointer' },
+  addPhotoBtn: { border: '1px dashed #D8D6CD', borderRadius: 8, padding: '8px 10px', fontSize: 11.5, color: '#8A8A83', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(20,20,18,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 },
   sheet: { background: '#fff', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: '18px 18px 24px' },
   sheetHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
