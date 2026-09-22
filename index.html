@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-22-149';
+  window.__APP_VERSION__ = '2026-09-22-150';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -463,6 +463,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 
 ■ ↩ 「移動」の取り消し（v149〜）
 ・「移動（1週間後）」「移動（連棟・数日後）」で保存すると、画面下に「移動しました　↩元に戻す」というボタンが15秒間だけ表示される。押すと、新しくできた予定を削除し、ゴミ箱へ送った元の予定をそのまま復元する（工程表添付タグも元の現場側に戻る）
+・15秒の間に新しい方の予定に写真を追加していた場合は、その写真は消さずに元の予定側へ引き継がれる。写真以外の内容（担当者や日付など）を編集していた場合は、取り消す前に確認メッセージが出る（気づかずに現場での作業内容を消さないため）
 ・15秒を過ぎて消えてしまった場合は、これまで通りゴミ箱（30日間保存）から手動で復元してください
 ・オフラインで「保留」になった移動には出ない（電波が戻って実際に送信されるまで元データを安全に戻せないため）
 
@@ -1631,6 +1632,12 @@ function GenbaTracker() {
   // 「保存できたはずなのに消えている」ように見えてしまう。保存直後はしばらく自動更新を待つ。
   const lastLocalWriteRef = useRef(0);
   const SAVE_SETTLE_MS = 20000;
+  // applyLocalRecordUpdate()がキャッシュ保存時に「もう一方の一覧」の最新値を参照できるようにするための ref
+  // （state変数をそのままクロージャで使うと、更新直後の一瞬だけ古い値のままキャッシュに書いてしまうことがあるため）
+  const schedRecordsRef = useRef([]);
+  const mgmtRecordsRef = useRef([]);
+  useEffect(() => { schedRecordsRef.current = schedRecords; }, [schedRecords]);
+  useEffect(() => { mgmtRecordsRef.current = mgmtRecords; }, [mgmtRecords]);
   useEffect(() => {
     function handleVisible() {
       if (document.visibilityState !== 'visible') return;
@@ -2375,9 +2382,12 @@ function GenbaTracker() {
 
   async function moveSiteToDate(record) {
     try {
-      await storage.set(`sched:${record.id}`, JSON.stringify({ ...record, date: dispatchDate }));
+      const updated = { ...record, date: dispatchDate };
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated));
+      // 保存直後にload()で読み直すと、サーバー側の反映がまだ間に合っていない場合に
+      // 古い日付で巻き戻って見えてしまうため、その場で手元のデータを書き換える
+      applyLocalRecordUpdate('sched', updated);
       showToast(`${record.name} の予定日を${dispatchDate}に変更しました`);
-      load();
     } catch (e) { showToast('変更に失敗しました'); }
   }
 
@@ -2698,7 +2708,14 @@ async function autoAssignTrucks() {
   // duplicateRecord() で開いた「移動」のフォームを保存した後、元のレコードをゴミ箱に移してから削除する
   async function moveOriginalToTrash(prefix, id) {
     const source = prefix === 'sched' ? schedRecords : mgmtRecords;
-    const record = source.find((r) => r.id === id);
+    let record = source.find((r) => r.id === id);
+    // 「移動」フォームを開いている間は自動更新を止めているため、その間に他のスタッフが
+    // 元の現場を編集しているかもしれない。手元の古いデータのままゴミ箱に上書きすると、
+    // その更新が消えてしまうので、ゴミ箱へ移す直前にサーバーの最新データを取り直す。
+    try {
+      const fresh = await storage.get(`${prefix}:${id}`, true);
+      if (fresh && fresh.value) record = JSON.parse(fresh.value);
+    } catch (e) { /* 取得できなければ手元のデータで続行 */ }
     try {
       if (record) {
         await storage.set(`trash:${id}`, JSON.stringify({ ...record, _type: prefix, deletedAt: new Date().toISOString() }), true);
@@ -2717,17 +2734,42 @@ async function autoAssignTrucks() {
   async function undoMove() {
     const info = lastMoveInfo;
     if (!info || !info.trashedRecord) return;
-    const { prefix, trashedRecord, newRecordId } = info;
+    const { prefix, trashedRecord, newRecordId, savedNewRecord } = info;
     try {
-      await storage.set(`${prefix}:${trashedRecord.id}`, JSON.stringify(trashedRecord), true);
+      // 15秒の間に「移動後」の現場データ側が既に触られている（写真が増えている、内容が
+      // 編集されている等）かもしれないため、削除する前にサーバーの最新データを確認する。
+      // 写真が増えていれば取り消し後の元の現場側に引き継ぎ、写真以外の内容が変わっていれば
+      // 本当に取り消してよいか確認してから進める（気づかずに現場での作業内容を消さないため）。
+      let restoredRecord = trashedRecord;
+      try {
+        const fresh = await storage.get(`${prefix}:${newRecordId}`, true);
+        if (fresh && fresh.value && savedNewRecord) {
+          const freshNew = JSON.parse(fresh.value);
+          const savedPhotos = savedNewRecord.photos || [];
+          const freshPhotos = freshNew.photos || [];
+          const savedImgs = new Set(savedPhotos.map((p) => p.img));
+          const addedPhotos = freshPhotos.filter((p) => !savedImgs.has(p.img));
+          const { photos: _fp, ...freshRest } = freshNew;
+          const { photos: _sp, ...savedRest } = savedNewRecord;
+          const otherFieldsChanged = JSON.stringify(freshRest) !== JSON.stringify(savedRest);
+          if (otherFieldsChanged) {
+            const proceed = window.confirm('移動してからすでにこの現場のデータが編集されているようです。取り消すと、その編集内容は失われます（写真は引き継がれます）。それでも元に戻しますか？');
+            if (!proceed) return;
+          }
+          if (addedPhotos.length > 0) {
+            restoredRecord = { ...trashedRecord, photos: [...(trashedRecord.photos || []), ...addedPhotos] };
+          }
+        }
+      } catch (e) { /* 取得できなければ移動直後の内容のまま進める */ }
+      await storage.set(`${prefix}:${trashedRecord.id}`, JSON.stringify(restoredRecord), true);
       await storage.delete(`trash:${trashedRecord.id}`, true);
       await storage.delete(`${prefix}:${newRecordId}`, true);
-      await transferGanttAttachTag(newRecordId, trashedRecord);
+      await transferGanttAttachTag(newRecordId, restoredRecord);
       lastLocalWriteRef.current = Date.now();
       if (prefix === 'sched') {
-        setSchedRecords((prev) => [trashedRecord, ...prev.filter((r) => r.id !== newRecordId && r.id !== trashedRecord.id)].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+        setSchedRecords((prev) => [restoredRecord, ...prev.filter((r) => r.id !== newRecordId && r.id !== restoredRecord.id)].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
       } else {
-        setMgmtRecords((prev) => [trashedRecord, ...prev.filter((r) => r.id !== newRecordId && r.id !== trashedRecord.id)].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+        setMgmtRecords((prev) => [restoredRecord, ...prev.filter((r) => r.id !== newRecordId && r.id !== restoredRecord.id)].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
       }
       setLastMoveInfo(null);
       showToast('移動を取り消しました（元の予定に戻しました）');
@@ -2814,7 +2856,7 @@ async function autoAssignTrucks() {
         const trashedRecord = await moveOriginalToTrash(prefix, _moveFromId);
         await transferGanttAttachTag(_moveFromId, record);
         if (trashedRecord && !result.queued) {
-          const moveInfo = { prefix, trashedRecord, newRecordId: id };
+          const moveInfo = { prefix, trashedRecord, newRecordId: id, savedNewRecord: record };
           setLastMoveInfo(moveInfo);
           setTimeout(() => { setLastMoveInfo((cur) => (cur === moveInfo ? null : cur)); }, 15000);
           showToast('移動しました（下の「元に戻す」から15秒以内なら取り消せます）');
@@ -2839,7 +2881,7 @@ async function autoAssignTrucks() {
       setSchedRecords((prev) => {
         const next = [record, ...prev.filter((r) => r.id !== record.id)];
         next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setCachedRecords(next, mgmtRecords, kumitenList, todos);
+        setCachedRecords(next, mgmtRecordsRef.current, kumitenList, todos);
         syncAutoTodos(next, todos);
         return next;
       });
@@ -2847,7 +2889,7 @@ async function autoAssignTrucks() {
       setMgmtRecords((prev) => {
         const next = [record, ...prev.filter((r) => r.id !== record.id)];
         next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setCachedRecords(schedRecords, next, kumitenList, todos);
+        setCachedRecords(schedRecordsRef.current, next, kumitenList, todos);
         return next;
       });
     }
@@ -3061,6 +3103,9 @@ async function autoAssignTrucks() {
         };
         try {
           await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
+          // 保存直後にload()で読み直すと反映待ちの間だけ古いデータに巻き戻って見えるため、
+          // その場で手元のデータを書き換える
+          applyLocalRecordUpdate('sched', updatedRec);
           updated++;
         } catch (e) { console.error(e); }
       }
@@ -3069,7 +3114,6 @@ async function autoAssignTrucks() {
     showToast(`${updated}件更新しました`);
     setShowBulkUpdate(false);
     setBulkUpdateText('');
-    load();
   }
 
   function copyImportTemplate() {
@@ -3217,9 +3261,11 @@ async function autoAssignTrucks() {
     const { _type, deletedAt, ...rest } = item;
     await storage.set(`${_type}:${item.id}`, JSON.stringify(rest), true);
     await storage.delete(`trash:${item.id}`, true);
+    // 保存直後にload()で読み直すと反映待ちの間だけ「復元できていない」ように見えるため、
+    // その場で手元のデータに反映する
+    applyLocalRecordUpdate(_type, rest);
     showToast(`「${item.name}」を復元しました`);
     setTrashItems((prev) => prev.filter((t) => t.id !== item.id));
-    load();
   }
 
   async function purgeTrash(item) {
@@ -3270,10 +3316,14 @@ async function autoAssignTrucks() {
       await storage.set(`trash:${r.id}`, JSON.stringify({ ...r, _type: prefix, deletedAt: new Date().toISOString() }), true);
       await storage.delete(`${prefix}:${r.id}`, true);
     }
+    // 保存直後にload()で読み直すと反映待ちの間だけ削除できていないように見えるため、その場で反映する
+    lastLocalWriteRef.current = Date.now();
+    const targetIds = new Set(targets.map((r) => r.id));
+    if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => !targetIds.has(r.id)));
+    else setMgmtRecords((prev) => prev.filter((r) => !targetIds.has(r.id)));
     showToast(`${targets.length}件削除しました`);
     setShowBulkDelete(false);
     setBulkFrom(''); setBulkTo('');
-    load();
   }
 
   // メルディアのハウスNoは「対象外」で足りる運用にしたが、その機能を追加する前から登録されていた
@@ -3486,9 +3536,10 @@ async function autoAssignTrucks() {
     const updated = { ...record, lineItems: items };
     try {
       await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      // 保存直後にload()で読み直すと反映待ちの間だけ古い内容に巻き戻って見えるため、その場で反映する
+      applyLocalRecordUpdate('mgmt', updated);
       showToast('保存しました');
       setInvoiceEdits((prev) => { const next = { ...prev }; delete next[record.id]; return next; });
-      load();
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
@@ -3931,9 +3982,16 @@ async function autoAssignTrucks() {
   }
 
   async function applyNearMatch(nm) {
-    const rec = schedRecords.find((r) => r.id === nm.recordId);
-    if (!rec) return;
+    const localRec = schedRecords.find((r) => r.id === nm.recordId);
+    if (!localRec) return;
     const site = nm.site;
+    // 照合モーダルを開いている間に他のスタッフがこの現場を編集しているかもしれないため、
+    // 反映の直前にサーバーの最新データを取り直してから、その上に監督名・ハウスNoだけ重ねる
+    let rec = localRec;
+    try {
+      const fresh = await storage.get(`sched:${rec.id}`, true);
+      if (fresh && fresh.value) rec = JSON.parse(fresh.value);
+    } catch (e) { /* 取得できなければ手元のデータで続行 */ }
     const updatedRec = {
       ...rec,
       supervisorName: (rec.supervisorName || '').trim() || site.supervisorName || rec.supervisorName,
@@ -3970,8 +4028,15 @@ async function autoAssignTrucks() {
     let count = 0;
     let queuedCount = 0;
     for (const m of toApply) {
-      const rec = schedRecords.find((r) => r.id === m.recordId);
-      if (!rec) continue;
+      const localRec = schedRecords.find((r) => r.id === m.recordId);
+      if (!localRec) continue;
+      // 一覧を開いてから他のスタッフが同じ現場を編集しているかもしれないため、
+      // 反映の直前にサーバーの最新データを取り直してから、その上に監督名・ハウスNoだけ重ねる
+      let rec = localRec;
+      try {
+        const fresh = await storage.get(`sched:${rec.id}`, true);
+        if (fresh && fresh.value) rec = JSON.parse(fresh.value);
+      } catch (e) { /* 取得できなければ手元のデータで続行 */ }
       const updatedRec = {
         ...rec,
         supervisorName: m.newSupervisor || rec.supervisorName,
@@ -4043,12 +4108,17 @@ async function autoAssignTrucks() {
         mgmtIds: affectedMgmt.map((r) => r.id),
         at: new Date().toISOString(),
       }), true);
+      // 保存直後にload()で読み直すと反映待ちの間だけ古い工務店名に巻き戻って見えるため、
+      // その場で手元のデータを書き換える
+      lastLocalWriteRef.current = Date.now();
+      setSchedRecords((prev) => prev.map((r) => (r.kumiten === oldName ? { ...r, kumiten: newName } : r)));
+      setMgmtRecords((prev) => prev.map((r) => (r.kumiten === oldName ? { ...r, kumiten: newName } : r)));
       showToast(`「${oldName}」を「${newName}」に変更しました（${affected.length}件更新）`);
     } catch (e) {
       console.error(e);
       showToast('変更に失敗しました');
     }
-    await load();
+    setLoading(false);
   }
 
   async function loadRenameHistory() {
@@ -4088,13 +4158,20 @@ async function autoAssignTrucks() {
         }
       }
       await storage.delete(`kumitenRenameLog:${entry.id}`, true);
+      // 保存直後にload()で読み直すと反映待ちの間だけ古い工務店名に巻き戻って見えるため、
+      // その場で手元のデータを書き換える
+      lastLocalWriteRef.current = Date.now();
+      const schedIdSet = new Set(entry.schedIds || []);
+      const mgmtIdSet = new Set(entry.mgmtIds || []);
+      setSchedRecords((prev) => prev.map((r) => (schedIdSet.has(r.id) && r.kumiten === entry.newName ? { ...r, kumiten: entry.oldName } : r)));
+      setMgmtRecords((prev) => prev.map((r) => (mgmtIdSet.has(r.id) && r.kumiten === entry.newName ? { ...r, kumiten: entry.oldName } : r)));
       showToast(`「${entry.oldName}」に戻しました`);
       setRenameHistory((prev) => prev.filter((h) => h.id !== entry.id));
     } catch (e) {
       console.error(e);
       showToast('元に戻すのに失敗しました');
     }
-    await load();
+    setLoading(false);
   }
 
   const activeList = tab === 'sched' ? schedRecords : mgmtRecords;
