@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-21-145';
+  window.__APP_VERSION__ = '2026-09-22-149';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -441,7 +441,8 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ■ 特定済み現場データを編集／特定済み現場と照合（セット運用）
 ・特定済み現場データを編集＝マニフェスト調査でわかった「現場名・ハウスNo・監督名・確認日」を工務店ごとに保存しておく虎の巻。参考ファイルの行をほぼそのまま貼り付けOK。
 ・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。完全一致0件でも、スペース・全角半角・連棟現場の頭の○/〇マークの有無だけの違いや、住所の追記などの部分一致（⚠️部分一致のみと表示、要確認）は「表記ゆれの可能性がある候補」に出るので、そちらも確認する
-・それでも見つからない虎の巻データは「予定表にまだ見当たらない現場」として別枠に出る。これは表記の問題ではなく、そもそも予定表にその現場のデータをまだ作っていない可能性が高いことを意味する（監督名・ハウスNoがすでに正しく埋まっていて候補に出ない場合とは区別される）
+・現場名が住所ベース／施主名ベースなど書き方そのものが大きく違って部分一致にも引っかからない場合でも、ハウスNoが一致していれば「🏠ハウスNo一致」として同じ枠に候補が出る（v149〜）。逆に、似た名前の候補が複数出て紛らわしい時は、名前一致の候補にも「🏠ハウスNoも一致（信頼度高い）」と出ればより確信を持って選べる
+・それでも見つからない虎の巻データは「予定表にまだ見当たらない現場」として別枠に出る。これは表記の問題ではなく、そもそも予定表にその現場のデータをまだ作っていない可能性が高いことを意味する（監督名・ハウスNoがすでに正しく埋まっている、またはハウスNoが一致していて候補に出ている場合とは区別される）
 順番：虎の巻を最新化→照合を実行、の流れ。
 
 ■ 監督が1人だけの工務店（例：リムクラフト＝武田さん）
@@ -456,7 +457,14 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・「工程表添付」タグを付けた後に、予定表側で編集してその現場の日付を変えても、TODO側の表示（日付・現場名・写真の有無）はちゃんと今の内容に追従する。「移動」ボタンで新しい現場データとして複製した場合も、タグは自動的に新しい現場の方へ引き継がれるので、付け直す必要はない
 ・「移動」すると現場写真は基本リセットされる（新しい現場でまた撮り直す前提のため）が、工程表として貼った画像は自動でそのままコピーされるので貼り直し不要。駐車禁止の写真など「移動しても絶対に残しておきたい写真」は、写真の下にある「📌固定する」ボタンを押しておくと、工程表画像と同じように移動時も自動でコピーされる（固定を外したい時はもう一度押す）
 ・間違えて普通の「＋写真」から工程表画像を貼ってしまった時は、その写真の下の「📋工程表にする」ボタンを押せば、あとから工程表として登録し直せる（押すと、その現場に「工程表画像添付」タスクが残っていれば自動で「やった」になり、次の「移動」でも自動コピーの対象になる）
+・間違えて貼った写真は、写真の下の「🗑削除」ボタンで削除できる（確認あり・元に戻せない）。工程表画像を削除しても、すでに完了した「工程表画像添付」タスクは自動では未完了に戻らないので、必要ならTODO側で手動で調整する
+・v137より前に作られた「工程表添付」タグは、現場を裏で特定する番号(siteId)を持っていないため、同じ現場名が他にもあると取り違える恐れが理論上ある（v146で「取り違えそうな時は見つからない扱いにする」安全策済み）。予定表タブの「📎 古い工程表添付タグにsiteIdを一括追加」を一度実行しておくと、古いタグにも番号を後付けして根本的に解消できる。現場が1件に絞れないタグは安全のため何もせず残るので、何度実行しても害はない
 ・カード本体の写真は、小さいサムネイルのままでは結局タップしないと中身が読めないため、普段は「📷 N枚 ▼開く」という小さいボタンだけにして畳んである。タップすると横スクロールの写真帯が開き、もう一度タップすると閉じる（写真のないカードと見た目の高さが揃うので、一覧が写真の枚数で間延びしない）。同時に開けるのは常に1件だけで、別のカードを開くと前に開いていたカードは自動で閉じる。「閉じる」を押し忘れても、タブを切り替えると自動的に閉じる
+
+■ ↩ 「移動」の取り消し（v149〜）
+・「移動（1週間後）」「移動（連棟・数日後）」で保存すると、画面下に「移動しました　↩元に戻す」というボタンが15秒間だけ表示される。押すと、新しくできた予定を削除し、ゴミ箱へ送った元の予定をそのまま復元する（工程表添付タグも元の現場側に戻る）
+・15秒を過ぎて消えてしまった場合は、これまで通りゴミ箱（30日間保存）から手動で復元してください
+・オフラインで「保留」になった移動には出ない（電波が戻って実際に送信されるまで元データを安全に戻せないため）
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
 ・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
@@ -1092,8 +1100,18 @@ function MonthCalendar({ records, monthCursor, setMonthCursor, onPickDate, selec
 // 写真サムネイル。タップで元画像を新しいタブで開けるようにし（今までは押しても何も起きなかった）、
 // 読み込みに失敗した時は空アイコンのまま気付けないのを防ぐため、はっきり分かる表示に切り替える
 // （権限やURLの問題を切り分けやすくするため、失敗時は元URLを開くリンクも出す）。
-function PhotoThumb({ photo, onTogglePin, onToggleGantt }) {
+function PhotoThumb({ photo, onTogglePin, onToggleGantt, onDelete }) {
   const [failed, setFailed] = React.useState(false);
+  const deleteBtn = onDelete && (
+    <button
+      type="button"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}
+      style={styles.deletePhotoBtn}
+      title="この写真を削除する（間違えて貼った時など）"
+    >
+      🗑削除
+    </button>
+  );
   // 📌固定：駐車禁止の写真など、現場が「移動」で複製されても消したくない写真に付ける印。
   // 固定しておくと、工程表画像と同じように新しい現場側へ自動でコピーされる。
   const pinBtn = onTogglePin && (
@@ -1125,6 +1143,7 @@ function PhotoThumb({ photo, onTogglePin, onToggleGantt }) {
         <span style={styles.photoStaff}>{photo.staff}</span>
         {pinBtn}
         {ganttBtn}
+        {deleteBtn}
       </div>
     );
   }
@@ -1136,6 +1155,7 @@ function PhotoThumb({ photo, onTogglePin, onToggleGantt }) {
       <span style={styles.photoStaff}>{photo.staff}</span>
       {pinBtn}
       {ganttBtn}
+      {deleteBtn}
     </div>
   );
 }
@@ -1307,6 +1327,9 @@ function GenbaTracker() {
   // 起動直後、前回のキャッシュを即表示している間だけtrue。件数が古い可能性があることに気づけるよう表示する
   const [syncingFromCache, setSyncingFromCache] = useState(false);
   const [toast, setToast] = useState('');
+  // 「移動」を実行した直後だけセットされ、15秒間だけ「元に戻す」ボタンを出すための情報
+  // { prefix, trashedRecord（元のレコードそのもの）, newRecordId（移動後の新しいレコードID） }
+  const [lastMoveInfo, setLastMoveInfo] = useState(null);
 
   const [search, setSearch] = useState('');
   const [expandedNoteIds, setExpandedNoteIds] = useState({});
@@ -1887,12 +1910,17 @@ function GenbaTracker() {
   // idを優先することで、日付を編集で変えてもこのタグ・TODOはちゃんと同じ現場を指し続けるようにする
   // （「移動」ボタンで新しい現場データとして複製した場合はidが変わるため、その時だけは再度タグを付け直す必要がある）
   function ganttAttachTodoFor(r) {
+    // 同じ現場名を持つ予定が他にもある場合（再訪問などで同名の現場が複数）、日付を無視した
+    // 名前だけの照合はどちらを指しているか特定できず、間違ったタグを外してしまう恐れがあるため、
+    // 現場名が今アクティブな予定の中でユニークな時だけ、日付無視のゆるい照合を許可する。
+    const nameSharedByOthers = [...schedRecords, ...mgmtRecords].some((x) => x.id !== r.id && x.name === r.name);
     return todos.find((t) => !t.archived && t.text === '工程表画像添付' && (
       (t.siteId && t.siteId === r.id)
       || (!t.siteId && t.siteName === r.name && (!t.date || t.date === r.date))
       // siteIdが無い古いタスクは、日付が編集で変わっていても現場名だけで拾えるようにする
       // （同じ現場名が複数日にまたがる場合はやや大まかな判定になるが、タグが消えたままより安全）
-      || (!t.siteId && t.siteName === r.name)
+      // ただし同名の現場が他にもある時は、誤って別の現場のタグを外してしまうのを防ぐため対象外にする
+      || (!t.siteId && t.siteName === r.name && !nameSharedByOthers)
     ));
   }
   async function toggleGanttAttach(r) {
@@ -1919,6 +1947,37 @@ function GenbaTracker() {
     setTodos((prev) => prev.map((x) => (x.id === existing.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
     try { await storage.set(`todo:${existing.id}`, JSON.stringify(next), true); } catch (e) { console.error(e); }
+  }
+
+  // v137より前に作られた「📎工程表添付」タグ（TODO）は、現場を裏で特定する番号(siteId)を
+  // 持っていない。現場名だけで探すため、同じ現場名が他にもあると取り違えてしまう恐れがある
+  // （v146で「取り違えそうな時は見つからない扱いにする」安全策を入れたが、根本的には古いタグにも
+  // siteIdを持たせてしまう方がよい）。一度だけ実行する一括お引っ越し処理：
+  // 各タグについて、現場名（できれば日付も）が一致する現場が今ちょうど1件だけに絞れる時だけ、
+  // そのIDをsiteIdとして書き込む。複数候補があって特定できないものは、安全のため何もせず残す。
+  async function migrateLegacyGanttTags() {
+    const targets = todos.filter((t) => !t.archived && t.text === '工程表画像添付' && !t.siteId);
+    if (targets.length === 0) { showToast('siteIdの無い古いタグは見つかりませんでした（対応不要です）'); return; }
+    if (!window.confirm(`古い「工程表添付」タグ${targets.length}件を確認し、現場が1件だけに絞れるものだけ更新します。よろしいですか？`)) return;
+    const allRecords = [...schedRecords, ...mgmtRecords];
+    let migrated = 0;
+    let ambiguous = 0;
+    let notFound = 0;
+    for (const t of targets) {
+      const sameName = allRecords.filter((r) => r.name === t.siteName);
+      const withDate = t.date ? sameName.filter((r) => r.date === t.date) : sameName;
+      const candidates = withDate.length > 0 ? withDate : sameName;
+      if (candidates.length === 0) { notFound++; continue; }
+      if (candidates.length > 1) { ambiguous++; continue; }
+      const target = candidates[0];
+      const next = { ...t, siteId: target.id, siteName: target.name, date: target.date };
+      setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
+      try { await storage.set(`todo:${t.id}`, JSON.stringify(next), true); migrated++; } catch (e) { console.error(e); }
+    }
+    let msg = `${migrated}件のタグにsiteIdを追加しました`;
+    if (ambiguous > 0) msg += `（同名の現場が複数あって特定できず見送った分：${ambiguous}件）`;
+    if (notFound > 0) msg += `（該当する現場が見つからなかった分：${notFound}件）`;
+    showToast(msg);
   }
 
   // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
@@ -2149,9 +2208,16 @@ function GenbaTracker() {
   // 通常の写真追加ではタスクは完了にならない（誤って完了扱いになる心配がない）
   // 「工程表画像添付」タスクが指している予定表の記録を探す（写真添付時とTODO一覧での既存枚数表示で共通利用）
   function matchedSchedRecordForGanttTodo(t) {
-    return (t.siteId && schedRecords.find((r) => r.id === t.siteId))
-      || schedRecords.find((r) => r.name === t.siteName && (!t.date || r.date === t.date))
-      || schedRecords.find((r) => r.name === t.siteName);
+    if (t.siteId) {
+      const bySiteId = schedRecords.find((r) => r.id === t.siteId);
+      if (bySiteId) return bySiteId;
+    }
+    const byNameAndDate = schedRecords.find((r) => r.name === t.siteName && (!t.date || r.date === t.date));
+    if (byNameAndDate) return byNameAndDate;
+    // 日付を無視した現場名だけの照合は、同名の現場が複数あると間違った現場に写真が
+    // ついてしまう恐れがあるため、現場名が1件だけに絞れる時だけ許可する（複数あれば「見つからない」扱いにする）
+    const sameNameRecords = schedRecords.filter((r) => r.name === t.siteName);
+    return sameNameRecords.length === 1 ? sameNameRecords[0] : undefined;
   }
   async function attachGanttPhotoAndComplete(t, files) {
     if (!files || files.length === 0) return;
@@ -2641,7 +2707,33 @@ async function autoAssignTrucks() {
       lastLocalWriteRef.current = Date.now();
       if (prefix === 'sched') setSchedRecords((prev) => prev.filter((r) => r.id !== id));
       else setMgmtRecords((prev) => prev.filter((r) => r.id !== id));
-    } catch (e) { console.error(e); }
+      return record || null;
+    } catch (e) { console.error(e); return null; }
+  }
+
+  // moveOriginalToTrash()の直後、15秒以内なら押せる「元に戻す」。
+  // ゴミ箱に移した元のレコードをそのまま復元し、移動でできた新しいレコードは削除し、
+  // 工程表添付タグも移動前の状態（元のレコード）に戻す。
+  async function undoMove() {
+    const info = lastMoveInfo;
+    if (!info || !info.trashedRecord) return;
+    const { prefix, trashedRecord, newRecordId } = info;
+    try {
+      await storage.set(`${prefix}:${trashedRecord.id}`, JSON.stringify(trashedRecord), true);
+      await storage.delete(`trash:${trashedRecord.id}`, true);
+      await storage.delete(`${prefix}:${newRecordId}`, true);
+      await transferGanttAttachTag(newRecordId, trashedRecord);
+      lastLocalWriteRef.current = Date.now();
+      if (prefix === 'sched') {
+        setSchedRecords((prev) => [trashedRecord, ...prev.filter((r) => r.id !== newRecordId && r.id !== trashedRecord.id)].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+      } else {
+        setMgmtRecords((prev) => [trashedRecord, ...prev.filter((r) => r.id !== newRecordId && r.id !== trashedRecord.id)].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+      }
+      setLastMoveInfo(null);
+      showToast('移動を取り消しました（元の予定に戻しました）');
+    } catch (e) {
+      showToast('取り消しに失敗しました。手動でゴミ箱から復元してください');
+    }
   }
 
   async function saveRecord() {
@@ -2719,9 +2811,16 @@ async function autoAssignTrucks() {
     try {
       const result = await storage.set(`${prefix}:${id}`, JSON.stringify(record), true);
       if (_moveFromId && _moveFromId !== id) {
-        await moveOriginalToTrash(prefix, _moveFromId);
+        const trashedRecord = await moveOriginalToTrash(prefix, _moveFromId);
         await transferGanttAttachTag(_moveFromId, record);
-        showToast(result.queued ? '移動を保留しました。電波が戻り次第、自動的に送信されます' : '移動しました（元の予定はゴミ箱へ）');
+        if (trashedRecord && !result.queued) {
+          const moveInfo = { prefix, trashedRecord, newRecordId: id };
+          setLastMoveInfo(moveInfo);
+          setTimeout(() => { setLastMoveInfo((cur) => (cur === moveInfo ? null : cur)); }, 15000);
+          showToast('移動しました（下の「元に戻す」から15秒以内なら取り消せます）');
+        } else {
+          showToast(result.queued ? '移動を保留しました。電波が戻り次第、自動的に送信されます' : '移動しました（元の予定はゴミ箱へ）');
+        }
       } else {
         showToast(result.queued ? '保存を保留しました。電波が戻り次第、自動的に送信されます' : '保存しました');
       }
@@ -3245,9 +3344,19 @@ async function autoAssignTrucks() {
     showToast(`写真を${newPhotos.length}枚追加しました${linkedTodo ? '(工程表添付タスクも完了にしました)' : ''}`);
   }
 
+  // 編集フォームを開いたまま写真を固定/工程表化/削除すると、保存済みデータ(storage)は更新されるが
+  // フォーム自体のform.photosは別のコピーなので、そのままだと画面に反映されない。
+  // 今まさにそのレコードを編集中なら、フォーム側の写真一覧もその場で同期させる。
+  function syncFormPhotosIfEditing(id, photos) {
+    if (editingId === id) setForm((prev) => ({ ...prev, photos }));
+  }
   // 駐車禁止の写真など、「移動」で現場が複製されても消えては困る写真に📌を付ける／外す。
   // 📌が付いた写真は、工程表画像（kind:'gantt'）と同じく duplicateRecord() で新しい現場へコピーされる。
-  async function togglePinPhoto(id, index, recordTab) {
+  // 写真は配列の「何番目か」ではなく、写真ごとにユニークなimg(アップロード先URL)で特定する。
+  // 複数人がほぼ同時に写真を追加していると、保存直前に取り直す「最新データ」の枚数が
+  // 画面表示時点と変わっていることがあり、単純な配列の番号(index)だと別の写真を
+  // 誤って操作してしまう恐れがあるため（固定・工程表化・削除、すべてこの方式に統一）。
+  async function togglePinPhoto(id, imgKey, recordTab) {
     const activeTab = recordTab || tab;
     const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
     const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
@@ -3258,16 +3367,17 @@ async function autoAssignTrucks() {
       const fresh = await storage.get(`${prefix}:${id}`, true);
       if (fresh && fresh.value) latest = JSON.parse(fresh.value);
     } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
-    const photos = (latest.photos || []).map((p, i) => (i === index ? { ...p, pinned: !p.pinned } : p));
+    const photos = (latest.photos || []).map((p) => (p.img === imgKey ? { ...p, pinned: !p.pinned } : p));
     const updated = { ...latest, photos };
     await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
     applyLocalRecordUpdate(prefix, updated);
+    syncFormPhotosIfEditing(id, photos);
   }
 
   // 間違えて普通の「＋写真」から工程表画像を貼ってしまった時、あとから「工程表です」に変換する。
   // 変換すると（1）「移動」時に自動でコピーされる対象になり、（2）その現場に紐づく「工程表画像添付」
   // TODOがまだ残っていれば、貼り忘れがなくなったとみなして自動で「やった」にする。
-  async function toggleGanttKindPhoto(id, index, recordTab) {
+  async function toggleGanttKindPhoto(id, imgKey, recordTab) {
     const activeTab = recordTab || tab;
     const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
     const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
@@ -3278,17 +3388,42 @@ async function autoAssignTrucks() {
       const fresh = await storage.get(`${prefix}:${id}`, true);
       if (fresh && fresh.value) latest = JSON.parse(fresh.value);
     } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
-    const target = (latest.photos || [])[index];
+    const target = (latest.photos || []).find((p) => p.img === imgKey);
     const nowGantt = !(target && target.kind === 'gantt');
-    const photos = (latest.photos || []).map((p, i) => (i === index ? (nowGantt ? { ...p, kind: 'gantt' } : (() => { const { kind, ...rest } = p; return rest; })()) : p));
+    const photos = (latest.photos || []).map((p) => (p.img === imgKey ? (nowGantt ? { ...p, kind: 'gantt' } : (() => { const { kind, ...rest } = p; return rest; })()) : p));
     const updated = { ...latest, photos };
     await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
     applyLocalRecordUpdate(prefix, updated);
+    syncFormPhotosIfEditing(id, photos);
     if (nowGantt) {
       const linkedTodo = ganttAttachTodoFor(updated);
       if (linkedTodo) { await completeTodo(linkedTodo.id); showToast('工程表として登録しました（工程表添付タスクも完了にしました）'); return; }
     }
     showToast(nowGantt ? '工程表として登録しました' : '工程表登録を解除しました');
+  }
+
+  // 間違えて貼った写真を削除する。ファイル自体（Google Drive上）は残るが、ETS TRACK側の
+  // 一覧からは消える。工程表画像を消した場合、紐づく「工程表画像添付」TODOがすでに完了に
+  // なっていても自動では復活させない（他の工程表画像がまだ残っているかもしれないため、
+  // 必要ならTODO側で手動で「未完了」に戻すか、タグを付け直してもらう）。
+  async function deletePhoto(id, imgKey, recordTab) {
+    if (!window.confirm('この写真を削除しますか？（元に戻せません）')) return;
+    const activeTab = recordTab || tab;
+    const source = activeTab === 'sched' ? schedRecords : mgmtRecords;
+    const prefix = activeTab === 'sched' ? 'sched' : 'mgmt';
+    const record = source.find((r) => r.id === id);
+    if (!record) return;
+    let latest = record;
+    try {
+      const fresh = await storage.get(`${prefix}:${id}`, true);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    const photos = (latest.photos || []).filter((p) => p.img !== imgKey);
+    const updated = { ...latest, photos };
+    await storage.set(`${prefix}:${id}`, JSON.stringify(updated), true);
+    applyLocalRecordUpdate(prefix, updated);
+    syncFormPhotosIfEditing(id, photos);
+    showToast('写真を削除しました');
   }
 
   function buildExportText() {
@@ -3674,17 +3809,25 @@ async function autoAssignTrucks() {
       const needHouseNumber = !(r.houseNumber || '').trim();
       if (!needSupervisor && !needHouseNumber) return;
       const normRecord = normalizeForCompare(r.name);
-      if (!normRecord) return;
+      const recordHouseNumber = (r.houseNumber || '').trim();
       identifiedSites.forEach((s) => {
         if (s.kumiten !== r.kumiten) return;
         if (s.siteName.trim() === r.name.trim()) return; // 完全一致は上のfindReconcileMatchesの方で扱う
         const normSite = normalizeForCompare(s.siteName);
-        if (!normSite) return;
-        const isExactNorm = normSite === normRecord;
-        const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
-        const longer = normSite.length <= normRecord.length ? normRecord : normSite;
-        const isLoose = !isExactNorm && shorter.length >= 4 && longer.includes(shorter);
-        if (!isExactNorm && !isLoose) return;
+        const siteHouseNumber = (s.houseNumber || '').trim();
+        let isExactNorm = false;
+        let isLoose = false;
+        if (normSite && normRecord) {
+          isExactNorm = normSite === normRecord;
+          const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
+          const longer = normSite.length <= normRecord.length ? normRecord : normSite;
+          isLoose = !isExactNorm && shorter.length >= 4 && longer.includes(shorter);
+        }
+        // 現場名は大きく違っていても、ハウスNoが一致していれば同じ現場の可能性が高い
+        // （住所ベースの名前と施主名ベースの名前など、表記の方式そのものが違うケースを拾うため）
+        const houseNumberMatches = !!(recordHouseNumber && siteHouseNumber && recordHouseNumber === siteHouseNumber);
+        const isHouseNumberOnly = !isExactNorm && !isLoose && houseNumberMatches;
+        if (!isExactNorm && !isLoose && !isHouseNumberOnly) return;
         near.push({
           recordId: r.id,
           etsName: r.name,
@@ -3693,6 +3836,8 @@ async function autoAssignTrucks() {
           date: r.date,
           site: s,
           isLoose,
+          matchedBy: isHouseNumberOnly ? 'houseNumber' : 'name',
+          houseNumberMatches,
         });
       });
     });
@@ -3705,15 +3850,21 @@ async function autoAssignTrucks() {
     return identifiedSites.filter((s) => {
       if (!HOUSE_NUMBER_KUMITEN.includes(s.kumiten)) return false;
       const normSite = normalizeForCompare(s.siteName);
+      const siteHouseNumber = (s.houseNumber || '').trim();
       return !schedRecords.some((r) => {
         if (r.kumiten !== s.kumiten) return false;
         if (r.name.trim() === s.siteName.trim()) return true;
         const normRecord = normalizeForCompare(r.name);
-        if (!normRecord || !normSite) return false;
-        if (normRecord === normSite) return true;
-        const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
-        const longer = normSite.length <= normRecord.length ? normRecord : normSite;
-        return shorter.length >= 4 && longer.includes(shorter);
+        if (normRecord && normSite) {
+          if (normRecord === normSite) return true;
+          const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
+          const longer = normSite.length <= normRecord.length ? normRecord : normSite;
+          if (shorter.length >= 4 && longer.includes(shorter)) return true;
+        }
+        // 名前は大きく違ってもハウスNoが一致していれば「見当たらない」ではなく候補ありとして扱う
+        const recordHouseNumber = (r.houseNumber || '').trim();
+        if (siteHouseNumber && recordHouseNumber && siteHouseNumber === recordHouseNumber) return true;
+        return false;
       });
     });
   }
@@ -4344,6 +4495,7 @@ async function autoAssignTrucks() {
           </button>
         )}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアのハウスNoに一括で「対象外」を入れる</button>}
+        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={migrateLegacyGanttTags}>📎 古い工程表添付タグにsiteIdを一括追加</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
             {ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowUsageGuide(true)}>📖 使い方メモ</button>}
@@ -4539,7 +4691,7 @@ async function autoAssignTrucks() {
                 {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && expandedPhotoId === r.id && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
-                      <PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(r.id, i, tab === 'sched' ? 'sched' : 'mgmt')} />
+                      <PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(r.id, p.img, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(r.id, p.img, tab === 'sched' ? 'sched' : 'mgmt')} onDelete={() => deletePhoto(r.id, p.img, tab === 'sched' ? 'sched' : 'mgmt')} />
                     ))}
                     <label style={styles.addPhotoBtn}>
                       ＋写真
@@ -5670,7 +5822,7 @@ async function autoAssignTrucks() {
                   <div>
                     <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（ダブって貼らないか下で確認してください。カード下の「＋写真」からも追加できます）</div>
                     <div style={{ ...styles.photoThread, marginTop: 4 }}>
-                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} />))}
+                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(editingId, p.img, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(editingId, p.img, tab === 'sched' ? 'sched' : 'mgmt')} onDelete={() => deletePhoto(editingId, p.img, tab === 'sched' ? 'sched' : 'mgmt')} />))}
                     </div>
                   </div>
                 )}
@@ -5751,7 +5903,7 @@ async function autoAssignTrucks() {
                   <div>
                     <div style={styles.autofillHint}>すでに{(form.photos || []).length}枚登録済みです（ダブって貼らないか下で確認してください。カード下の「＋写真」からも追加できます）</div>
                     <div style={{ ...styles.photoThread, marginTop: 4 }}>
-                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(editingId, i, tab === 'sched' ? 'sched' : 'mgmt')} />))}
+                      {form.photos.map((p, i) => (<PhotoThumb key={i} photo={p} onTogglePin={() => togglePinPhoto(editingId, p.img, tab === 'sched' ? 'sched' : 'mgmt')} onToggleGantt={() => toggleGanttKindPhoto(editingId, p.img, tab === 'sched' ? 'sched' : 'mgmt')} onDelete={() => deletePhoto(editingId, p.img, tab === 'sched' ? 'sched' : 'mgmt')} />))}
                     </div>
                   </div>
                 )}
@@ -6037,7 +6189,9 @@ async function autoAssignTrucks() {
                 <div style={{ maxHeight: 280, overflowY: 'auto' }}>
                   {nearMatches.map((nm, i) => (
                     <div key={`${nm.recordId}_${i}`} style={{ padding: '10px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
+                      {nm.matchedBy === 'houseNumber' && <div style={{ color: '#2A9D8F', fontWeight: 700, marginBottom: 2 }}>🏠ハウスNo一致（現場名は大きく違います・要確認）</div>}
                       {nm.isLoose && <div style={{ color: '#B8860B', fontWeight: 700, marginBottom: 2 }}>⚠️部分一致のみ（要確認）</div>}
+                      {nm.matchedBy === 'name' && nm.houseNumberMatches && <div style={{ color: '#2A9D8F', fontSize: 12, marginBottom: 2 }}>🏠ハウスNoも一致（信頼度高い）</div>}
                       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
                         <span style={{ color: '#8A8A83' }}>ETS側：</span>
                         <span style={{ fontWeight: 700 }}>{nm.etsName}</span>
@@ -6510,6 +6664,12 @@ async function autoAssignTrucks() {
         </div>
       )}
 
+      {lastMoveInfo && (
+        <div style={styles.undoBanner}>
+          <span>移動しました</span>
+          <button style={styles.undoBtn} onClick={undoMove}>↩ 元に戻す</button>
+        </div>
+      )}
       {toast && <div style={styles.toast}>{toast}</div>}
       <div style={styles.footerNote}>※このデータはチームで共有されています</div>
     </div>
@@ -6636,6 +6796,7 @@ const styles = {
   photoStaff: { fontSize: 10, color: '#8A8A83' },
   pinBtn: { border: '1px solid #D8D6CD', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#8A8A83', background: '#fff', cursor: 'pointer' },
   pinBtnActive: { border: '1px solid #B08900', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#8A6D00', background: '#FFF3CD', fontWeight: 700, cursor: 'pointer' },
+  deletePhotoBtn: { border: '1px solid #E8B4AC', borderRadius: 6, padding: '2px 5px', fontSize: 9, color: '#B3392C', background: '#fff', cursor: 'pointer' },
   addPhotoBtn: { border: '1px dashed #D8D6CD', borderRadius: 8, padding: '8px 10px', fontSize: 11.5, color: '#8A8A83', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(20,20,18,0.4)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 },
   sheet: { background: '#fff', width: '100%', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: '18px 18px 24px' },
@@ -6652,6 +6813,8 @@ const styles = {
   saveBtnDisabled: { background: '#9FCFC7', cursor: 'default' },
   deleteBtn: { background: '#fff', color: '#E63946', border: '1px solid #E63946', borderRadius: 10, padding: '12px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   toast: { position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: '#232320', color: '#fff', padding: '10px 18px', borderRadius: 999, fontSize: 13.5, zIndex: 100 },
+  undoBanner: { position: 'fixed', bottom: 72, left: '50%', transform: 'translateX(-50%)', background: '#232320', color: '#fff', padding: '8px 10px 8px 16px', borderRadius: 999, fontSize: 13.5, zIndex: 101, display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 4px 14px rgba(0,0,0,0.18)' },
+  undoBtn: { background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 999, padding: '6px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' },
   footerNote: { textAlign: 'center', fontSize: 11.5, color: '#B0B0A6', marginTop: 24 },
   exportHint: { fontSize: 12.5, color: '#8A8A83', marginBottom: 10, lineHeight: 1.5 },
   // calendar
