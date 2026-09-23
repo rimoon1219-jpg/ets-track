@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-23-160';
+  window.__APP_VERSION__ = '2026-09-23-161';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1820,7 +1820,10 @@ function GenbaTracker() {
         } catch (e) { dir = {}; }
         let changed = false;
         Object.keys(DEFAULT_SUPERVISORS).forEach((k) => {
-          if (!dir[k] || dir[k].length === 0) { dir[k] = DEFAULT_SUPERVISORS[k]; changed = true; }
+          // キー自体が無い（＝その工務店をまだ一度も保存したことがない）時だけ初期データを入れる。
+          // 空配列（[]）は「洋子さんが全員削除した」という意図的な状態の可能性があるので、
+          // 長さ0であることは補完の理由にしない（したい場合はキーごと消えている必要がある）。
+          if (!(k in dir)) { dir[k] = [...DEFAULT_SUPERVISORS[k]]; changed = true; }
         });
         // 一度だけの修正：望月さんに高橋さんと同じ電話番号が誤って入っていたため、
         // 正しい番号が届くまでは電話番号を空にしておく（名前は残す）
@@ -1944,15 +1947,14 @@ function GenbaTracker() {
           const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
           return isNaN(d.getTime()) ? null : d;
         }
+        // ここでは「どれをアーカイブすべきか」を決めるだけ。実際の書き込みは、対象を決めた
+        // 「後」でサーバーの最新データを取り直してから行う（下記）。
         const toArchive = [];
-        const remaining = [];
         loadedIdentifiedSites.forEach((s) => {
           const confirmed = parseConfirmedDate(s.confirmedDate);
           const ageDays = confirmed ? (now - confirmed.getTime()) / 86400000 : -1;
           if (confirmed && ageDays >= ARCHIVE_AFTER_DAYS && isStillUnmatchedForArchive(s)) {
             toArchive.push({ ...s, archivedAt: new Date().toISOString() });
-          } else {
-            remaining.push(s);
           }
         });
         let archived = [];
@@ -1961,10 +1963,22 @@ function GenbaTracker() {
           if (av && av.value) archived = JSON.parse(av.value);
         } catch (e) { archived = []; }
         if (toArchive.length > 0) {
+          const archiveKeys = new Set(toArchive.map((s) => `${s.kumiten}__${s.siteName}`));
           archived = [...archived, ...toArchive];
           await storage.set('meta:archivedIdentifiedSites', JSON.stringify(archived), true);
-          await storage.set('meta:identifiedSites', JSON.stringify(remaining), true);
-          setIdentifiedSites(remaining);
+          // この処理はload()の中（定期的な自動更新でも実行される）ので、対象を決めてから
+          // 実際に書き込むまでの間に、他のスタッフが虎の巻を編集しているかもしれない。
+          // 保存の直前にサーバーの最新データを取り直し、その時点の内容から今回アーカイブする
+          // 分だけを除く形にすることで、他のスタッフの追加・編集を消してしまわないようにする。
+          let freshSites = loadedIdentifiedSites;
+          try {
+            const fs2 = await storage.get('meta:identifiedSites', true);
+            if (fs2 && fs2.value) freshSites = JSON.parse(fs2.value);
+          } catch (e) { /* 取得できなければ読み込んだ時点のデータで続行 */ }
+          const freshRemaining = freshSites.filter((s) => !archiveKeys.has(`${s.kumiten}__${s.siteName}`));
+          await storage.set('meta:identifiedSites', JSON.stringify(freshRemaining), true);
+          lastLocalWriteRef.current = Date.now();
+          setIdentifiedSites(freshRemaining);
         }
         setArchivedIdentifiedSites(archived);
       } catch (e) { /* アーカイブ処理に失敗しても、通常の照合・表示には影響させない */ }
@@ -3904,9 +3918,17 @@ async function autoAssignTrucks() {
     const toApply = supervisorRenameMatches.filter((m) => supervisorRenameChecked[`${m.prefix}:${m.recordId}`]);
     setSupervisorRenameBusy(true);
     try {
+      // 名簿は全工務店ぶんが1つのデータにまとまっているため、他のスタッフが別の工務店の
+      // 名簿を編集している間にここで保存すると、その変更を消してしまう恐れがある。
+      // 保存の直前にサーバーの最新の名簿を取り直し、その上に今回の名前変更だけ重ねる。
+      let freshDirectory = supervisorDirectory;
+      try {
+        const fresh = await storage.get('meta:supervisors', true);
+        if (fresh && fresh.value) freshDirectory = JSON.parse(fresh.value);
+      } catch (e) { /* 取得できなければ手元のデータで続行 */ }
       const nextDirectory = {
-        ...supervisorDirectory,
-        [kumiten]: (supervisorDirectory[kumiten] || []).map((s) => (s.name === oldName ? { ...s, name: newName } : s)),
+        ...freshDirectory,
+        [kumiten]: (freshDirectory[kumiten] || []).map((s) => (s.name === oldName ? { ...s, name: newName } : s)),
       };
       await saveSupervisorDirectory(nextDirectory);
       let count = 0;
@@ -3993,12 +4015,16 @@ async function autoAssignTrucks() {
     const nextArchived = archivedIdentifiedSites.filter(
       (a) => !(a.kumiten === entry.kumiten && a.siteName === entry.siteName && a.archivedAt === entry.archivedAt)
     );
-    const { archivedAt, ...restored } = entry;
+    const { archivedAt, ...rest } = entry;
+    // 戻した直後に確認日がまだ90日以上前のままだと、次の自動更新で即座にまたアーカイブされて
+    // しまう（元に戻したのに数十秒で消えたように見える）。「今、必要だと確認して戻した」ことに
+    // なるので、確認日を今日の日付に更新しておく。
+    const restored = { ...rest, confirmedDate: todayStr().replace(/-/g, '/') };
     const nextSites = [...identifiedSites, restored];
     await storage.set('meta:archivedIdentifiedSites', JSON.stringify(nextArchived), true);
     await saveIdentifiedSites(nextSites);
     setArchivedIdentifiedSites(nextArchived);
-    showToast(`「${entry.siteName}」を虎の巻に戻しました`);
+    showToast(`「${entry.siteName}」を虎の巻に戻しました（確認日を今日の日付に更新しました）`);
   }
   async function removeIdentifiedSite(kumiten, siteName) {
     if (!window.confirm(`「${siteName}」を特定済み現場データから削除しますか？`)) return;
