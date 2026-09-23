@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-22-150';
+  window.__APP_VERSION__ = '2026-09-23-158';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -441,6 +441,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ■ 特定済み現場データを編集／特定済み現場と照合（セット運用）
 ・特定済み現場データを編集＝マニフェスト調査でわかった「現場名・ハウスNo・監督名・確認日」を工務店ごとに保存しておく虎の巻。参考ファイルの行をほぼそのまま貼り付けOK。
 ・特定済み現場と照合＝虎の巻の内容と予定表を現場名完全一致でチェックし、監督名・ハウスNoが空欄なら埋める候補、内容が違えば上書き候補を出す（上書きはチェックを入れないと反映されない）。完全一致0件でも、スペース・全角半角・連棟現場の頭の○/〇マークの有無だけの違いや、住所の追記などの部分一致（⚠️部分一致のみと表示、要確認）は「表記ゆれの可能性がある候補」に出るので、そちらも確認する
+・監督名は、予定表側が「石原」・虎の巻側が「石原悠太」のように名字だけ／フルネームの違いだけなら同じ人とみなし、変更候補には出さない（予定表側は名字だけのままにしておける）。名字自体が違う場合は今まで通り変更候補に出る
 ・現場名が住所ベース／施主名ベースなど書き方そのものが大きく違って部分一致にも引っかからない場合でも、ハウスNoが一致していれば「🏠ハウスNo一致」として同じ枠に候補が出る（v149〜）。逆に、似た名前の候補が複数出て紛らわしい時は、名前一致の候補にも「🏠ハウスNoも一致（信頼度高い）」と出ればより確信を持って選べる
 ・それでも見つからない虎の巻データは「予定表にまだ見当たらない現場」として別枠に出る。これは表記の問題ではなく、そもそも予定表にその現場のデータをまだ作っていない可能性が高いことを意味する（監督名・ハウスNoがすでに正しく埋まっている、またはハウスNoが一致していて候補に出ている場合とは区別される）
 順番：虎の巻を最新化→照合を実行、の流れ。
@@ -448,6 +449,13 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ■ 監督が1人だけの工務店（例：リムクラフト＝武田さん）
 ・予定表・管理表で工務店を選んだ時、監督名がまだ空欄なら「◯◯さんでいいですか？」と確認したうえで自動で監督名・電話番号を入れる（監督名簿にちょうど1人しか登録がない工務店だけ）
 ・その工務店の監督が増えたら「⚙監督名簿を編集」でもう1人追加するだけでOK。候補が2人以上になった時点でこの自動確認は出なくなり、以後は通常通り一覧から選ぶ形に戻る
+
+■ 監督名簿の「✏️名前を変更」（v156〜）
+・「⚙監督名簿を編集」で監督名の横にある「✏️名前を変更」から新しい表記（フルネームなど）を入力すると、同じ工務店・同じ名字で予定表・管理表に登録済みの現場の一覧が「変更前→変更後」で出る（名字だけ／フルネームの違いは同じ人として拾う）
+・チェックが入っている現場だけ「反映する」でまとめて書き換わる。名簿側の名前もこのタイミングで変更される
+・同じ工務店に同じ名字の監督が名簿に複数いて、どちらを指すか自動では判断できない現場は「⚠️要確認」として別枠に出るだけで、自動では書き換えない（該当する現場は予定表の編集画面から手動で選び直す）
+・「⚙監督名簿を編集」を開いた時、現場の登録画面で名簿と違う表記（名簿は名字だけなのにフルネームで直接入力してしまった等）が予定表・管理表に見つかると「⚠️名簿と違う表記で入力されている監督名があります」として自動で一覧に出る（v157〜）。「〇〇に統一」を押せば、その表記に名簿を合わせつつ、名簿の元の表記のまま残っている現場もまとめて書き換えるプレビューがそのまま開く
+・予定表・管理表の登録画面で監督名を直接入力した時、名簿にすでに似た名前（名字が同じで表記だけ違うもの）が登録されている場合は、その場で「⚠️名簿にはすでに「〇〇」で登録されています」と警告が出るようになった（v158〜）。「〇〇を使う」で名簿の表記に合わせるか、「名簿を（今入力した表記）に統一する」でその場から名簿側も含めてまとめて書き換えられる。これで、うっかり違う表記のまま個別に増えていくのを入力の時点で防げる
 
 ■ 📎 工程表添付（予定表・管理表のカードから直接ON/OFF）
 ・各カードの「📎工程表添付」タグをタップするだけで、現場名・日付が自動で入った状態でTODO（タスク）に追加される。もう一度タップすると外れる（TODO側も自動で消える）
@@ -468,11 +476,12 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・オフラインで「保留」になった移動には出ない（電波が戻って実際に送信されるまで元データを安全に戻せないため）
 
 ■ 📤 マニ側未反映（マニフェスト業務プロジェクトへの反映漏れ防止）
-・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）
+・ETS TRACK側で監督名・ハウスNoを入力／変更したのに、虎の巻（特定済み現場データ）にまだ無い・内容が違う場合に、自動でこのボタンが件数付きで出る（予定表タブ、8989解除中のみ）。監督名が名字だけ／フルネームの違いだけの時は「実質同じ」として候補に出さない（コピーする時も虎の巻側のフルネームのまま渡すので、名字だけの表記で上書きしてしまう心配はない・v154〜）
 ・開いてチェックが入った分を「コピーして一覧から消す」→そのままClaudeのチャットに貼り付ければ、マニフェスト業務プロジェクトの該当ファイルを更新してもらえる
 ・気付いた瞬間に言わなくても、後でまとめて確認して貼ればOK。コピーした内容は自動で一覧から消える（また値が変わったら改めて出てくる）
 
 ■ 請求書タブ（社長・洋子さん専用）
+・タブ一覧の🔒マークは、確認待ちが1件でもあれば☆が付くだけ（他のスタッフには件数は関係ないので数字は出さない）。合言葉を入れてタブを開くと、中の「🔔確認待ち」の見出しに実際の件数が表示される
 ・上部「確認待ち」＝ステータスが追加/単発なのに金額未入力の現場が全工務店分まとめて出る
 ・工務店＋対象月を選ぶと、その追加/単発の記録だけ表示→品目名・数量・単位・単価を入力すると自動計算
 ・「請求書フォーマット用にコピー」で集計結果をタブ区切りテキストでコピー
@@ -791,6 +800,20 @@ function normalizeForCompare(str) {
     .replace(/[\s　]/g, '')
     .replace(/^[○〇]+/, '') // 連棟現場の頭に付ける○/〇マークは、虎の巻側にはコピーされていないことが多いため、表記ゆれ判定では無視する
     .toLowerCase();
+}
+
+// 「石原」と「石原悠太」のように、片方が名字だけ・もう片方が名字＋下の名前で、
+// 名字の部分が完全に一致している場合は「同じ人」とみなす（フルネームか名字だけかの表記違いにすぎないため）。
+// マニフェスト側の虎の巻はフルネームで管理されていることが多い一方、予定表側は名字だけで運用したい、
+// という洋子さんの希望に合わせるための判定。
+function supervisorNamesMatch(a, b) {
+  const x = (a || '').trim();
+  const y = (b || '').trim();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const shorter = x.length <= y.length ? x : y;
+  const longer = x.length <= y.length ? y : x;
+  return longer.startsWith(shorter);
 }
 
 // 伝達の「見た」記録は新形式 {name, at} だが、古いデータ（名前の文字列のみ）にも両対応させる
@@ -1445,6 +1468,14 @@ function GenbaTracker() {
   const [supervisorBulkText, setSupervisorBulkText] = useState('');
   const [showSupervisorDeleteHistory, setShowSupervisorDeleteHistory] = useState(false);
   const [supervisorDeleteHistory, setSupervisorDeleteHistory] = useState([]);
+  // 監督名簿の名前を変更した時、予定表・管理表の同じ工務店・同じ名字の監督名も
+  // まとめて新しい表記に書き換えられるようにするための一括変更プレビュー用の状態。
+  const [showSupervisorRenameModal, setShowSupervisorRenameModal] = useState(false);
+  const [supervisorRenamePending, setSupervisorRenamePending] = useState(null); // {kumiten, oldName, newName, phone}
+  const [supervisorRenameMatches, setSupervisorRenameMatches] = useState([]);
+  const [supervisorRenameChecked, setSupervisorRenameChecked] = useState({});
+  const [supervisorRenameAmbiguous, setSupervisorRenameAmbiguous] = useState([]);
+  const [supervisorRenameBusy, setSupervisorRenameBusy] = useState(false);
   const [showUsageGuide, setShowUsageGuide] = useState(false);
   const [identifiedSites, setIdentifiedSites] = useState(DEFAULT_IDENTIFIED_SITES);
   const [showIdentifiedSitesEditor, setShowIdentifiedSitesEditor] = useState(false);
@@ -3706,6 +3737,141 @@ async function autoAssignTrucks() {
     }
   }
 
+  // 監督名簿の名前を変更する時、予定表・管理表で同じ工務店・同じ名字の監督名も
+  // まとめて新しい表記に書き換えられるように候補を洗い出す（実際の書き換えは確認後）。
+  // 名字の一致判定はsupervisorNamesMatch（名字だけ／フルネームの違いを同じ人とみなす仕組み）を使う。
+  // 同じ工務店に、同じ名字の監督が名簿に複数登録されている場合は、どちらの人か機械的には決められないため、
+  // 自動で書き換えず「要確認」として別枠に出す。
+  function findSupervisorRenameCandidates(kumiten, oldName, newName) {
+    const otherEntries = (supervisorDirectory[kumiten] || []).filter((s) => s.name !== oldName);
+    const matches = [];
+    const ambiguous = [];
+    [['sched', schedRecords], ['mgmt', mgmtRecords]].forEach(([prefix, records]) => {
+      records.forEach((r) => {
+        if (r.kumiten !== kumiten) return;
+        const current = (r.supervisorName || '').trim();
+        if (!current || current === newName) return;
+        if (!supervisorNamesMatch(current, oldName)) return;
+        const competitors = otherEntries.filter((s) => s.name !== newName && supervisorNamesMatch(current, s.name));
+        if (competitors.length > 0) {
+          ambiguous.push({
+            prefix, recordId: r.id, siteName: r.name, date: r.date, currentSupervisor: current,
+            candidates: Array.from(new Set([newName, ...competitors.map((c) => c.name)])),
+          });
+          return;
+        }
+        matches.push({ prefix, recordId: r.id, siteName: r.name, date: r.date, currentSupervisor: current, newSupervisor: newName });
+      });
+    });
+    matches.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    ambiguous.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return { matches, ambiguous };
+  }
+
+  // 「✏️名前を変更」ボタンから呼ばれる。新しい表記を聞いた上で、変更前→変更後の
+  // プレビューモーダルを開くだけで、この時点ではまだ何も保存しない。
+  // presetNewNameが渡された場合（「この表記に統一」のワンタップ修正から）は、
+  // 入力を聞かずにその表記をそのまま使う。
+  function startSupervisorRename(kumiten, entry, presetNewName) {
+    let newName;
+    if (presetNewName) {
+      newName = presetNewName.trim();
+      if (!newName || newName === entry.name) return;
+    } else {
+      const input = window.prompt(`「${entry.name}」の新しい表記を入力してください（例：フルネームが分かった場合）`, entry.name);
+      if (!input || !input.trim() || input.trim() === entry.name) return;
+      newName = input.trim();
+    }
+    if ((supervisorDirectory[kumiten] || []).some((s) => s.name === newName)) {
+      showToast('すでに同じ名前が監督名簿に登録されています');
+      return;
+    }
+    const { matches, ambiguous } = findSupervisorRenameCandidates(kumiten, entry.name, newName);
+    setSupervisorRenamePending({ kumiten, oldName: entry.name, newName, phone: entry.phone || '' });
+    setSupervisorRenameMatches(matches);
+    const checked = {};
+    matches.forEach((m) => { checked[`${m.prefix}:${m.recordId}`] = true; });
+    setSupervisorRenameChecked(checked);
+    setSupervisorRenameAmbiguous(ambiguous);
+    setShowSupervisorRenameModal(true);
+  }
+
+  // 現場登録画面で監督名を直接入力した時、名簿にすでに「同じ人」らしき名前（名字が一致するが
+  // 表記が違うもの）が登録されていないか調べる。入力の時点でこれを見つけて知らせることで、
+  // 名簿と現場データの表記がズレたまま増えていくのを防ぐ。
+  function findSimilarDirectoryName(kumiten, typedName) {
+    const trimmed = (typedName || '').trim();
+    if (!kumiten || !trimmed) return null;
+    const dirNames = (supervisorDirectory[kumiten] || []).map((s) => s.name);
+    if (dirNames.includes(trimmed)) return null; // 完全に一致していれば問題なし
+    return dirNames.find((d) => supervisorNamesMatch(trimmed, d)) || null;
+  }
+
+  // 監督名簿は名字だけしか登録していないのに、予定表・管理表側でうっかりフルネームなど
+  // 違う表記のまま直接入力してしまった監督名がないか、工務店ごとに自動で見つける。
+  // （名簿の名字と、記録に入っている表記が「同じ人」と判定できる＝supervisorNamesMatchで
+  //   一致するが、文字列としては完全一致しないものを拾う）
+  function findSupervisorNameDiscrepancies(kumiten) {
+    const dirNames = (supervisorDirectory[kumiten] || []).map((s) => s.name);
+    if (dirNames.length === 0) return [];
+    const found = new Map();
+    [...schedRecords, ...mgmtRecords].forEach((r) => {
+      if (r.kumiten !== kumiten) return;
+      const name = (r.supervisorName || '').trim();
+      if (!name || dirNames.includes(name)) return;
+      const matched = dirNames.find((d) => supervisorNamesMatch(name, d));
+      if (!matched) return; // 名字自体が名簿にない場合はここでは対象外（別途「名簿を編集」で追加してもらう）
+      if (!found.has(name)) found.set(name, { name, matchedDirName: matched, count: 0 });
+      found.get(name).count++;
+    });
+    return Array.from(found.values()).sort((a, b) => b.count - a.count);
+  }
+
+  // プレビューで確認・チェックした内容を実際に反映する。
+  // 名簿本体の書き換え→チェックが入った予定表・管理表の書き換え、の順で行う。
+  // 反映直前にサーバーの最新データを取り直し、開いている間に他のスタッフが
+  // 別の監督名に変えていた場合はその記録だけスキップする（勝手に上書きしない）。
+  async function applySupervisorRename() {
+    if (!supervisorRenamePending) return;
+    const { kumiten, oldName, newName } = supervisorRenamePending;
+    const toApply = supervisorRenameMatches.filter((m) => supervisorRenameChecked[`${m.prefix}:${m.recordId}`]);
+    setSupervisorRenameBusy(true);
+    try {
+      const nextDirectory = {
+        ...supervisorDirectory,
+        [kumiten]: (supervisorDirectory[kumiten] || []).map((s) => (s.name === oldName ? { ...s, name: newName } : s)),
+      };
+      await saveSupervisorDirectory(nextDirectory);
+      let count = 0;
+      for (const m of toApply) {
+        try {
+          const fresh = await storage.get(`${m.prefix}:${m.recordId}`, true);
+          if (!fresh || !fresh.value) continue;
+          const rec = JSON.parse(fresh.value);
+          if ((rec.supervisorName || '').trim() !== m.currentSupervisor) continue; // 途中で他の人が変えていたら触らない
+          const updatedRec = { ...rec, supervisorName: newName };
+          await storage.set(`${m.prefix}:${m.recordId}`, JSON.stringify(updatedRec));
+          applyLocalRecordUpdate(m.prefix, updatedRec);
+          count++;
+        } catch (e) { /* 1件失敗しても他は続ける */ }
+      }
+      lastLocalWriteRef.current = Date.now();
+      const skippedAmbiguous = supervisorRenameAmbiguous.length;
+      setShowSupervisorRenameModal(false);
+      setSupervisorRenamePending(null);
+      setSupervisorRenameMatches([]);
+      setSupervisorRenameChecked({});
+      setSupervisorRenameAmbiguous([]);
+      let msg = `「${oldName}」を「${newName}」に変更しました（予定表・管理表 ${count}件更新）`;
+      if (skippedAmbiguous > 0) msg += `／要確認${skippedAmbiguous}件は変更していません`;
+      showToast(msg);
+    } catch (e) {
+      console.error(e);
+      showToast('変更に失敗しました');
+    }
+    setSupervisorRenameBusy(false);
+  }
+
   // 監督名簿の削除を誰でもできるようにする代わりに、「誰が・いつ・何を消したか」を
   // 履歴として残しておき、あとから確認・復元できるようにする（4455パスワードでも使えるようにするための安全策）。
   async function removeSupervisorEntry(kumiten, name) {
@@ -3822,7 +3988,10 @@ async function autoAssignTrucks() {
 
       const fillSupervisor = !currentSupervisor && siteSupervisor ? siteSupervisor : '';
       const fillHouseNumber = !currentHouseNumber && siteHouseNumber ? siteHouseNumber : '';
-      const changeSupervisor = currentSupervisor && siteSupervisor && currentSupervisor !== siteSupervisor ? siteSupervisor : '';
+      // 名字だけ・フルネームの違いだけなら「同じ人」とみなして変更提案は出さない
+      // （予定表側は名字だけのまま運用したい、という洋子さんの希望に合わせるため）
+      const sameBySurname = supervisorNamesMatch(currentSupervisor, siteSupervisor);
+      const changeSupervisor = currentSupervisor && siteSupervisor && currentSupervisor !== siteSupervisor && !sameBySurname ? siteSupervisor : '';
       const changeHouseNumber = currentHouseNumber && siteHouseNumber && currentHouseNumber !== siteHouseNumber ? siteHouseNumber : '';
       const newPhone = !(r.supervisorPhone || '').trim() && (site.supervisorPhone || '').trim() ? site.supervisorPhone.trim() : '';
 
@@ -3935,8 +4104,14 @@ async function autoAssignTrucks() {
       const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === siteName);
       const siteSupervisor = (site && site.supervisorName || '').trim();
       const siteHouseNumber = (site && site.houseNumber || '').trim();
-      if (supervisorName === siteSupervisor && houseNumber === siteHouseNumber) return; // 虎の巻と同じなら対象外
-      const fingerprint = `${r.kumiten}__${siteName}__${supervisorName}__${houseNumber}`;
+      // 監督名は、名字だけ／フルネームの違いだけなら実質同じ人とみなす（予定表側の運用は名字だけのため）。
+      // ここを完全一致だけにすると、実際は虎の巻に反映済みなのに毎回「未反映」候補として出てしまう。
+      const supervisorSame = supervisorName === siteSupervisor || supervisorNamesMatch(supervisorName, siteSupervisor);
+      if (supervisorSame && houseNumber === siteHouseNumber) return; // 虎の巻と実質同じなら対象外
+      // 監督名が名字だけ／フルネームの違いだけの時は、虎の巻側のフルネームをそのまま維持する
+      // （ETS側の名字だけの表記で、虎の巻側のより詳しい情報を薄めて上書きしてしまわないため）
+      const pushSupervisorName = supervisorSame ? siteSupervisor : supervisorName;
+      const fingerprint = `${r.kumiten}__${siteName}__${pushSupervisorName}__${houseNumber}`;
       if (dismissedManifestPush.includes(fingerprint)) return; // 「反映した」とマーク済みの内容と同じならスキップ
       const key = `${r.kumiten}__${siteName}`;
       const existing = map.get(key);
@@ -3945,7 +4120,7 @@ async function autoAssignTrucks() {
           fingerprint,
           kumiten: r.kumiten,
           siteName,
-          supervisorName,
+          supervisorName: pushSupervisorName,
           houseNumber,
           supervisorPhone: (r.supervisorPhone || '').trim(),
           date: r.date || '',
@@ -4481,7 +4656,9 @@ async function autoAssignTrucks() {
         )}
         <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">
           🔒
-          {invoicePendingItems.length > 0 && <span style={styles.todoTabBadge}>{invoicePendingItems.length}</span>}
+          {/* 件数は他のスタッフには関係ないので、外からは「何かある」がわかる☆マークだけにしておく。
+              実際の件数はタブを開いた（合言葉を入れた）後、中の見出しに表示する */}
+          {invoicePendingItems.length > 0 && <span style={styles.todoTabBadge}>☆</span>}
         </button>
         <button onClick={tryUnlockStaffManager} style={styles.lockIconBtn} title="スタッフ管理">🔒👤</button>
       </div>
@@ -5417,7 +5594,7 @@ async function autoAssignTrucks() {
                 </div>
               )}
 
-              <div style={styles.areaGroupTitle}>🔔 確認待ち（「追加」「単発」で金額未入力のもの・全工務店）</div>
+              <div style={styles.areaGroupTitle}>🔔 確認待ち（{invoicePendingItems.length}件・「追加」「単発」で金額未入力のもの・全工務店）</div>
               {invoicePendingItems.length === 0 && <div style={styles.empty}>確認待ちの項目はありません</div>}
               {invoicePendingItems.map((record) => (
                 <div key={record.id} style={styles.invoiceRow}>
@@ -5783,15 +5960,38 @@ async function autoAssignTrucks() {
                     <input style={styles.input} value={form.supervisorPhone || ''} onChange={(e) => setForm({ ...form, supervisorPhone: e.target.value })} placeholder="090-1234-5678" inputMode="tel" />
                   </div>
                 </div>
-                {form.kumiten && (form.supervisorName || '').trim() && !(supervisorDirectory[form.kumiten] || []).some((s) => s.name === form.supervisorName.trim()) && (
-                  <button
-                    type="button"
-                    style={{ ...styles.linkBtn, marginTop: 4 }}
-                    onClick={() => addSupervisorToDirectory(form.kumiten, form.supervisorName, form.supervisorPhone)}
-                  >
-                    ＋「{form.supervisorName.trim()}」を{form.kumiten}の監督名簿に追加
-                  </button>
-                )}
+                {form.kumiten && (form.supervisorName || '').trim() && !(supervisorDirectory[form.kumiten] || []).some((s) => s.name === form.supervisorName.trim()) && (() => {
+                  const similar = findSimilarDirectoryName(form.kumiten, form.supervisorName);
+                  if (similar) {
+                    return (
+                      <div style={{ marginTop: 4, padding: 8, background: '#FFF7E8', borderRadius: 6, fontSize: 12.5 }}>
+                        ⚠️ {form.kumiten}の監督名簿にはすでに「{similar}」で登録されています。表記をそろえてください。
+                        <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+                          <button type="button" style={styles.linkBtnSmall} onClick={() => setForm((f) => ({ ...f, supervisorName: similar }))}>「{similar}」を使う</button>
+                          <button
+                            type="button"
+                            style={styles.linkBtnSmall}
+                            onClick={() => {
+                              const dirEntry = (supervisorDirectory[form.kumiten] || []).find((s) => s.name === similar);
+                              startSupervisorRename(form.kumiten, dirEntry || { name: similar, phone: '' }, form.supervisorName.trim());
+                            }}
+                          >
+                            名簿を「{form.supervisorName.trim()}」に統一する
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <button
+                      type="button"
+                      style={{ ...styles.linkBtn, marginTop: 4 }}
+                      onClick={() => addSupervisorToDirectory(form.kumiten, form.supervisorName, form.supervisorPhone)}
+                    >
+                      ＋「{form.supervisorName.trim()}」を{form.kumiten}の監督名簿に追加
+                    </button>
+                  );
+                })()}
 
 
                 <label style={styles.label}>ハウスNo／事業場コード</label>
@@ -5910,15 +6110,38 @@ async function autoAssignTrucks() {
               <>
                 <label style={styles.label}>監督名（わかる場合のみ）</label>
                 <input style={styles.input} value={form.supervisorName || ''} onChange={(e) => setForm({ ...form, supervisorName: e.target.value })} placeholder="例：岡田" />
-                {form.kumiten && (form.supervisorName || '').trim() && !(supervisorDirectory[form.kumiten] || []).some((s) => s.name === form.supervisorName.trim()) && (
-                  <button
-                    type="button"
-                    style={{ ...styles.linkBtn, marginTop: 4 }}
-                    onClick={() => addSupervisorToDirectory(form.kumiten, form.supervisorName, form.supervisorPhone)}
-                  >
-                    ＋「{form.supervisorName.trim()}」を{form.kumiten}の監督名簿に追加
-                  </button>
-                )}
+                {form.kumiten && (form.supervisorName || '').trim() && !(supervisorDirectory[form.kumiten] || []).some((s) => s.name === form.supervisorName.trim()) && (() => {
+                  const similar = findSimilarDirectoryName(form.kumiten, form.supervisorName);
+                  if (similar) {
+                    return (
+                      <div style={{ marginTop: 4, padding: 8, background: '#FFF7E8', borderRadius: 6, fontSize: 12.5 }}>
+                        ⚠️ {form.kumiten}の監督名簿にはすでに「{similar}」で登録されています。表記をそろえてください。
+                        <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+                          <button type="button" style={styles.linkBtnSmall} onClick={() => setForm((f) => ({ ...f, supervisorName: similar }))}>「{similar}」を使う</button>
+                          <button
+                            type="button"
+                            style={styles.linkBtnSmall}
+                            onClick={() => {
+                              const dirEntry = (supervisorDirectory[form.kumiten] || []).find((s) => s.name === similar);
+                              startSupervisorRename(form.kumiten, dirEntry || { name: similar, phone: '' }, form.supervisorName.trim());
+                            }}
+                          >
+                            名簿を「{form.supervisorName.trim()}」に統一する
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <button
+                      type="button"
+                      style={{ ...styles.linkBtn, marginTop: 4 }}
+                      onClick={() => addSupervisorToDirectory(form.kumiten, form.supervisorName, form.supervisorPhone)}
+                    >
+                      ＋「{form.supervisorName.trim()}」を{form.kumiten}の監督名簿に追加
+                    </button>
+                  );
+                })()}
 
                 <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
@@ -6082,11 +6305,39 @@ async function autoAssignTrucks() {
                 <div key={s.name} style={styles.kumitenEditRow}>
                   <span style={styles.kumitenEditName}>{s.name}／{s.phone}</span>
                   <div style={styles.kumitenEditBtns}>
+                    <button style={styles.kumitenRenameBtn} onClick={() => startSupervisorRename(supervisorEditorKumiten, s)}>✏️名前を変更</button>
                     <button style={styles.kumitenDeleteBtn} onClick={() => removeSupervisorEntry(supervisorEditorKumiten, s.name)}>削除</button>
                   </div>
                 </div>
               ))}
             </div>
+
+            {(() => {
+              const discrepancies = findSupervisorNameDiscrepancies(supervisorEditorKumiten);
+              if (discrepancies.length === 0) return null;
+              return (
+                <div style={{ marginTop: 14, padding: 10, background: '#FFF7E8', borderRadius: 8 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6, color: '#B8860B' }}>⚠️ 名簿と違う表記で予定表・管理表に入力されている監督名があります</div>
+                  <div style={{ fontSize: 12.5, color: '#8A8A83', marginBottom: 8 }}>
+                    現場の登録画面から直接入力した時に、名簿の表記（名字だけ等）と違う書き方（フルネームなど）になってしまったものです。「この表記に統一」を押すと、その表記を名簿の正式な名前にして、名簿の元の表記のまま残っている現場もまとめて書き換えるプレビューが開きます。
+                  </div>
+                  {discrepancies.map((d) => (
+                    <div key={d.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #F0EFE9' }}>
+                      <span style={{ fontSize: 13 }}>{d.name}（{d.count}件／名簿は「{d.matchedDirName}」）</span>
+                      <button
+                        style={styles.kumitenRenameBtn}
+                        onClick={() => {
+                          const dirEntry = (supervisorDirectory[supervisorEditorKumiten] || []).find((s) => s.name === d.matchedDirName);
+                          startSupervisorRename(supervisorEditorKumiten, dirEntry || { name: d.matchedDirName, phone: '' }, d.name);
+                        }}
+                      >
+                        「{d.name}」に統一
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             <label style={{ ...styles.label, marginTop: 14 }}>まとめて貼り付けて登録（1行に「名前 電話番号」）</label>
             <textarea
@@ -6097,6 +6348,60 @@ async function autoAssignTrucks() {
             />
             <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importSupervisorBulkText}>＋ この内容を登録</button>
             <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => { setShowSupervisorDeleteHistory(true); loadSupervisorDeleteHistory(); }}>🕘 削除履歴（誰がいつ消したか・元に戻す）</button>
+          </div>
+        </div>
+      )}
+
+      {showSupervisorRenameModal && supervisorRenamePending && (
+        <div style={styles.overlay} onClick={() => !supervisorRenameBusy && setShowSupervisorRenameModal(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>監督名簿の変更を予定表・管理表にも反映</div>
+              <button style={styles.closeBtn} onClick={() => setShowSupervisorRenameModal(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+              「{supervisorRenamePending.kumiten}」の「{supervisorRenamePending.oldName}」を「{supervisorRenamePending.newName}」に変更します。
+              チェックが入っている現場だけ、予定表・管理表の監督名もまとめて書き換えます。内容を確認してから「反映する」を押してください。
+            </div>
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              {supervisorRenameMatches.length === 0 && (
+                <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 10px' }}>予定表・管理表に「{supervisorRenamePending.oldName}」で登録されている現場はありません（名簿だけ変更されます）</div>
+              )}
+              {supervisorRenameMatches.map((m) => (
+                <label key={`${m.prefix}:${m.recordId}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!supervisorRenameChecked[`${m.prefix}:${m.recordId}`]}
+                    onChange={(e) => setSupervisorRenameChecked({ ...supervisorRenameChecked, [`${m.prefix}:${m.recordId}`]: e.target.checked })}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div style={{ fontSize: 13 }}>
+                    <div style={{ fontWeight: 700 }}>{m.siteName}（{m.prefix === 'sched' ? '予定表' : '管理表'}／{m.date}）</div>
+                    <div>監督名：{m.currentSupervisor} → {m.newSupervisor}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <button style={{ ...styles.saveBtn, marginTop: 10 }} disabled={supervisorRenameBusy} onClick={applySupervisorRename}>
+              {supervisorRenameBusy ? '反映中…' : `✓ 反映する（名簿＋${supervisorRenameMatches.filter((m) => supervisorRenameChecked[`${m.prefix}:${m.recordId}`]).length}件）`}
+            </button>
+
+            {supervisorRenameAmbiguous.length > 0 && (
+              <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #F0EFE9' }}>
+                <div style={{ fontWeight: 700, marginBottom: 4, color: '#B8860B' }}>⚠️要確認（同じ工務店に同じ名字の監督が複数いるため自動では変更しません）</div>
+                <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+                  下の現場は「{supervisorRenamePending.oldName}」がどちらの監督を指すか名簿だけでは判断できないため、そのままにしてあります。正しい方を予定表の編集画面から手動で選び直してください。
+                </div>
+                <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                  {supervisorRenameAmbiguous.map((a, i) => (
+                    <div key={`${a.recordId}_${i}`} style={{ padding: '8px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
+                      <div style={{ fontWeight: 700 }}>{a.siteName}（{a.prefix === 'sched' ? '予定表' : '管理表'}／{a.date}）</div>
+                      <div>現在の監督名：{a.currentSupervisor}／候補：{a.candidates.join('・')}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -6995,6 +7300,7 @@ const styles = {
   ganttDetailPhoto: { fontSize: 10.5, color: '#8A8A83' },
   ganttDetailBtn: { marginTop: 6, width: '100%', background: '#2A9D8F', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 0', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' },
   kumitenDeleteBtn: { background: '#fff', border: '1px solid #E63946', color: '#E63946', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
+  kumitenRenameBtn: { background: '#fff', border: '1px solid #457B9D', color: '#457B9D', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
   saveBtnSmall: { background: '#fff', border: '1px solid #2A9D8F', color: '#2A9D8F', borderRadius: 6, padding: '4px 8px', fontSize: 11.5, cursor: 'pointer' },
 };
 
