@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-23-159';
+  window.__APP_VERSION__ = '2026-09-23-160';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -444,6 +444,8 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・監督名は、予定表側が「石原」・虎の巻側が「石原悠太」のように名字だけ／フルネームの違いだけなら同じ人とみなし、変更候補には出さない（予定表側は名字だけのままにしておける）。名字自体が違う場合は今まで通り変更候補に出る
 ・現場名が住所ベース／施主名ベースなど書き方そのものが大きく違って部分一致にも引っかからない場合でも、ハウスNoが一致していれば「🏠ハウスNo一致」として同じ枠に候補が出る（v149〜）。逆に、似た名前の候補が複数出て紛らわしい時は、名前一致の候補にも「🏠ハウスNoも一致（信頼度高い）」と出ればより確信を持って選べる
 ・それでも見つからない虎の巻データは「予定表にまだ見当たらない現場」として別枠に出る。これは表記の問題ではなく、そもそも予定表にその現場のデータをまだ作っていない可能性が高いことを意味する（監督名・ハウスNoがすでに正しく埋まっている、またはハウスNoが一致していて候補に出ている場合とは区別される）
+・照合は予定表（sched）だけでなく管理表（mgmt）も見る（v160〜）。TimeTreeからの移行がまだ全部済んでいない間は、すでに回収が終わった現場が予定表には残っておらず管理表にしか無いことがあるため
+・確認日から90日以上経っても予定表・管理表のどこにも見つからない虎の巻データは、自動で「保管庫」にしまわれて一覧から消える（v160〜）。完全に削除されるわけではなく、「特定済み現場データを編集」の「🗄️自動アーカイブ済み」から中身を確認して元に戻せる
 順番：虎の巻を最新化→照合を実行、の流れ。
 
 ■ 監督が1人だけの工務店（例：リムクラフト＝武田さん）
@@ -1478,6 +1480,10 @@ function GenbaTracker() {
   const [supervisorRenameBusy, setSupervisorRenameBusy] = useState(false);
   const [showUsageGuide, setShowUsageGuide] = useState(false);
   const [identifiedSites, setIdentifiedSites] = useState(DEFAULT_IDENTIFIED_SITES);
+  // 予定表・管理表のどこにも見つからないまま長期間経った虎の巻データを自動でしまっておく保管庫
+  // （完全には消さず、あとで見て「やっぱり必要だった」時は元に戻せる）
+  const [archivedIdentifiedSites, setArchivedIdentifiedSites] = useState([]);
+  const [showArchivedIdentifiedSites, setShowArchivedIdentifiedSites] = useState(false);
   const [showIdentifiedSitesEditor, setShowIdentifiedSitesEditor] = useState(false);
   const [identifiedSitesKumiten, setIdentifiedSitesKumiten] = useState('OHA');
   const [identifiedSitesBulkText, setIdentifiedSitesBulkText] = useState('');
@@ -1836,6 +1842,7 @@ function GenbaTracker() {
 
       // 特定済み現場データ：保存済みのものに、初期データ（DEFAULT_IDENTIFIED_SITES）にしかない分だけ追加でマージする
       // （工務店＋現場名の組み合わせで重複判定。既存データは上書きしない）
+      let loadedIdentifiedSites = DEFAULT_IDENTIFIED_SITES;
       try {
         let sites = [];
         try {
@@ -1849,6 +1856,7 @@ function GenbaTracker() {
         if (changedSites || !sites || sites.length === 0) {
           await storage.set('meta:identifiedSites', JSON.stringify(sites), true);
         }
+        loadedIdentifiedSites = sites;
         setIdentifiedSites(sites);
       } catch (e) { setIdentifiedSites(DEFAULT_IDENTIFIED_SITES); }
 
@@ -1902,6 +1910,64 @@ function GenbaTracker() {
       tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || (a.id || '').localeCompare(b.id || ''));
       setTodos(tItems);
       syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
+
+      // 虎の巻の自動アーカイブ：予定表・管理表のどこにも見つからないまま、確認日から
+      // 一定期間（ARCHIVE_AFTER_DAYS）が経ったものは、「見当たらない現場」一覧にいつまでも
+      // 溜まり続けてしまわないよう、自動で保管庫（アーカイブ）に移す。完全には消さず、
+      // あとで一覧を見て「やっぱり必要だった」場合は元に戻せるようにしておく。
+      try {
+        const ARCHIVE_AFTER_DAYS = 90;
+        const now = Date.now();
+        const allRecordsForArchive = [...sItems, ...mItems];
+        function isStillUnmatchedForArchive(s) {
+          if (!HOUSE_NUMBER_KUMITEN.includes(s.kumiten)) return false;
+          const normSite = normalizeForCompare(s.siteName);
+          const siteHouseNumber = (s.houseNumber || '').trim();
+          return !allRecordsForArchive.some((r) => {
+            if (r.kumiten !== s.kumiten) return false;
+            if (r.name.trim() === s.siteName.trim()) return true;
+            const normRecord = normalizeForCompare(r.name);
+            if (normRecord && normSite) {
+              if (normRecord === normSite) return true;
+              const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
+              const longer = normSite.length <= normRecord.length ? normRecord : normSite;
+              if (shorter.length >= 4 && longer.includes(shorter)) return true;
+            }
+            const recordHouseNumber = (r.houseNumber || '').trim();
+            if (siteHouseNumber && recordHouseNumber && siteHouseNumber === recordHouseNumber) return true;
+            return false;
+          });
+        }
+        function parseConfirmedDate(str) {
+          const m = (str || '').trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+          if (!m) return null;
+          const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+          return isNaN(d.getTime()) ? null : d;
+        }
+        const toArchive = [];
+        const remaining = [];
+        loadedIdentifiedSites.forEach((s) => {
+          const confirmed = parseConfirmedDate(s.confirmedDate);
+          const ageDays = confirmed ? (now - confirmed.getTime()) / 86400000 : -1;
+          if (confirmed && ageDays >= ARCHIVE_AFTER_DAYS && isStillUnmatchedForArchive(s)) {
+            toArchive.push({ ...s, archivedAt: new Date().toISOString() });
+          } else {
+            remaining.push(s);
+          }
+        });
+        let archived = [];
+        try {
+          const av = await storage.get('meta:archivedIdentifiedSites', true);
+          if (av && av.value) archived = JSON.parse(av.value);
+        } catch (e) { archived = []; }
+        if (toArchive.length > 0) {
+          archived = [...archived, ...toArchive];
+          await storage.set('meta:archivedIdentifiedSites', JSON.stringify(archived), true);
+          await storage.set('meta:identifiedSites', JSON.stringify(remaining), true);
+          setIdentifiedSites(remaining);
+        }
+        setArchivedIdentifiedSites(archived);
+      } catch (e) { /* アーカイブ処理に失敗しても、通常の照合・表示には影響させない */ }
 
       setCachedRecords(sItems, mItems, list, tItems);
     } catch (e) { console.error(e); }
@@ -3922,6 +3988,18 @@ async function autoAssignTrucks() {
   function identifiedSitesFor(kumiten) {
     return identifiedSites.filter((s) => s.kumiten === kumiten);
   }
+  // 自動アーカイブ（保管庫）に入っている虎の巻データを、元の一覧に戻す
+  async function restoreArchivedIdentifiedSite(entry) {
+    const nextArchived = archivedIdentifiedSites.filter(
+      (a) => !(a.kumiten === entry.kumiten && a.siteName === entry.siteName && a.archivedAt === entry.archivedAt)
+    );
+    const { archivedAt, ...restored } = entry;
+    const nextSites = [...identifiedSites, restored];
+    await storage.set('meta:archivedIdentifiedSites', JSON.stringify(nextArchived), true);
+    await saveIdentifiedSites(nextSites);
+    setArchivedIdentifiedSites(nextArchived);
+    showToast(`「${entry.siteName}」を虎の巻に戻しました`);
+  }
   async function removeIdentifiedSite(kumiten, siteName) {
     if (!window.confirm(`「${siteName}」を特定済み現場データから削除しますか？`)) return;
     const next = identifiedSites.filter((s) => !(s.kumiten === kumiten && s.siteName === siteName));
@@ -3976,42 +4054,48 @@ async function autoAssignTrucks() {
   // 「未登録を埋める」だけでなく、「すでに入っている監督名・ハウスNoと、特定済みデータの内容が違う」
   // （担当替えなど）ケースも見つけて提案する。ただしこちらは上書きになるので、
   // デフォルトではチェックを入れず、必ず確認してから反映してもらう。
+  // 予定表（sched）だけでなく管理表（mgmt＝実際に回収した記録）も見る。
+  // TimeTreeからの移行がまだ全部済んでいない間は、すでに回収が終わった現場が予定表には
+  // 残っておらず管理表にしか無いことがあるため、そちらも同じように照合対象にする。
   function findReconcileMatches() {
     const matches = [];
-    schedRecords.forEach((r) => {
-      if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
-      const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === r.name.trim());
-      if (!site) return;
-      const currentSupervisor = (r.supervisorName || '').trim();
-      const currentHouseNumber = (r.houseNumber || '').trim();
-      const siteSupervisor = (site.supervisorName || '').trim();
-      const siteHouseNumber = (site.houseNumber || '').trim();
+    [['sched', schedRecords], ['mgmt', mgmtRecords]].forEach(([prefix, records]) => {
+      records.forEach((r) => {
+        if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
+        const site = identifiedSites.find((s) => s.kumiten === r.kumiten && s.siteName.trim() === r.name.trim());
+        if (!site) return;
+        const currentSupervisor = (r.supervisorName || '').trim();
+        const currentHouseNumber = (r.houseNumber || '').trim();
+        const siteSupervisor = (site.supervisorName || '').trim();
+        const siteHouseNumber = (site.houseNumber || '').trim();
 
-      const fillSupervisor = !currentSupervisor && siteSupervisor ? siteSupervisor : '';
-      const fillHouseNumber = !currentHouseNumber && siteHouseNumber ? siteHouseNumber : '';
-      // 名字だけ・フルネームの違いだけなら「同じ人」とみなして変更提案は出さない
-      // （予定表側は名字だけのまま運用したい、という洋子さんの希望に合わせるため）
-      const sameBySurname = supervisorNamesMatch(currentSupervisor, siteSupervisor);
-      const changeSupervisor = currentSupervisor && siteSupervisor && currentSupervisor !== siteSupervisor && !sameBySurname ? siteSupervisor : '';
-      const changeHouseNumber = currentHouseNumber && siteHouseNumber && currentHouseNumber !== siteHouseNumber ? siteHouseNumber : '';
-      const newPhone = !(r.supervisorPhone || '').trim() && (site.supervisorPhone || '').trim() ? site.supervisorPhone.trim() : '';
+        const fillSupervisor = !currentSupervisor && siteSupervisor ? siteSupervisor : '';
+        const fillHouseNumber = !currentHouseNumber && siteHouseNumber ? siteHouseNumber : '';
+        // 名字だけ・フルネームの違いだけなら「同じ人」とみなして変更提案は出さない
+        // （予定表側は名字だけのまま運用したい、という洋子さんの希望に合わせるため）
+        const sameBySurname = supervisorNamesMatch(currentSupervisor, siteSupervisor);
+        const changeSupervisor = currentSupervisor && siteSupervisor && currentSupervisor !== siteSupervisor && !sameBySurname ? siteSupervisor : '';
+        const changeHouseNumber = currentHouseNumber && siteHouseNumber && currentHouseNumber !== siteHouseNumber ? siteHouseNumber : '';
+        const newPhone = !(r.supervisorPhone || '').trim() && (site.supervisorPhone || '').trim() ? site.supervisorPhone.trim() : '';
 
-      const newSupervisor = fillSupervisor || changeSupervisor;
-      const newHouseNumber = fillHouseNumber || changeHouseNumber;
-      if (!newSupervisor && !newHouseNumber) return;
-      const isChange = !!changeSupervisor || !!changeHouseNumber;
-      matches.push({
-        recordId: r.id,
-        siteName: r.name,
-        kumiten: r.kumiten,
-        date: r.date,
-        currentSupervisor,
-        currentHouseNumber,
-        newSupervisor,
-        newHouseNumber,
-        newPhone,
-        confirmedDate: site.confirmedDate || '',
-        isChange,
+        const newSupervisor = fillSupervisor || changeSupervisor;
+        const newHouseNumber = fillHouseNumber || changeHouseNumber;
+        if (!newSupervisor && !newHouseNumber) return;
+        const isChange = !!changeSupervisor || !!changeHouseNumber;
+        matches.push({
+          prefix,
+          recordId: r.id,
+          siteName: r.name,
+          kumiten: r.kumiten,
+          date: r.date,
+          currentSupervisor,
+          currentHouseNumber,
+          newSupervisor,
+          newHouseNumber,
+          newPhone,
+          confirmedDate: site.confirmedDate || '',
+          isChange,
+        });
       });
     });
     return matches;
@@ -4021,44 +4105,47 @@ async function autoAssignTrucks() {
   // 部分一致は誤判定のリスクがあるぶん isLoose を付けて区別し、必ず見比べて自分で判断してもらう
   // （どちらもボタンを押した時だけ反映。自動では反映しない）
   function findNearMatches(exactMatches) {
-    const matchedIds = new Set((exactMatches || []).map((m) => m.recordId));
+    const matchedIds = new Set((exactMatches || []).map((m) => `${m.prefix}:${m.recordId}`));
     const near = [];
-    schedRecords.forEach((r) => {
-      if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
-      if (matchedIds.has(r.id)) return;
-      const needSupervisor = !(r.supervisorName || '').trim();
-      const needHouseNumber = !(r.houseNumber || '').trim();
-      if (!needSupervisor && !needHouseNumber) return;
-      const normRecord = normalizeForCompare(r.name);
-      const recordHouseNumber = (r.houseNumber || '').trim();
-      identifiedSites.forEach((s) => {
-        if (s.kumiten !== r.kumiten) return;
-        if (s.siteName.trim() === r.name.trim()) return; // 完全一致は上のfindReconcileMatchesの方で扱う
-        const normSite = normalizeForCompare(s.siteName);
-        const siteHouseNumber = (s.houseNumber || '').trim();
-        let isExactNorm = false;
-        let isLoose = false;
-        if (normSite && normRecord) {
-          isExactNorm = normSite === normRecord;
-          const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
-          const longer = normSite.length <= normRecord.length ? normRecord : normSite;
-          isLoose = !isExactNorm && shorter.length >= 4 && longer.includes(shorter);
-        }
-        // 現場名は大きく違っていても、ハウスNoが一致していれば同じ現場の可能性が高い
-        // （住所ベースの名前と施主名ベースの名前など、表記の方式そのものが違うケースを拾うため）
-        const houseNumberMatches = !!(recordHouseNumber && siteHouseNumber && recordHouseNumber === siteHouseNumber);
-        const isHouseNumberOnly = !isExactNorm && !isLoose && houseNumberMatches;
-        if (!isExactNorm && !isLoose && !isHouseNumberOnly) return;
-        near.push({
-          recordId: r.id,
-          etsName: r.name,
-          dataName: s.siteName,
-          kumiten: r.kumiten,
-          date: r.date,
-          site: s,
-          isLoose,
-          matchedBy: isHouseNumberOnly ? 'houseNumber' : 'name',
-          houseNumberMatches,
+    [['sched', schedRecords], ['mgmt', mgmtRecords]].forEach(([prefix, records]) => {
+      records.forEach((r) => {
+        if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
+        if (matchedIds.has(`${prefix}:${r.id}`)) return;
+        const needSupervisor = !(r.supervisorName || '').trim();
+        const needHouseNumber = !(r.houseNumber || '').trim();
+        if (!needSupervisor && !needHouseNumber) return;
+        const normRecord = normalizeForCompare(r.name);
+        const recordHouseNumber = (r.houseNumber || '').trim();
+        identifiedSites.forEach((s) => {
+          if (s.kumiten !== r.kumiten) return;
+          if (s.siteName.trim() === r.name.trim()) return; // 完全一致は上のfindReconcileMatchesの方で扱う
+          const normSite = normalizeForCompare(s.siteName);
+          const siteHouseNumber = (s.houseNumber || '').trim();
+          let isExactNorm = false;
+          let isLoose = false;
+          if (normSite && normRecord) {
+            isExactNorm = normSite === normRecord;
+            const shorter = normSite.length <= normRecord.length ? normSite : normRecord;
+            const longer = normSite.length <= normRecord.length ? normRecord : normSite;
+            isLoose = !isExactNorm && shorter.length >= 4 && longer.includes(shorter);
+          }
+          // 現場名は大きく違っていても、ハウスNoが一致していれば同じ現場の可能性が高い
+          // （住所ベースの名前と施主名ベースの名前など、表記の方式そのものが違うケースを拾うため）
+          const houseNumberMatches = !!(recordHouseNumber && siteHouseNumber && recordHouseNumber === siteHouseNumber);
+          const isHouseNumberOnly = !isExactNorm && !isLoose && houseNumberMatches;
+          if (!isExactNorm && !isLoose && !isHouseNumberOnly) return;
+          near.push({
+            prefix,
+            recordId: r.id,
+            etsName: r.name,
+            dataName: s.siteName,
+            kumiten: r.kumiten,
+            date: r.date,
+            site: s,
+            isLoose,
+            matchedBy: isHouseNumberOnly ? 'houseNumber' : 'name',
+            houseNumberMatches,
+          });
         });
       });
     });
@@ -4068,11 +4155,12 @@ async function autoAssignTrucks() {
   // 1件も見つからない現場。監督名・ハウスNoが「すでに埋まっているから候補に出ない」のではなく、
   // そもそも予定表にその現場のデータをまだ作っていない可能性が高いものを区別して出す。
   function findUnmatchedIdentifiedSites() {
+    const allRecords = [...schedRecords, ...mgmtRecords];
     return identifiedSites.filter((s) => {
       if (!HOUSE_NUMBER_KUMITEN.includes(s.kumiten)) return false;
       const normSite = normalizeForCompare(s.siteName);
       const siteHouseNumber = (s.houseNumber || '').trim();
-      return !schedRecords.some((r) => {
+      return !allRecords.some((r) => {
         if (r.kumiten !== s.kumiten) return false;
         if (r.name.trim() === s.siteName.trim()) return true;
         const normRecord = normalizeForCompare(r.name);
@@ -4158,14 +4246,15 @@ async function autoAssignTrucks() {
   }
 
   async function applyNearMatch(nm) {
-    const localRec = schedRecords.find((r) => r.id === nm.recordId);
+    const localList = nm.prefix === 'sched' ? schedRecords : mgmtRecords;
+    const localRec = localList.find((r) => r.id === nm.recordId);
     if (!localRec) return;
     const site = nm.site;
     // 照合モーダルを開いている間に他のスタッフがこの現場を編集しているかもしれないため、
     // 反映の直前にサーバーの最新データを取り直してから、その上に監督名・ハウスNoだけ重ねる
     let rec = localRec;
     try {
-      const fresh = await storage.get(`sched:${rec.id}`, true);
+      const fresh = await storage.get(`${nm.prefix}:${rec.id}`, true);
       if (fresh && fresh.value) rec = JSON.parse(fresh.value);
     } catch (e) { /* 取得できなければ手元のデータで続行 */ }
     const updatedRec = {
@@ -4174,9 +4263,9 @@ async function autoAssignTrucks() {
       houseNumber: (rec.houseNumber || '').trim() || site.houseNumber || rec.houseNumber,
       supervisorPhone: (rec.supervisorPhone || '').trim() || site.supervisorPhone || rec.supervisorPhone,
     };
-    await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
-    applyLocalRecordUpdate('sched', updatedRec);
-    setNearMatches((prev) => prev.filter((x) => !(x.recordId === nm.recordId && x.dataName === nm.dataName)));
+    await storage.set(`${nm.prefix}:${rec.id}`, JSON.stringify(updatedRec));
+    applyLocalRecordUpdate(nm.prefix, updatedRec);
+    setNearMatches((prev) => prev.filter((x) => !(x.prefix === nm.prefix && x.recordId === nm.recordId && x.dataName === nm.dataName)));
     showToast(`「${rec.name}」に反映しました`);
   }
   function openReconcileModal() {
@@ -4191,26 +4280,27 @@ async function autoAssignTrucks() {
     // 未登録を埋めるだけのものは最初からチェック済みにするが、
     // 既存の値を上書きする（担当替えなど）ものは、必ず自分の目で確認してもらうため未チェックにしておく
     const checked = {};
-    matches.forEach((m) => { checked[m.recordId] = !m.isChange; });
+    matches.forEach((m) => { checked[`${m.prefix}:${m.recordId}`] = !m.isChange; });
     setReconcileChecked(checked);
     setNearMatches(near);
     setUnmatchedSites(unmatched);
     setShowReconcileModal(true);
   }
   async function applyReconcile() {
-    const toApply = reconcileMatches.filter((m) => reconcileChecked[m.recordId]);
+    const toApply = reconcileMatches.filter((m) => reconcileChecked[`${m.prefix}:${m.recordId}`]);
     if (toApply.length === 0) { showToast('チェックが入っている項目がありません'); return; }
     setReconcileBusy(true);
     let count = 0;
     let queuedCount = 0;
     for (const m of toApply) {
-      const localRec = schedRecords.find((r) => r.id === m.recordId);
+      const localList = m.prefix === 'sched' ? schedRecords : mgmtRecords;
+      const localRec = localList.find((r) => r.id === m.recordId);
       if (!localRec) continue;
       // 一覧を開いてから他のスタッフが同じ現場を編集しているかもしれないため、
       // 反映の直前にサーバーの最新データを取り直してから、その上に監督名・ハウスNoだけ重ねる
       let rec = localRec;
       try {
-        const fresh = await storage.get(`sched:${rec.id}`, true);
+        const fresh = await storage.get(`${m.prefix}:${rec.id}`, true);
         if (fresh && fresh.value) rec = JSON.parse(fresh.value);
       } catch (e) { /* 取得できなければ手元のデータで続行 */ }
       const updatedRec = {
@@ -4220,11 +4310,11 @@ async function autoAssignTrucks() {
         supervisorPhone: rec.supervisorPhone || m.newPhone,
       };
       try {
-        const result = await storage.set(`sched:${rec.id}`, JSON.stringify(updatedRec));
+        const result = await storage.set(`${m.prefix}:${rec.id}`, JSON.stringify(updatedRec));
         // 保存直後は一覧を読み直さず、その場で反映する（読み直すと、送信がまだサーバーに
         // 届いていない場合に古いデータで上書きしてしまい、「反映した」と表示だけ出て
         // 実際には入っていないように見える不具合の原因になっていたため）
-        applyLocalRecordUpdate('sched', updatedRec);
+        applyLocalRecordUpdate(m.prefix, updatedRec);
         if (result && result.queued) queuedCount++;
         count++;
       } catch (e) { console.error(e); }
@@ -6521,6 +6611,35 @@ async function autoAssignTrucks() {
               onChange={(e) => setIdentifiedSitesBulkText(e.target.value)}
             />
             <button style={{ ...styles.saveBtn, marginTop: 10 }} onClick={importIdentifiedSitesBulkText}>＋ この内容を登録</button>
+            <button style={{ ...styles.linkBtnSmall, marginTop: 10 }} onClick={() => setShowArchivedIdentifiedSites(true)}>
+              🗄️ 自動アーカイブ済み（{archivedIdentifiedSites.length}件）
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showArchivedIdentifiedSites && (
+        <div style={styles.overlay} onClick={() => setShowArchivedIdentifiedSites(false)}>
+          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHeader}>
+              <div style={styles.sheetTitle}>虎の巻の自動アーカイブ（保管庫）</div>
+              <button style={styles.closeBtn} onClick={() => setShowArchivedIdentifiedSites(false)}>✕</button>
+            </div>
+            <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
+              確認日から90日以上経っても予定表・管理表のどこにも見つからなかった現場が、ここに自動でしまわれます。完全に削除されたわけではないので、「やっぱりあった」時はここから元に戻せます。
+            </div>
+            <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+              {archivedIdentifiedSites.length === 0 && <div style={{ padding: '20px 4px', color: '#8A8A83', fontSize: 13 }}>アーカイブはありません</div>}
+              {archivedIdentifiedSites.map((a, i) => (
+                <div key={`${a.kumiten}_${a.siteName}_${i}`} style={styles.extraPickRow}>
+                  <div>
+                    <div style={{ fontSize: 13 }}>{a.siteName}（{a.kumiten}／No:{a.houseNumber || '不明'}／監督：{a.supervisorName || '不明'}）</div>
+                    <div style={{ fontSize: 11.5, color: '#8A8A83' }}>確認日：{a.confirmedDate || '不明'}／アーカイブ日：{a.archivedAt ? formatDateTime(a.archivedAt) : '不明'}</div>
+                  </div>
+                  <button style={styles.pickTempBtn} onClick={() => restoreArchivedIdentifiedSite(a)}>元に戻す</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -6538,17 +6657,17 @@ async function autoAssignTrucks() {
             </div>
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
               {reconcileMatches.map((m) => (
-                <label key={m.recordId} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9', background: m.isChange ? '#FFF7E8' : 'transparent' }}>
+                <label key={`${m.prefix}:${m.recordId}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #F0EFE9', background: m.isChange ? '#FFF7E8' : 'transparent' }}>
                   <input
                     type="checkbox"
-                    checked={!!reconcileChecked[m.recordId]}
-                    onChange={(e) => setReconcileChecked({ ...reconcileChecked, [m.recordId]: e.target.checked })}
+                    checked={!!reconcileChecked[`${m.prefix}:${m.recordId}`]}
+                    onChange={(e) => setReconcileChecked({ ...reconcileChecked, [`${m.prefix}:${m.recordId}`]: e.target.checked })}
                     style={{ marginTop: 3 }}
                   />
                   <div style={{ fontSize: 13 }}>
                     <div style={{ fontWeight: 700 }}>
                       {m.isChange && <span style={{ color: '#B8860B' }}>⚠️変更　</span>}
-                      {m.siteName}（{m.kumiten}／{m.date}）
+                      {m.siteName}（{m.kumiten}／{m.prefix === 'sched' ? '予定表' : '管理表'}／{m.date}）
                     </div>
                     {m.newSupervisor && <div>監督名：{m.currentSupervisor || '（未登録）'} → {m.newSupervisor}</div>}
                     {m.newHouseNumber && <div>ハウスNo：{m.currentHouseNumber || '（未登録）'} → {m.newHouseNumber}</div>}
@@ -6559,7 +6678,7 @@ async function autoAssignTrucks() {
             </div>
             {reconcileMatches.length > 0 && (
               <button style={{ ...styles.saveBtn, marginTop: 10 }} disabled={reconcileBusy} onClick={applyReconcile}>
-                {reconcileBusy ? '反映中…' : `✓ 反映する（${reconcileMatches.filter((m) => reconcileChecked[m.recordId]).length}件）`}
+                {reconcileBusy ? '反映中…' : `✓ 反映する（${reconcileMatches.filter((m) => reconcileChecked[`${m.prefix}:${m.recordId}`]).length}件）`}
               </button>
             )}
 
@@ -6571,12 +6690,12 @@ async function autoAssignTrucks() {
                 </div>
                 <div style={{ maxHeight: 280, overflowY: 'auto' }}>
                   {nearMatches.map((nm, i) => (
-                    <div key={`${nm.recordId}_${i}`} style={{ padding: '10px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
+                    <div key={`${nm.prefix}_${nm.recordId}_${i}`} style={{ padding: '10px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
                       {nm.matchedBy === 'houseNumber' && <div style={{ color: '#2A9D8F', fontWeight: 700, marginBottom: 2 }}>🏠ハウスNo一致（現場名は大きく違います・要確認）</div>}
                       {nm.isLoose && <div style={{ color: '#B8860B', fontWeight: 700, marginBottom: 2 }}>⚠️部分一致のみ（要確認）</div>}
                       {nm.matchedBy === 'name' && nm.houseNumberMatches && <div style={{ color: '#2A9D8F', fontSize: 12, marginBottom: 2 }}>🏠ハウスNoも一致（信頼度高い）</div>}
                       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#8A8A83' }}>ETS側：</span>
+                        <span style={{ color: '#8A8A83' }}>ETS側（{nm.prefix === 'sched' ? '予定表' : '管理表'}）：</span>
                         <span style={{ fontWeight: 700 }}>{nm.etsName}</span>
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
