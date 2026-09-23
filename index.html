@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-23-158';
+  window.__APP_VERSION__ = '2026-09-23-159';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1801,7 +1801,11 @@ function GenbaTracker() {
         setKumitenList(list);
       } catch (e) { setKumitenList(DEFAULT_KUMITEN); }
 
-      // 監督名簿：保存済みのものに、初期データ（DEFAULT_SUPERVISORS）にしかない分だけ追加でマージする
+      // 監督名簿：まだ1件も登録されていない工務店にだけ、初期データ（DEFAULT_SUPERVISORS）を入れる。
+      // 以前は「名前ごとに、初期データにあって今の名簿に無いものを毎回追加し直す」という
+      // マージの仕方をしていたため、洋子さんが「✏️名前を変更」や削除で名前を直しても、
+      // 次にこの画面を開き直すたびに元の名前（初期データにある古い表記）が復活してしまう不具合があった。
+      // （工務店に1件でも登録済みなら、その工務店については二度と初期データで補完しない）
       try {
         let dir = {};
         try {
@@ -1810,10 +1814,7 @@ function GenbaTracker() {
         } catch (e) { dir = {}; }
         let changed = false;
         Object.keys(DEFAULT_SUPERVISORS).forEach((k) => {
-          const existing = dir[k] || [];
-          const existingNames = new Set(existing.map((s) => s.name));
-          const missing = DEFAULT_SUPERVISORS[k].filter((s) => !existingNames.has(s.name));
-          if (missing.length > 0) { dir[k] = [...existing, ...missing]; changed = true; }
+          if (!dir[k] || dir[k].length === 0) { dir[k] = DEFAULT_SUPERVISORS[k]; changed = true; }
         });
         // 一度だけの修正：望月さんに高橋さんと同じ電話番号が誤って入っていたため、
         // 正しい番号が届くまでは電話番号を空にしておく（名前は残す）
