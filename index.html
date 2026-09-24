@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-176';
+  window.__APP_VERSION__ = '2026-09-24-177';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2859,7 +2859,9 @@ async function autoAssignTrucks() {
     // 「移動」機能（duplicateRecord）と同じ考え方で管理表側にもコピーして持ち越す（工程表画像は予定表側の
     // 記録として残すべきものなのでコピーしない）。
     const carriedPhotos = (schedRecord.photos || []).filter((p) => p.pinned && p.kind !== 'gantt');
-    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '', photos: carriedPhotos });
+    // ゴミの種類タグ（管理表のstatus）は、多くの場合その日の工事の進捗（予定表のstatus）と同じになるため、
+    // 毎回選び直す手間を減らすよう初期値として引き継ぐ。違う時はそのまま選び直せる
+    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '', status: schedRecord.status || '', photos: carriedPhotos });
     setEditingId(null);
     setPendingPhotos([]);
     setTab('mgmt');
