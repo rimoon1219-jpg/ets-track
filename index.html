@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-164';
+  window.__APP_VERSION__ = '2026-09-24-168';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -49,7 +49,7 @@
 <div id="root"></div>
 
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useMemo } = React;
 
 // ▼▼▼ ここをApps Scriptデプロイ後の「ウェブアプリのURL」に書き換えてください ▼▼▼
 const API_URL = 'https://script.google.com/macros/s/AKfycbyQEs0L_0WLHnQNSak-OlZlrKyR5Ew_zVQWiDOPz3PBy7csP_HS92LQyc47WcNFrld0/exec';
@@ -482,7 +482,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ・「移動」すると現場写真は基本リセットされる（新しい現場でまた撮り直す前提のため）が、工程表として貼った画像は自動でそのままコピーされるので貼り直し不要。駐車禁止の写真など「移動しても絶対に残しておきたい写真」は、写真の下にある「📌固定する」ボタンを押しておくと、工程表画像と同じように移動時も自動でコピーされる（固定を外したい時はもう一度押す）
 ・間違えて普通の「＋写真」から工程表画像を貼ってしまった時は、その写真の下の「📋工程表にする」ボタンを押せば、あとから工程表として登録し直せる（押すと、その現場に「工程表画像添付」タスクが残っていれば自動で「やった」になり、次の「移動」でも自動コピーの対象になる）
 ・間違えて貼った写真は、写真の下の「🗑削除」ボタンで削除できる（確認あり・元に戻せない）。工程表画像を削除しても、すでに完了した「工程表画像添付」タスクは自動では未完了に戻らないので、必要ならTODO側で手動で調整する
-・v137より前に作られた「工程表添付」タグは、現場を裏で特定する番号(siteId)を持っていないため、同じ現場名が他にもあると取り違える恐れが理論上ある（v146で「取り違えそうな時は見つからない扱いにする」安全策済み）。予定表タブの「📎 古い工程表添付タグにsiteIdを一括追加」を一度実行しておくと、古いタグにも番号を後付けして根本的に解消できる。現場が1件に絞れないタグは安全のため何もせず残るので、何度実行しても害はない
+・v137より前に作られた古い「工程表添付」タグの移行作業は2026/9/24に完了済み（対象0件を確認し、ボタンごと削除した）
 ・カード本体の写真は、小さいサムネイルのままでは結局タップしないと中身が読めないため、普段は「📷 N枚 ▼開く」という小さいボタンだけにして畳んである。タップすると横スクロールの写真帯が開き、もう一度タップすると閉じる（写真のないカードと見た目の高さが揃うので、一覧が写真の枚数で間延びしない）。同時に開けるのは常に1件だけで、別のカードを開くと前に開いていたカードは自動で閉じる。「閉じる」を押し忘れても、タブを切り替えると自動的に閉じる
 
 ■ ↩ 「移動」の取り消し（v149〜）
@@ -1215,32 +1215,42 @@ function GanttChart({ schedRecords, kumitenFilter, windowStart, windowEnd, onShi
   const totalDays = Math.max(1, endDay - startDay);
   const [expandedSite, setExpandedSite] = useState(null);
 
-  const bySite = {};
-  schedRecords.forEach((r) => {
-    if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return;
-    if (!bySite[r.name]) bySite[r.name] = { name: r.name, kumiten: r.kumiten, dates: [], records: [], hasFinal: false, finalDay: null, hasSingle: false };
-    const d = dateToDay(r.date);
-    bySite[r.name].dates.push(d);
-    bySite[r.name].records.push(r);
-    if (r.status === '最終') {
-      bySite[r.name].hasFinal = true;
-      bySite[r.name].finalDay = bySite[r.name].finalDay === null ? d : Math.max(bySite[r.name].finalDay, d);
-    }
-    if (r.status === '単発') {
-      bySite[r.name].hasSingle = true;
-    }
-  });
+  // データが増えるほど（1日50件ペースで予定表が積み上がる想定）、この現場ごとの集計は重くなる。
+  // 以前はカードの開閉など、Gantt自体とは関係ない再描画のたびにも毎回schedRecords全件を
+  // 集計し直していたため、useMemoでschedRecords・工務店フィルター・表示期間が変わった時だけ
+  // 計算し直すようにした（体感速度対策・v167）。
+  const { rows, hiddenByCompletion } = useMemo(() => {
+    const bySite = {};
+    schedRecords.forEach((r) => {
+      if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return;
+      if (!bySite[r.name]) bySite[r.name] = { name: r.name, kumiten: r.kumiten, dates: [], records: [], hasFinal: false, finalDay: null, hasSingle: false };
+      const d = dateToDay(r.date);
+      bySite[r.name].dates.push(d);
+      bySite[r.name].records.push(r);
+      if (r.status === '最終') {
+        bySite[r.name].hasFinal = true;
+        bySite[r.name].finalDay = bySite[r.name].finalDay === null ? d : Math.max(bySite[r.name].finalDay, d);
+      }
+      if (r.status === '単発') {
+        bySite[r.name].hasSingle = true;
+      }
+    });
 
-  const rows = Object.values(bySite).map((s) => {
-    const minDay = Math.min(...s.dates);
-    const maxDay = Math.max(...s.dates);
-    const isDone = s.hasFinal || s.hasSingle; // 最終が付いた、または単発の仕事は「完了扱い」にする
-    const barEndDay = s.hasFinal ? s.finalDay : (s.hasSingle ? maxDay : Math.max(maxDay, todayDay));
-    return { ...s, startDay: minDay, endDay: barEndDay, ongoing: !isDone, isDone };
-  })
-    .filter((s) => !(s.isDone && todayDay - s.endDay > 14)) // 完了（最終／単発）から2週間経過したら工程表から非表示（データ自体は消えません）
-    .filter((s) => s.endDay >= startDay && s.startDay <= endDay)
-    .sort((a, b) => a.startDay - b.startDay);
+    const allRows = Object.values(bySite).map((s) => {
+      const minDay = Math.min(...s.dates);
+      const maxDay = Math.max(...s.dates);
+      const isDone = s.hasFinal || s.hasSingle; // 最終が付いた、または単発の仕事は「完了扱い」にする
+      const barEndDay = s.hasFinal ? s.finalDay : (s.hasSingle ? maxDay : Math.max(maxDay, todayDay));
+      return { ...s, startDay: minDay, endDay: barEndDay, ongoing: !isDone, isDone };
+    });
+    // 完了（最終／単発）から2週間経過したら工程表から非表示（データ自体は消えず、予定表からは変わらず見える）
+    const hiddenSites = allRows.filter((s) => s.isDone && todayDay - s.endDay > 14);
+    const rows = allRows
+      .filter((s) => !(s.isDone && todayDay - s.endDay > 14))
+      .filter((s) => s.endDay >= startDay && s.startDay <= endDay)
+      .sort((a, b) => a.startDay - b.startDay);
+    return { rows, hiddenByCompletion: hiddenSites.length };
+  }, [schedRecords, kumitenFilter, startDay, endDay, todayDay]);
 
   // 月の目盛り
   const monthTicks = [];
@@ -1270,7 +1280,7 @@ function GanttChart({ schedRecords, kumitenFilter, windowStart, windowEnd, onShi
       </div>
 
       <div style={styles.dispatchSummary}>
-        <span>表示中 {rows.length}件</span>
+        <span>表示中 {rows.length}件{hiddenByCompletion > 0 ? `（完了から2週間経過のため${hiddenByCompletion}件は非表示）` : ''}</span>
         <span style={{ fontWeight: 700, color: '#E63946' }}>本日時点で重なり {overlappingToday}件</span>
       </div>
 
@@ -1395,6 +1405,7 @@ function GenbaTracker() {
   const [bulkFrom, setBulkFrom] = useState('');
   const [bulkTo, setBulkTo] = useState('');
   const [showExport, setShowExport] = useState(false);
+  const [exportMeta, setExportMeta] = useState({ totalCount: 0, missingCount: 0 });
   const [exportText, setExportText] = useState('');
   const [ryubeiUnlocked, setRyubeiUnlocked] = useState(false);
   const [todoUnlocked, setTodoUnlocked] = useState(false);
@@ -1434,6 +1445,7 @@ function GenbaTracker() {
   const [nearbyHints, setNearbyHints] = useState(null); // 前後の日で近い現場の候補（未計算はnull）
   const [nearbyHintsLoading, setNearbyHintsLoading] = useState(false);
   const [assignmentsUndoSnapshot, setAssignmentsUndoSnapshot] = useState(null); // 自動割り振り直前の状態（「元に戻す」用、1回分だけ）
+  const [autoAssignBusy, setAutoAssignBusy] = useState(false); // 位置情報取得中の連打による二重実行（重複ジオコーディング）防止
   const [showAddExtraSite, setShowAddExtraSite] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [showAddressDupModal, setShowAddressDupModal] = useState(false);
@@ -2082,51 +2094,8 @@ function GenbaTracker() {
     try { await storage.set(`todo:${existing.id}`, JSON.stringify(next), true); } catch (e) { console.error(e); }
   }
 
-  // v137より前に作られた「📎工程表添付」タグ（TODO）は、現場を裏で特定する番号(siteId)を
-  // 持っていない。現場名だけで探すため、同じ現場名が他にもあると取り違えてしまう恐れがある
-  // （v146で「取り違えそうな時は見つからない扱いにする」安全策を入れたが、根本的には古いタグにも
-  // siteIdを持たせてしまう方がよい）。一度だけ実行する一括お引っ越し処理：
-  // 各タグについて、現場名（できれば日付も）が一致する現場が今ちょうど1件だけに絞れる時だけ、
-  // そのIDをsiteIdとして書き込む。複数候補があって特定できないものは、安全のため何もせず残す。
-  async function migrateLegacyGanttTags() {
-    const targets = todos.filter((t) => !t.archived && t.text === '工程表画像添付' && !t.siteId);
-    if (targets.length === 0) { showToast('siteIdの無い古いタグは見つかりませんでした（対応不要です）'); return; }
-    // 「同じところが毎回1件出てくるのでは」という不安に答えられるよう、対象の現場名・日付を
-    // 実行前にすべて具体的に見せる（今までは件数しか表示しておらず、何が対象か分からなかった）。
-    const targetList = targets.map((t) => `「${t.siteName || '(現場名不明)'}」${t.date ? '（' + t.date + '）' : ''}`).join('\n');
-    if (!window.confirm(`古い「工程表添付」タグ${targets.length}件を確認し、現場が1件だけに絞れるものだけ更新します。\n\n【対象】\n${targetList}\n\nよろしいですか？`)) return;
-    const allRecords = [...schedRecords, ...mgmtRecords];
-    const migratedNames = [];
-    const failedNames = []; // サーバー保存に失敗した分（画面上は一時的に更新済みに見えるが、次に開き直すと元に戻る）
-    let ambiguous = 0;
-    let notFound = 0;
-    for (const t of targets) {
-      const sameName = allRecords.filter((r) => r.name === t.siteName);
-      const withDate = t.date ? sameName.filter((r) => r.date === t.date) : sameName;
-      const candidates = withDate.length > 0 ? withDate : sameName;
-      if (candidates.length === 0) { notFound++; continue; }
-      if (candidates.length > 1) { ambiguous++; continue; }
-      const target = candidates[0];
-      const next = { ...t, siteId: target.id, siteName: target.name, date: target.date };
-      setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
-      try {
-        await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
-        migratedNames.push(`「${target.name}」${target.date ? '（' + target.date + '）' : ''}`);
-      } catch (e) {
-        console.error(e);
-        // 保存に失敗した分は、画面だけ更新済みに見えて実際は反映されていない状態を防ぐため、元に戻しておく
-        // （次に開き直した時に「また同じ1件が出てきた」となる原因そのものなので、ここで必ず区別する）
-        setTodos((prev) => prev.map((x) => (x.id === t.id ? t : x)));
-        failedNames.push(`「${t.siteName || '(現場名不明)'}」${t.date ? '（' + t.date + '）' : ''}`);
-      }
-    }
-    let msg = `${migratedNames.length}件のタグにsiteIdを追加しました`;
-    if (migratedNames.length > 0) msg += `\n【更新した現場】\n${migratedNames.join('\n')}`;
-    if (failedNames.length > 0) msg += `\n\n⚠️保存に失敗した分（電波状況などにより。もう一度お試しください）：\n${failedNames.join('\n')}`;
-    if (ambiguous > 0) msg += `\n（同名の現場が複数あって特定できず見送った分：${ambiguous}件）`;
-    if (notFound > 0) msg += `\n（該当する現場が見つからなかった分：${notFound}件）`;
-    window.alert(msg); // 現場名まで含めた詳しい結果は、消えやすいトーストではなく確実に読めるダイアログで表示する
-  }
+  // v137より前に作られた古い「工程表添付」タグをsiteId付きに移行する一括お引っ越し処理は、
+  // 2026/9/24に洋子さんが実行して対象0件を確認できたため役目を終え、削除した（v164まで存在）。
 
   // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
   async function toggleImportant(t) {
@@ -2461,38 +2430,46 @@ function GenbaTracker() {
     if (match) openEdit(match);
   }
 
+  const dispatchLoadRequestRef = useRef(0);
+
   async function loadDispatch(date) {
+    // 日付を素早く切り替えた時、後から返ってきた古い日付分の応答が
+    // 今表示中の別の日付の内容を上書きしてしまわないよう、
+    // 「今頼んだ読み込みが最新か」を確認してから反映する
+    const requestId = ++dispatchLoadRequestRef.current;
     setDispatchLoaded(false);
     const satDefault = isSaturday(date) ? 3 : 6;
+    let result;
     try {
       const r = await storage.get(`dispatch:${date}`, true);
       if (r && r.value) {
         const parsed = JSON.parse(r.value);
-        setRegularTruckCount(parsed.regularTruckCount ?? satDefault);
-        setIncludeKei(parsed.includeKei ?? true);
-        setDumpOnlyCount(parsed.dumpOnlyCount ?? 0);
-        setAssignments(parsed.assignments || {});
-        setExtraSiteIds(parsed.extraSiteIds || []);
-        setCollectNote(parsed.collectNote || '');
-        setDumpNote(parsed.dumpNote || '');
+        result = {
+          regularTruckCount: parsed.regularTruckCount ?? satDefault,
+          includeKei: parsed.includeKei ?? true,
+          dumpOnlyCount: parsed.dumpOnlyCount ?? 0,
+          assignments: parsed.assignments || {},
+          extraSiteIds: parsed.extraSiteIds || [],
+          collectNote: parsed.collectNote || '',
+          dumpNote: parsed.dumpNote || '',
+        };
       } else {
-        setRegularTruckCount(satDefault);
-        setIncludeKei(true);
-        setDumpOnlyCount(0);
-        setAssignments({});
-        setExtraSiteIds([]);
-        setCollectNote('');
-        setDumpNote('');
+        result = { regularTruckCount: satDefault, includeKei: true, dumpOnlyCount: 0, assignments: {}, extraSiteIds: [], collectNote: '', dumpNote: '' };
       }
     } catch (e) {
-      setRegularTruckCount(satDefault);
-      setIncludeKei(true);
-      setDumpOnlyCount(0);
-      setAssignments({});
-      setExtraSiteIds([]);
-      setCollectNote('');
-      setDumpNote('');
+      result = { regularTruckCount: satDefault, includeKei: true, dumpOnlyCount: 0, assignments: {}, extraSiteIds: [], collectNote: '', dumpNote: '' };
     }
+    if (dispatchLoadRequestRef.current !== requestId) {
+      // この応答が返ってくる間にさらに別の日付に切り替えられていたら、今は使わない
+      return;
+    }
+    setRegularTruckCount(result.regularTruckCount);
+    setIncludeKei(result.includeKei);
+    setDumpOnlyCount(result.dumpOnlyCount);
+    setAssignments(result.assignments);
+    setExtraSiteIds(result.extraSiteIds);
+    setCollectNote(result.collectNote);
+    setDumpNote(result.dumpNote);
     setDispatchLoaded(true);
   }
 
@@ -2562,8 +2539,11 @@ function zoneRuleForDate(dateStr) {
 }
 
 async function autoAssignTrucks() {
+    if (autoAssignBusy) return; // 連打による二重実行（位置情報の重複取得）を防ぐ
     const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
     if (opts.length === 0) { showToast('トラックがありません'); return; }
+    setAutoAssignBusy(true);
+    try {
     const counts = {};
     opts.forEach((o) => { counts[o.id] = 0; });
     Object.values(assignments).forEach((id) => { if (counts[id] !== undefined) counts[id]++; });
@@ -2620,6 +2600,9 @@ async function autoAssignTrucks() {
     showToast(skippedUnknown > 0
       ? `距離が近い順に割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
       : `距離が近い順に割り振りました（手動でも調整できます）`);
+    } finally {
+      setAutoAssignBusy(false);
+    }
   }
 
   function undoAutoAssign() {
@@ -2822,7 +2805,11 @@ async function autoAssignTrucks() {
   }
 
   function handoffToMgmt(schedRecord) {
-    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '' });
+    // 予定表側で📌固定した写真（駐車禁止の写真など、現場が変わっても・引き継いでも残しておきたいもの）は、
+    // 「移動」機能（duplicateRecord）と同じ考え方で管理表側にもコピーして持ち越す（工程表画像は予定表側の
+    // 記録として残すべきものなのでコピーしない）。
+    const carriedPhotos = (schedRecord.photos || []).filter((p) => p.pinned && p.kind !== 'gantt');
+    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '', photos: carriedPhotos });
     setEditingId(null);
     setPendingPhotos([]);
     setTab('mgmt');
@@ -2922,23 +2909,26 @@ async function autoAssignTrucks() {
   async function saveRecord() {
     if (!form.name.trim()) { showToast('現場名を入力してください'); return; }
     setSaving(true);
+    const prefix = tab === 'sched' ? 'sched' : 'mgmt';
     // 新規登録の直前にサーバーの最新データを取り直して重複チェックする。
-    // 端末のローカルデータ（schedRecords）だけを見ると、他の端末やパソコンで少し前に
-    // 登録されたばかりの現場がまだ反映されておらず、重複に気づけないことがあるため
+    // 端末のローカルデータ（schedRecords/mgmtRecords）だけを見ると、他の端末やパソコンで
+    // 少し前に登録されたばかりの現場がまだ反映されておらず、重複に気づけないことがあるため
     // （例：パソコンで一括インポートした直後、スマホ側はまだ古いデータのまま）。
-    if (tab === 'sched' && !editingId) {
+    // 以前は予定表(sched)の新規登録だけこのチェックをしており、管理表(mgmt)の新規登録・
+    // 予定表からの「引き継ぎ」には同じチェックが抜けていた（二人のスタッフがほぼ同時に
+    // 同じ現場を引き継ぐと、管理表に同じ内容が二重登録されてしまう恐れがあった）。
+    if (!editingId) {
       try {
-        const freshSched = await storage.listWithValues('sched:');
+        const freshList = await storage.listWithValues(`${prefix}:`);
         const key = `${form.name.trim()}__${form.date || ''}`;
-        const dup = freshSched.find((r) => `${(r.name || '').trim()}__${r.date || ''}` === key);
+        const dup = freshList.find((r) => `${(r.name || '').trim()}__${r.date || ''}` === key);
         if (dup) {
           const when = dup.createdAt ? formatDateTime(dup.createdAt) : '不明';
-          const proceed = window.confirm(`「${form.name.trim()}」（${form.date}）はすでに登録されているようです（工務店：${dup.kumiten || '未設定'}／担当：${dup.staff || '不明'}／登録：${when}）。\nそれでも新規登録しますか？`);
+          const proceed = window.confirm(`「${form.name.trim()}」（${form.date}）はすでに${prefix === 'sched' ? '予定表' : '管理表'}に登録されているようです（工務店：${dup.kumiten || '未設定'}／担当：${dup.staff || '不明'}／登録：${when}）。\nそれでも新規登録しますか？`);
           if (!proceed) { setSaving(false); return; }
         }
       } catch (e) { /* 確認に失敗しても登録自体は止めない */ }
     }
-    const prefix = tab === 'sched' ? 'sched' : 'mgmt';
     const id = editingId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const { _moveFromId, ...formRest } = form;
     let record = { ...formRest, id, createdAt: form.createdAt || Date.now() };
@@ -3175,23 +3165,18 @@ async function autoAssignTrucks() {
     const unmatchedKumiten = [];
     let currentDate = null;
     let pendingTitle = null;
-    rawLines.forEach((line) => {
-      const dateMatch = line.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
-      if (dateMatch) {
-        currentDate = `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, '0')}-${String(dateMatch[3]).padStart(2, '0')}`;
-        pendingTitle = null;
-        return;
-      }
-      if (/件の予定/.test(line)) return;
-      if (/検索結果をカレンダーで表示する/.test(line)) return;
-      if (pendingTitle === null) {
-        pendingTitle = line;
-        return;
-      }
-      // ここが内訳の行（例：「終日、木1.2 断熱材0.7 プラ0.4 段ボール0.3 混廃0.2」）
-      // 「終日、」だけでなく「10:00〜11:00、」のような時間指定の予定にも対応。それ以外の内容
-      // （数量以外のメモが付いていても）はそのままメモ欄に丸ごと残す
-      const itemsText = line.replace(/^(終日|\d{1,2}:\d{2}\s*[~〜～]\s*\d{1,2}:\d{2}|\d{1,2}:\d{2})[、,]?\s*/, '').trim();
+    // Googleカレンダーの検索結果画面には「◯件の予定」という件数がそのまま書かれているので、
+    // 読み取れた件数と突き合わせれば、パース漏れ（内訳行の判定ミスなど）にすぐ気づける
+    let declaredCount = null;
+    // 内訳行（例：「終日、木1.2 断熱材0.7」「10:00〜11:00、…」）らしいかどうかの判定。
+    // 以前はこの判定が無く、「タイトル行の次に来た行は無条件に内訳」として扱っていたため、
+    // 内訳を書いていない予定が連続すると次のタイトルがまるごと前の予定に飲み込まれて消えたり、
+    // 貼り付けの最後がタイトル行で終わっていると、そのタイトルが1件もentriesに入らず
+    // 静かに抜け落ちる不具合があった（洋子さんのコピー元件数と実際の取り込み件数がズレる原因）。
+    const ITEMS_LINE_RE = /^(終日|\d{1,2}:\d{2}\s*[~〜～]\s*\d{1,2}:\d{2}|\d{1,2}:\d{2})([、,]|$)/;
+    // pendingTitleを確定させてentriesに積む（内訳行が見つからなかった時はitemsTextを空文字で確定する）
+    function flushPendingTitle(itemsText) {
+      if (pendingTitle === null) return;
       const prefixEntry = MGMT_KUMITEN_PREFIXES.find(([prefix]) => pendingTitle.startsWith(prefix));
       const kumiten = prefixEntry ? prefixEntry[1] : 'その他';
       let siteName = prefixEntry ? pendingTitle.slice(prefixEntry[0].length).trim() : pendingTitle.trim();
@@ -3207,24 +3192,66 @@ async function autoAssignTrucks() {
         }
       }
       if (!prefixEntry) unmatchedKumiten.push(pendingTitle);
-      entries.push({ date: currentDate, kumiten, name: siteName, items: itemsText, rawTitle: pendingTitle, supervisorName });
+      entries.push({ date: currentDate, kumiten, name: siteName, items: itemsText || '', rawTitle: pendingTitle, supervisorName });
       pendingTitle = null;
+    }
+    rawLines.forEach((line) => {
+      const dateMatch = line.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+      if (dateMatch) {
+        // 日付見出しが来た時点で、前のタイトルがまだ内訳行を受け取れていなければ
+        // 「内訳なしの予定」として確定させておく（握りつぶして消してしまわない）
+        flushPendingTitle('');
+        currentDate = `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, '0')}-${String(dateMatch[3]).padStart(2, '0')}`;
+        return;
+      }
+      const countMatch = line.match(/(\d+)\s*件の予定/);
+      if (countMatch) { declaredCount = Number(countMatch[1]); return; }
+      if (/検索結果をカレンダーで表示する/.test(line)) return;
+      if (pendingTitle === null) {
+        pendingTitle = line;
+        return;
+      }
+      if (!ITEMS_LINE_RE.test(line)) {
+        // 「終日」や時刻で始まっていない＝内訳行らしくない。前のタイトルは内訳なしの予定として
+        // 確定させ、この行は次の予定のタイトルとして扱う（無条件に内訳とみなさない）
+        flushPendingTitle('');
+        pendingTitle = line;
+        return;
+      }
+      // ここが内訳の行。「終日、」「10:00〜11:00、」を取り除いた残りはそのままメモ欄に丸ごと残す
+      const itemsText = line.replace(/^(終日|\d{1,2}:\d{2}\s*[~〜～]\s*\d{1,2}:\d{2}|\d{1,2}:\d{2})[、,]?\s*/, '').trim();
+      flushPendingTitle(itemsText);
     });
-    return { entries, unmatchedKumiten };
+    // 貼り付けの最後がタイトル行で終わっていた場合も、消さずに内訳なしで確定させる
+    flushPendingTitle('');
+    return { entries, unmatchedKumiten, declaredCount };
   }
 
   function previewMgmtBulkImport() {
     if (!mgmtBulkImportText.trim()) { showToast('貼り付ける内容がありません'); return; }
-    const { entries, unmatchedKumiten } = parseMgmtBulkText(mgmtBulkImportText);
+    const { entries, unmatchedKumiten, declaredCount } = parseMgmtBulkText(mgmtBulkImportText);
     if (entries.length === 0) { showToast('内容を読み取れませんでした。カレンダーの検索結果をそのまま貼り付けてください'); return; }
-    setMgmtBulkImportPreview({ entries, unmatchedKumiten });
+    // 貼り付け元の「◯件の予定」という表示件数と、実際に読み取れた件数が違う場合は、
+    // パース漏れの疑いがあるのでプレビュー画面ではっきり警告する
+    const countMismatch = declaredCount != null && declaredCount !== entries.length;
+    setMgmtBulkImportPreview({ entries, unmatchedKumiten, declaredCount, countMismatch });
   }
 
   async function runMgmtBulkImport() {
     if (!mgmtBulkImportPreview || mgmtBulkImportPreview.entries.length === 0) return;
+    setMgmtBulkImportBusy(true);
+    // 予定表側の一括インポートと同じく、同じ現場名・同じ日付の記録がすでにあれば重複として
+    // スキップする（同じカレンダー検索結果をうっかりもう一度貼り付けて二重登録する事故を防ぐため）。
+    // サーバーの最新データを取り直してから判定する（他の端末の直近の登録も見落とさないように）。
+    let freshMgmt = mgmtRecords;
+    try { freshMgmt = await storage.listWithValues('mgmt:'); } catch (e) { /* 取得できなければ手元のデータで続行 */ }
+    const existingKeys = new Set(freshMgmt.map((r) => `${(r.name || '').trim()}__${r.date || ''}`));
     const records = [];
+    let skipped = 0;
     mgmtBulkImportPreview.entries.forEach((e) => {
       if (!e.name || !e.date) return;
+      const key = `${e.name.trim()}__${e.date}`;
+      if (existingKeys.has(key)) { skipped++; return; }
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       records.push({
         id, createdAt: Date.now(),
@@ -3239,7 +3266,17 @@ async function autoAssignTrucks() {
         photos: [],
       });
     });
-    if (records.length === 0) { showToast('登録できるデータがありませんでした'); return; }
+    if (records.length === 0) {
+      setMgmtBulkImportBusy(false);
+      showToast(skipped > 0 ? `全て重複のため登録しませんでした（${skipped}件）` : '登録できるデータがありませんでした');
+      return;
+    }
+    if (!window.confirm(skipped > 0
+      ? `${records.length}件を管理表に登録します（重複${skipped}件は自動でスキップ）。よろしいですか？`
+      : `${records.length}件を管理表に登録します。よろしいですか？`)) {
+      setMgmtBulkImportBusy(false);
+      return;
+    }
     // 予定表側と同じく、先に画面へ反映し、完了の合図（トースト）もサーバー保存を待たずにすぐ出す。
     // 保存自体は裏で並行して進める（万が一失敗した分は自動リトライされる）。
     records.forEach((record) => applyLocalRecordUpdate('mgmt', record));
@@ -3247,7 +3284,7 @@ async function autoAssignTrucks() {
     setMgmtBulkImportText('');
     setMgmtBulkImportPreview(null);
     setMgmtBulkImportBusy(false);
-    showToast(`${records.length}件、管理表に登録しました`);
+    showToast(skipped > 0 ? `${records.length}件、管理表に登録しました（重複${skipped}件はスキップ）` : `${records.length}件、管理表に登録しました`);
     // 予定表側と同じ理由で、裏での保存は同時並行ではなく1件ずつ順番に行う（競合で消える事故を防ぐ）
     runWithLimit(records, 1, async (record) => {
       await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
@@ -3671,19 +3708,30 @@ async function autoAssignTrucks() {
       if (!groups[r.kumiten]) { groups[r.kumiten] = []; order.push(r.kumiten); }
       groups[r.kumiten].push(r);
     });
+    let missingCount = 0;
     const sections = order.map((kumiten) => {
       const lines = groups[kumiten].map((r) => {
         const sched = schedRecords.find((s) => s.name.trim() === r.name.trim());
         const supervisor = (sched && sched.supervisorName) ? sched.supervisorName : '（未登録）';
         const houseNo = (sched && sched.houseNumber) ? sched.houseNumber : '（未登録）';
+        if (supervisor === '（未登録）' || houseNo === '（未登録）') missingCount++;
         return `【${r.name}】\n日付：${r.date}\n監督：${supervisor}／ハウスNo・事業場コード：${houseNo}\n内訳：${r.items || '(未入力)'}`;
       });
       return `■${kumiten}\n\n` + lines.join('\n\n');
     });
-    return sections.join('\n\n----------\n\n');
+    return { text: sections.join('\n\n----------\n\n'), totalCount: filtered.length, missingCount };
   }
 
-  function openExport() { setExportText(buildExportText()); setShowExport(true); }
+  // 画面の検索・日付・工務店の絞り込みがそのままエクスポート対象になる作りのため、
+  // 絞り込みをかけたまま忘れてこのボタンを押すと、一部の現場だけのテキストが
+  // 気づかないまま生成されてしまう恐れがある。件数と、監督名・ハウスNoが未登録の件数を
+  // 必ず表示することで、コピー前に気づけるようにする。
+  function openExport() {
+    const { text, totalCount, missingCount } = buildExportText();
+    setExportText(text);
+    setExportMeta({ totalCount, missingCount });
+    setShowExport(true);
+  }
 
   async function copyExport() {
     try {
@@ -4567,6 +4615,11 @@ async function autoAssignTrucks() {
   });
   const unassignedCount = daySites.filter((s) => !assignments[s.id]).length;
   const truckOptions = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+  // トラック台数を後から減らした（または軽自動車をオフにした）ことで、
+  // 既に割り振っていたトラックIDがtruckOptionsから消え、「割当済みなのに選択肢にない」
+  // 宙ぶらりんになっている件数（未割当としてもカウントされないため見落とされやすい）
+  const truckOptionIdSet = new Set(truckOptions.map((o) => o.id));
+  const orphanedAssignedCount = daySites.filter((s) => assignments[s.id] && !truckOptionIdSet.has(assignments[s.id])).length;
 
   // ---- invoice derived data ----
   // 「追加」「単発」で入力されたのに、まだ金額（項目）が入力されていない記録＝請求の確認待ち一覧
@@ -4942,7 +4995,6 @@ async function autoAssignTrucks() {
           </button>
         )}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={backfillMeldiaHouseNumber}>🏠 メルディアのハウスNoに一括で「対象外」を入れる</button>}
-        {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={migrateLegacyGanttTags}>📎 古い工程表添付タグにsiteIdを一括追加</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openExport}>マニフェスト用にテキストコピー</button>}
             {tab === 'mgmt' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => { setMgmtBulkImportPreview(null); setMgmtBulkImportStatus('新規'); setShowMgmtBulkImport(true); }}>TimeTreeから一括インポート（管理表）</button>}
             {ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowUsageGuide(true)}>📖 使い方メモ</button>}
@@ -5161,7 +5213,12 @@ async function autoAssignTrucks() {
           <div style={styles.searchBox}>
             <label style={styles.label}>配車する日</label>
             <input type="date" style={styles.input} value={dispatchDate} onChange={(e) => setDispatchDate(e.target.value)} />
+            {!dispatchLoaded && <div style={{ color: '#8A8A83', fontSize: 12.5, marginTop: 6 }}>読み込み中…</div>}
+          </div>
 
+          {dispatchLoaded && (
+          <>
+          <div style={styles.searchBox}>
             <label style={styles.label}>通常トラック台数</label>
             <div style={styles.stepperRow}>
               <button style={styles.stepperBtn} onClick={() => changeRegularTruckCount(regularTruckCount - 1)}>－</button>
@@ -5210,16 +5267,21 @@ async function autoAssignTrucks() {
             <span style={{ color: unassignedCount > 0 ? '#E63946' : '#2A9D8F', fontWeight: 700 }}>
               未割当 {unassignedCount}件
             </span>
+            {orphanedAssignedCount > 0 && (
+              <span style={{ color: '#E63946', fontWeight: 700, marginLeft: 10 }}>
+                ⚠️トラック台数減で宙に浮いた割り当て {orphanedAssignedCount}件
+              </span>
+            )}
           </div>
 
           <div style={styles.toolRow}>
-            <button style={styles.linkBtn} onClick={autoAssignTrucks}>🪄 未割当を自動で割り振る</button>
+            <button style={styles.linkBtn} onClick={autoAssignTrucks} disabled={autoAssignBusy}>{autoAssignBusy ? '割り振り中…' : '🪄 未割当を自動で割り振る'}</button>
             <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowAddExtraSite(true)}>＋ 他の日の現場を追加</button>
             <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowDispatchMap(true)}>🗺️ 地図で見る</button>
           </div>
           <div style={styles.toolRow}>
             {assignmentsUndoSnapshot && (
-              <button style={styles.linkBtnSmall} onClick={undoAutoAssign}>↩️ 元に戻す</button>
+              <button style={styles.linkBtnSmall} onClick={undoAutoAssign} title="直前の1回分の操作だけを元に戻します">↩️ 直前の操作を元に戻す</button>
             )}
             <button style={{ ...styles.linkBtnSmall, marginLeft: assignmentsUndoSnapshot ? 16 : 0, color: '#E63946' }} onClick={resetAllAssignments}>
               🗑️ 割り振りを全てリセット
@@ -5252,7 +5314,8 @@ async function autoAssignTrucks() {
               {sites.map((s) => {
                 const assigned = assignments[s.id] || '';
                 const optIndex = truckOptions.findIndex((o) => o.id === assigned);
-                const barColor = optIndex >= 0 ? TRUCK_COLORS[optIndex % TRUCK_COLORS.length] : '#E63946';
+                const isOrphaned = assigned && optIndex < 0;
+                const barColor = optIndex >= 0 ? TRUCK_COLORS[optIndex % TRUCK_COLORS.length] : (isOrphaned ? '#F4A300' : '#E63946');
                 return (
                   <div key={s.id} style={{ ...styles.dispatchRow, borderLeft: `4px solid ${barColor}` }}>
                     <div style={styles.dispatchInfo}>
@@ -5260,6 +5323,7 @@ async function autoAssignTrucks() {
                         {s.keiTruckRequired && <span style={{ marginRight: 4 }}>🚚</span>}
                         {s.garaRequired && <span style={{ marginRight: 4 }}>🧺</span>}
                         {s.name}
+                        {isOrphaned && <span style={{ color: '#F4A300', marginLeft: 6, fontWeight: 700 }}>⚠️{assigned}が減って未割当に</span>}
                         {extraSiteIds.includes(s.id) && (
                           <span style={styles.extraTag}>
                             他日({s.date})から追加
@@ -5282,7 +5346,7 @@ async function autoAssignTrucks() {
                     </div>
                     <select
                       style={styles.truckSelect}
-                      value={assigned}
+                      value={isOrphaned ? '' : assigned}
                       onChange={(e) => setAssignment(s.id, e.target.value)}
                     >
                       <option value="">未割当</option>
@@ -5309,6 +5373,8 @@ async function autoAssignTrucks() {
                 );
               })}
             </div>
+          )}
+          </>
           )}
         </div>
       )}
@@ -5415,13 +5481,16 @@ async function autoAssignTrucks() {
                         // （それ以外の普通のTODOは、あくまでメモとして残した当時の日付のままでよい）
                         let displayDate = t.date;
                         let displaySite = t.siteName;
+                        let ganttRecordMissing = false;
                         if (t.text.includes('工程表画像添付')) {
                           const live = matchedSchedRecordForGanttTodo(t);
                           if (live) { displayDate = live.date; displaySite = live.name; }
+                          else { ganttRecordMissing = true; }
                         }
                         return (
                           <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
                             📍 {displayDate ? `${displayDate}／` : ''}{displaySite || ''}{displaySite ? '（開く）' : ''}
+                            {ganttRecordMissing && <span style={{ color: '#E63946', marginLeft: 6 }}>⚠️現場の予定が見つかりません（削除・移動された可能性）</span>}
                           </div>
                         );
                       })()}
@@ -5521,13 +5590,16 @@ async function autoAssignTrucks() {
                         // （それ以外の普通のTODOは、あくまでメモとして残した当時の日付のままでよい）
                         let displayDate = t.date;
                         let displaySite = t.siteName;
+                        let ganttRecordMissing = false;
                         if (t.text.includes('工程表画像添付')) {
                           const live = matchedSchedRecordForGanttTodo(t);
                           if (live) { displayDate = live.date; displaySite = live.name; }
+                          else { ganttRecordMissing = true; }
                         }
                         return (
                           <div style={styles.todoMeta} onClick={() => openTodoSite(t)}>
                             📍 {displayDate ? `${displayDate}／` : ''}{displaySite || ''}{displaySite ? '（開く）' : ''}
+                            {ganttRecordMissing && <span style={{ color: '#E63946', marginLeft: 6 }}>⚠️現場の予定が見つかりません（削除・移動された可能性）</span>}
                           </div>
                         );
                       })()}
@@ -7211,6 +7283,11 @@ async function autoAssignTrucks() {
             {mgmtBulkImportPreview && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>この内容で{mgmtBulkImportPreview.entries.length}件登録します（種類タグ：{mgmtBulkImportStatus}）</div>
+                {mgmtBulkImportPreview.countMismatch && (
+                  <div style={{ color: '#C0392B', fontSize: 12.5, marginBottom: 8, fontWeight: 700 }}>
+                    ⚠️貼り付け元は「{mgmtBulkImportPreview.declaredCount}件の予定」となっていますが、読み取れたのは{mgmtBulkImportPreview.entries.length}件でした。抜けている予定がないか、貼り付けた内容をもう一度確認してください。
+                  </div>
+                )}
                 <div style={{ maxHeight: 260, overflowY: 'auto' }}>
                   {mgmtBulkImportPreview.entries.map((e, i) => (
                     <div key={i} style={{ fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid #F0EFE9' }}>
@@ -7261,7 +7338,12 @@ async function autoAssignTrucks() {
               <div style={styles.sheetTitle}>マニフェスト用テキスト</div>
               <button style={styles.closeBtn} onClick={() => setShowExport(false)}>✕</button>
             </div>
-            <div style={styles.exportHint}>上の検索・日付・工務店の絞り込みが反映されています。コピーしてマニフェストのプロジェクトチャットに貼り付けてください。</div>
+            <div style={styles.exportHint}>上の検索・日付・工務店の絞り込みが反映されています（対象：{exportMeta.totalCount}件）。コピーしてマニフェストのプロジェクトチャットに貼り付けてください。</div>
+            {exportMeta.missingCount > 0 && (
+              <div style={{ color: '#C0392B', fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>
+                ⚠️監督名またはハウスNo・事業場コードが未登録の現場が{exportMeta.missingCount}件含まれています（下の本文で「（未登録）」となっている箇所です）。
+              </div>
+            )}
             <textarea style={{ ...styles.input, minHeight: 220, fontSize: 13 }} value={exportText} readOnly />
             <div style={styles.sheetActions}><button style={styles.saveBtn} onClick={copyExport}>コピーする</button></div>
           </div>
