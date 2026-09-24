@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-173';
+  window.__APP_VERSION__ = '2026-09-24-174';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2211,7 +2211,9 @@ function GenbaTracker() {
             if (!(r.houseNumber || '').trim()) gaps.push('ハウスNo');
           }
         }
-        return { r, gaps };
+        // 「近いから住所は調べなくていい」など、現場ごとに個別に不要と判断された項目はリストから外す
+        const dismissed = r.gapDismissed || {};
+        return { r, gaps: gaps.filter((g) => !dismissed[g]) };
       })
       .filter((x) => x.gaps.length > 0)
       // 住所が完全に空欄のものを最優先（地図に出せず一番困る）。座標のみは地図は使えるので通常優先度。次に現場の日付が近い順
@@ -2336,6 +2338,21 @@ function GenbaTracker() {
     if (target && target.checkType === 'feature' && target.featureKey) {
       await markFeatureDismissed(target.featureKey);
     }
+  }
+
+  // 「対応した」わけではなく「そもそも不要と判断した」タスク用（例：近いから工程表は貼らなくていい）。
+  // 「✅やった」と混同しないよう別ボタンにし、誰が不要と判断したかをゴミ箱の記録に残す
+  // （ゴミ箱には30日残るので、洋子さんが後から見返して間違いに気付けば元に戻せる）
+  async function dismissTodo(id) {
+    const target = todos.find((t) => t.id === id);
+    setTodos((prev) => prev.filter((t) => t.id !== id));
+    lastLocalWriteRef.current = Date.now();
+    if (target) {
+      try {
+        await storage.set(`trash:${id}`, JSON.stringify({ ...target, name: target.text, _type: 'todo', deletedAt: new Date().toISOString(), dismissedAsUnnecessary: true, dismissedBy: deviceStaff || '担当者未設定' }), true);
+      } catch (e) { /* ゴミ箱保存に失敗しても本体の削除は続行 */ }
+    }
+    try { await storage.delete(`todo:${id}`, true); } catch (e) { console.error(e); }
   }
 
   // 「工程表画像添付」タスクの上にある専用の添付ボタンから写真を選んだ時だけ、
@@ -4705,6 +4722,32 @@ async function autoAssignTrucks() {
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
+  // 情報不足リストの個別項目（住所・監督名など）を「この現場は不要」として現場ごとに外す。
+  // 誰が・いつ不要にしたかを記録しておき、洋子さんが後から見返して間違いに気付けるようにする
+  async function dismissGapItem(record, gapLabel) {
+    try {
+      const fresh = await storage.get(`sched:${record.id}`, true);
+      const rec = (fresh && fresh.value) ? JSON.parse(fresh.value) : record;
+      const gapDismissed = { ...(rec.gapDismissed || {}), [gapLabel]: { by: deviceStaff || '担当者未設定', at: new Date().toISOString() } };
+      const updated = { ...rec, gapDismissed };
+      const result = await storage.set(`sched:${record.id}`, JSON.stringify(updated), true);
+      applyLocalRecordUpdate('sched', updated);
+      showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に反映されます' : `「${gapLabel}」を不要にしました`);
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+  async function restoreGapItem(record, gapLabel) {
+    try {
+      const fresh = await storage.get(`sched:${record.id}`, true);
+      const rec = (fresh && fresh.value) ? JSON.parse(fresh.value) : record;
+      const gapDismissed = { ...(rec.gapDismissed || {}) };
+      delete gapDismissed[gapLabel];
+      const updated = { ...rec, gapDismissed };
+      const result = await storage.set(`sched:${record.id}`, JSON.stringify(updated), true);
+      applyLocalRecordUpdate('sched', updated);
+      showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に反映されます' : `「${gapLabel}」を情報不足リストに戻しました`);
+    } catch (e) { showToast('保存に失敗しました'); }
+  }
+
   function jumpToInvoiceItem(record) {
     setInvoiceKumiten(record.kumiten);
     setInvoiceMonth((record.date || todayStr()).slice(0, 7));
@@ -5705,6 +5748,7 @@ async function autoAssignTrucks() {
                             <button style={styles.inProgressBtn} onClick={() => toggleInProgress(t)}>{t.inProgress ? '🔧 対応中を解除' : '🔧 対応中にする'}</button>
                             {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
                             <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>📢 伝達に移動</button>
+                            <button style={styles.deleteArchivedBtn} onClick={() => dismissTodo(t.id)} title="対応したのではなく、そもそも不要と判断した時用（ゴミ箱に30日残ります）">🚫 不要にする</button>
                           </React.Fragment>
                         )}
                       </div>
@@ -5863,11 +5907,40 @@ async function autoAssignTrucks() {
                           <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
                             <div>
                               <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
-                              <div style={{ fontSize: 11.5, color: '#8A8A83' }}>
-                                {r.date}／{gaps.map((g, i) => (
-                                  <span key={g} style={g === '住所' ? styles.gapUrgent : undefined}>{i > 0 ? '・' : ''}{g}</span>
-                                ))}が未入力
+                              <div style={{ fontSize: 11.5, color: '#8A8A83', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+                                <span>{r.date}／</span>
+                                {gaps.map((g, i) => (
+                                  <span key={g} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    {i > 0 && <span>・</span>}
+                                    <span style={g === '住所' ? styles.gapUrgent : undefined}>{g}</span>
+                                    <button
+                                      type="button"
+                                      style={{ ...styles.lineItemRemove, fontSize: 10, padding: '1px 5px' }}
+                                      title={`「${g}」はこの現場だけ不要にする`}
+                                      onClick={(e) => { e.stopPropagation(); dismissGapItem(r, g); }}
+                                    >
+                                      不要
+                                    </button>
+                                  </span>
+                                ))}
+                                <span>が未入力</span>
                               </div>
+                              {r.gapDismissed && Object.keys(r.gapDismissed).length > 0 && (
+                                <div style={{ fontSize: 10.5, color: '#B5B5AC' }}>
+                                  {Object.entries(r.gapDismissed).map(([g, info]) => (
+                                    <span key={g} style={{ marginRight: 8 }}>
+                                      🚫{g}不要（{info.by}）
+                                      <button
+                                        type="button"
+                                        style={{ ...styles.lineItemRemove, fontSize: 10, padding: '1px 5px', marginLeft: 3 }}
+                                        onClick={(e) => { e.stopPropagation(); restoreGapItem(r, g); }}
+                                      >
+                                        元に戻す
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <span style={{ fontSize: 12, color: hasAddr ? '#B3261E' : '#2A9D8F', fontWeight: hasAddr ? 700 : 400 }}>開く</span>
                           </div>
@@ -7104,6 +7177,7 @@ async function autoAssignTrucks() {
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{item.name}</div>
                       <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{item.date}{item.date ? '／' : ''}{item._type === 'sched' ? '予定表' : item._type === 'mgmt' ? '管理表' : '伝達'}／削除:{(item.deletedAt || '').slice(0, 10)}</div>
+                      {item.dismissedAsUnnecessary && <div style={{ fontSize: 11, color: '#B8860B' }}>🚫不要と判断：{item.dismissedBy || ''}</div>}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
