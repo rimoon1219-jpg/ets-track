@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-177';
+  window.__APP_VERSION__ = '2026-09-24-179';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -473,13 +473,13 @@ const USAGE_GUIDE_TEXT = `■ 予定表タブ（鍵🔓8989）
 ・締め日が近い工務店は自動でリマインドが出る
 
 ■ 伝達（TODOタブ・合言葉4455）
-・宛先を選べるのは洋子さんの端末だけ。「全員」以外（本城 or 酒井）を選ぶと、その人と洋子さん以外には一覧にすら出ない
+・宛先を選べるのは洋子さんの端末だけ。「全員」以外（本城・酒井・金子のいずれか）を選ぶと、その人と洋子さん以外には一覧にすら出ない
 ・📦アーカイブで片付け、🗑削除（洋子さんの端末だけに表示、ゴミ箱に30日残る）`;
 // 伝達（TODOタブ）を実際に見に来る人の宛先候補。今後TODOを見る人が増えたらここに名前を足すだけでOK。
 // 「全員」を選ぶと今まで通りみんなに見えるバッジになる（グループLINEで済む話は基本そちらで、
 // 個別に気づいてほしい伝達だけここで宛先を絞る運用を想定）
 // 名前は各端末の「担当者名」設定と完全一致させる必要がある（すぐる→本城さん、社長→酒井さん）
-const TODO_RECIPIENTS = ['全員', '本城', '酒井'];
+const TODO_RECIPIENTS = ['全員', '本城', '酒井', '金子'];
 // アプリの修正内容など「社長とすぐる君だけに気づいてほしい」時用のまとめ宛先。
 // 毎回2人を個別に選ぶ手間＆選び忘れの心配をなくすためのワンタップ用プリセット。
 // 実際の中身は「本城,酒井」のカンマ区切り文字列（複数宛先はこの形式で保存する）
@@ -501,7 +501,7 @@ function memoVisibleToMe(t, me) {
 // TODO（伝達）を実際に見に来る人だけの一覧。ヘッダーの「📢伝達」バッジは、この中の担当者名が
 // 設定されている端末にしか出さない（他の現場スタッフには一切気にさせたくないため）。
 // TODOを見る人が増えたらここに名前を足すだけでOK
-const TODO_VIEWERS = ['洋子', '本城', '酒井'];
+const TODO_VIEWERS = ['洋子', '本城', '酒井', '金子'];
 // 宛先を指定できるのは洋子さんの端末だけ（他の人が送る伝達は常に「全員」扱いになり、選ぶ手間自体が発生しない）
 const TODO_TARGET_PICKER_STAFF = '洋子';
 
@@ -1420,8 +1420,7 @@ function GenbaTracker() {
   const [dispatchDate, setDispatchDate] = useState(todayStr());
   const [regularTruckCount, setRegularTruckCount] = useState(6);
   const [includeKei, setIncludeKei] = useState(true);
-  const [dumpOnlyCount, setDumpOnlyCount] = useState(0);
-  const [assignments, setAssignments] = useState({}); // siteId -> truck id string ('R1','KEI','D1'...) or '' for unassigned
+  const [assignments, setAssignments] = useState({}); // siteId -> truck id string ('R1','KEI'...) or '' for unassigned
   const [extraSiteIds, setExtraSiteIds] = useState([]); // 他の日の予定から追加した現場ID
   const [nearbyHints, setNearbyHints] = useState(null); // 前後の日で近い現場の候補（未計算はnull）
   const [nearbyHintsLoading, setNearbyHintsLoading] = useState(false);
@@ -1441,8 +1440,6 @@ function GenbaTracker() {
   const [showRenameHistory, setShowRenameHistory] = useState(false);
   const [showInfoGaps, setShowInfoGaps] = useState(false);
   const [extraSiteSearch, setExtraSiteSearch] = useState('');
-  const [collectNote, setCollectNote] = useState('');
-  const [dumpNote, setDumpNote] = useState('');
   const [showDispatchMap, setShowDispatchMap] = useState(false);
   const [mapStatus, setMapStatus] = useState('idle'); // idle | loading | error | ready
   const mapDivRef = useRef(null);
@@ -1744,7 +1741,7 @@ function GenbaTracker() {
       mapMarkersRef.current = [];
 
       const bounds = new window.google.maps.LatLngBounds();
-      const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+      const opts = buildTruckOptions(regularTruckCount, includeKei);
       // 以前は現場を1件ずつ順番に（サーバーへのキャッシュ確認も含めて）問い合わせていたため、
       // 件数が多い日ほど地図が表示されるまで待たされていた。
       // 先にキャッシュ済みの座標をまとめて1回のサーバー読み込みで取得しておき、
@@ -1790,7 +1787,7 @@ function GenbaTracker() {
     }
     build();
     return () => { cancelled = true; };
-  }, [showDispatchMap, dispatchDate, assignments, regularTruckCount, includeKei, dumpOnlyCount]);
+  }, [showDispatchMap, dispatchDate, assignments, regularTruckCount, includeKei]);
 
   async function load() {
     setLoading(true);
@@ -2497,17 +2494,14 @@ function GenbaTracker() {
         result = {
           regularTruckCount: parsed.regularTruckCount ?? satDefault,
           includeKei: parsed.includeKei ?? true,
-          dumpOnlyCount: parsed.dumpOnlyCount ?? 0,
           assignments: parsed.assignments || {},
           extraSiteIds: parsed.extraSiteIds || [],
-          collectNote: parsed.collectNote || '',
-          dumpNote: parsed.dumpNote || '',
         };
       } else {
-        result = { regularTruckCount: satDefault, includeKei: true, dumpOnlyCount: 0, assignments: {}, extraSiteIds: [], collectNote: '', dumpNote: '' };
+        result = { regularTruckCount: satDefault, includeKei: true, assignments: {}, extraSiteIds: [] };
       }
     } catch (e) {
-      result = { regularTruckCount: satDefault, includeKei: true, dumpOnlyCount: 0, assignments: {}, extraSiteIds: [], collectNote: '', dumpNote: '' };
+      result = { regularTruckCount: satDefault, includeKei: true, assignments: {}, extraSiteIds: [] };
     }
     if (dispatchLoadRequestRef.current !== requestId) {
       // この応答が返ってくる間にさらに別の日付に切り替えられていたら、今は使わない
@@ -2515,25 +2509,19 @@ function GenbaTracker() {
     }
     setRegularTruckCount(result.regularTruckCount);
     setIncludeKei(result.includeKei);
-    setDumpOnlyCount(result.dumpOnlyCount);
     setAssignments(result.assignments);
     setExtraSiteIds(result.extraSiteIds);
-    setCollectNote(result.collectNote);
-    setDumpNote(result.dumpNote);
     setDispatchLoaded(true);
   }
 
   const dispatchSaveChainRef = useRef(Promise.resolve());
 
-  async function saveDispatch(nextAssignments, nextRegular, nextKei, nextDump, nextExtra, nextCollectNote, nextDumpNote) {
+  async function saveDispatch(nextAssignments, nextRegular, nextKei, nextExtra) {
     const payload = {
       regularTruckCount: nextRegular,
       includeKei: nextKei,
-      dumpOnlyCount: nextDump,
       assignments: nextAssignments,
       extraSiteIds: nextExtra !== undefined ? nextExtra : extraSiteIds,
-      collectNote: nextCollectNote !== undefined ? nextCollectNote : collectNote,
-      dumpNote: nextDumpNote !== undefined ? nextDumpNote : dumpNote,
     };
     const date = dispatchDate;
     // 保存が重なった時に古い内容が後から上書きしてしまわないよう、必ず送った順番で保存する
@@ -2545,7 +2533,7 @@ function GenbaTracker() {
   function setAssignment(siteId, truckId) {
     const next = { ...assignments, [siteId]: truckId };
     setAssignments(next);
-    saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
+    saveDispatch(next, regularTruckCount, includeKei);
   }
 
   async function moveSiteToDate(record) {
@@ -2563,7 +2551,7 @@ function GenbaTracker() {
     if (extraSiteIds.includes(siteId)) return;
     const next = [...extraSiteIds, siteId];
     setExtraSiteIds(next);
-    saveDispatch(assignments, regularTruckCount, includeKei, dumpOnlyCount, next);
+    saveDispatch(assignments, regularTruckCount, includeKei, next);
   }
 
   function removeExtraSite(siteId) {
@@ -2572,7 +2560,7 @@ function GenbaTracker() {
     const nextAssign = { ...assignments };
     delete nextAssign[siteId];
     setAssignments(nextAssign);
-    saveDispatch(nextAssign, regularTruckCount, includeKei, dumpOnlyCount, next);
+    saveDispatch(nextAssign, regularTruckCount, includeKei, next);
   }
 
   // 曜日ごとに「まとめて回りたいエリア」の考え方（洋子さんの配車ルールに準拠）
@@ -2590,7 +2578,7 @@ function zoneRuleForDate(dateStr) {
 
 async function autoAssignTrucks() {
     if (autoAssignBusy) return; // 連打による二重実行（位置情報の重複取得）を防ぐ
-    const opts = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+    const opts = buildTruckOptions(regularTruckCount, includeKei);
     if (opts.length === 0) { showToast('トラックがありません'); return; }
     setAutoAssignBusy(true);
     try {
@@ -2646,7 +2634,7 @@ async function autoAssignTrucks() {
 
     setAssignmentsUndoSnapshot(assignments); // 実行前の状態を1回分だけ覚えておく（元に戻す用）
     setAssignments(next);
-    saveDispatch(next, regularTruckCount, includeKei, dumpOnlyCount);
+    saveDispatch(next, regularTruckCount, includeKei);
     showToast(skippedUnknown > 0
       ? `距離が近い順に割り振りました（住所不明の${skippedUnknown}件は未割当のままです）`
       : `距離が近い順に割り振りました（手動でも調整できます）`);
@@ -2658,7 +2646,7 @@ async function autoAssignTrucks() {
   function undoAutoAssign() {
     if (!assignmentsUndoSnapshot) return;
     setAssignments(assignmentsUndoSnapshot);
-    saveDispatch(assignmentsUndoSnapshot, regularTruckCount, includeKei, dumpOnlyCount);
+    saveDispatch(assignmentsUndoSnapshot, regularTruckCount, includeKei);
     setAssignmentsUndoSnapshot(null);
     showToast('自動割り振り前の状態に戻しました');
   }
@@ -2668,7 +2656,7 @@ async function autoAssignTrucks() {
     if (!window.confirm('この日の割り振りを全て空に戻します。よろしいですか？')) return;
     setAssignmentsUndoSnapshot(assignments); // リセットも1回分だけ元に戻せるようにしておく
     setAssignments({});
-    saveDispatch({}, regularTruckCount, includeKei, dumpOnlyCount);
+    saveDispatch({}, regularTruckCount, includeKei);
     showToast('割り振りを全てリセットしました');
   }
 
@@ -2728,39 +2716,22 @@ async function autoAssignTrucks() {
     }
   }
 
-  function saveCollectNote(value) {
-    setCollectNote(value);
-    saveDispatch(assignments, regularTruckCount, includeKei, dumpOnlyCount, extraSiteIds, value, dumpNote);
-  }
-
-  function saveDumpNoteValue(value) {
-    setDumpNote(value);
-    saveDispatch(assignments, regularTruckCount, includeKei, dumpOnlyCount, extraSiteIds, collectNote, value);
-  }
-
   function changeRegularTruckCount(n) {
     const v = Math.max(0, n);
     setRegularTruckCount(v);
-    saveDispatch(assignments, v, includeKei, dumpOnlyCount);
+    saveDispatch(assignments, v, includeKei);
   }
 
   function toggleKei() {
     const v = !includeKei;
     setIncludeKei(v);
-    saveDispatch(assignments, regularTruckCount, v, dumpOnlyCount);
+    saveDispatch(assignments, regularTruckCount, v);
   }
 
-  function changeDumpOnlyCount(n) {
-    const v = Math.max(0, n);
-    setDumpOnlyCount(v);
-    saveDispatch(assignments, regularTruckCount, includeKei, v);
-  }
-
-  function buildTruckOptions(regular, kei, dump) {
+  function buildTruckOptions(regular, kei) {
     const opts = [];
     for (let i = 1; i <= regular; i++) opts.push({ id: `R${i}`, label: `トラック${i}` });
     if (kei) opts.push({ id: 'KEI', label: '軽自動車' });
-    for (let i = 1; i <= dump; i++) opts.push({ id: `D${i}`, label: `捨て専用${i}` });
     return opts;
   }
 
@@ -4690,7 +4661,7 @@ async function autoAssignTrucks() {
     return { daySitesBase, extraSites, daySites, byArea };
   }, [schedRecords, dispatchDate, extraSiteIds]);
   const unassignedCount = useMemo(() => daySites.filter((s) => !assignments[s.id]).length, [daySites, assignments]);
-  const truckOptions = useMemo(() => buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount), [regularTruckCount, includeKei, dumpOnlyCount]);
+  const truckOptions = useMemo(() => buildTruckOptions(regularTruckCount, includeKei), [regularTruckCount, includeKei]);
   // トラック台数を後から減らした（または軽自動車をオフにした）ことで、
   // 既に割り振っていたトラックIDがtruckOptionsから消え、「割当済みなのに選択肢にない」
   // 宙ぶらりんになっている件数（未割当としてもカウントされないため見落とされやすい）
@@ -5358,33 +5329,7 @@ async function autoAssignTrucks() {
               {includeKei ? '✅ 軽自動車あり' : '軽自動車なし（タップで追加）'}
             </button>
 
-            <label style={styles.label}>捨て専用便（台数）</label>
-            <div style={styles.stepperRow}>
-              <button style={styles.stepperBtn} onClick={() => changeDumpOnlyCount(dumpOnlyCount - 1)}>－</button>
-              <span style={styles.stepperValue}>{dumpOnlyCount}台</span>
-              <button style={styles.stepperBtn} onClick={() => changeDumpOnlyCount(dumpOnlyCount + 1)}>＋</button>
-            </div>
-
             {isSaturday(dispatchDate) && <div style={styles.satHint}>土曜日です。台数を減らせます。</div>}
-          </div>
-
-          <div style={styles.searchBox}>
-            <label style={styles.label}>回収メモ</label>
-            <textarea
-              style={{ ...styles.input, minHeight: 60 }}
-              value={collectNote}
-              onChange={(e) => setCollectNote(e.target.value)}
-              onBlur={(e) => saveCollectNote(e.target.value)}
-              placeholder="例：〇〇現場は9時までに終わらせる、など"
-            />
-            <label style={styles.label}>捨て（処分）メモ</label>
-            <textarea
-              style={{ ...styles.input, minHeight: 60 }}
-              value={dumpNote}
-              onChange={(e) => setDumpNote(e.target.value)}
-              onBlur={(e) => saveDumpNoteValue(e.target.value)}
-              placeholder="例：処分場の受付は15時まで、など"
-            />
           </div>
 
           <div style={styles.dispatchSummary}>
@@ -7167,7 +7112,7 @@ async function autoAssignTrucks() {
 
             {mapStatus === 'ready' && (
               <div style={styles.mapLegend}>
-                {buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount).map((o, i) => (
+                {buildTruckOptions(regularTruckCount, includeKei).map((o, i) => (
                   <span key={o.id} style={styles.mapLegendItem}>
                     <span style={{ ...styles.truckDot, background: TRUCK_COLORS[i % TRUCK_COLORS.length] }} />
                     {o.label}
