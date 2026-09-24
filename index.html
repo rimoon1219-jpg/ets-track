@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-175';
+  window.__APP_VERSION__ = '2026-09-24-176';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2196,7 +2196,9 @@ function GenbaTracker() {
   // 電話番号はマニフェストに不要なため対象外。保存はしない（重複しようがない）
   // 監督名・ハウスNoは、実際に電子マニフェストを使っている工務店（MANIFEST_KUMITEN）だけ必須にする。
   // それ以外の工務店まで対象にすると件数が膨れて本当に大事な分が埋もれてしまうため
-  function infoGapSites() {
+  // 画面のどこかを操作するだけでアプリ全体が再描画されるため、schedRecordsが変わっていない時は
+  // 計算し直さないようにする（infoGapsByKumitenが毎回これを2重に呼んでいた無駄も併せて解消）
+  const infoGapSitesMemo = useMemo(() => {
     const today = todayStr();
     return schedRecords
       .map((r) => {
@@ -2223,13 +2225,16 @@ function GenbaTracker() {
         if (aAddr !== bAddr) return aAddr - bAddr;
         return (a.r.date || '').localeCompare(b.r.date || '');
       });
+  }, [schedRecords]);
+  function infoGapSites() {
+    return infoGapSitesMemo;
   }
 
   // 情報不足の現場を工務店ごとにグループ化する（工務店が空の分は「工務店未設定」としてまとめる）
   function infoGapsByKumiten() {
     const groups = {};
     const order = [];
-    infoGapSites().forEach((x) => {
+    infoGapSitesMemo.forEach((x) => {
       const k = x.r.kumiten || '工務店未設定';
       if (!groups[k]) { groups[k] = []; order.push(k); }
       groups[k].push(x);
@@ -2287,8 +2292,9 @@ function GenbaTracker() {
     setTodos((prev) => prev.filter((x) => x.id !== t.id));
     showToast('削除しました（ゴミ箱に30日間残ります）');
   }
-  function sortedTodosBase() {
-    return [...todos]
+  // TODO一覧では、この並び替えが1回の描画で（タスク／伝達／アーカイブ用に）何度も
+  // 呼ばれていたため、todosが変わっていない時は計算し直さないようにする
+  const sortedTodosBaseMemo = useMemo(() => [...todos]
       .filter((t) => t.checkType !== 'feature')
       .sort((a, b) => {
         const aImp = a.important ? 0 : 1;
@@ -2301,7 +2307,9 @@ function GenbaTracker() {
         const bDate = b.date || '9999-99-99';
         if (aDate !== bDate) return aDate.localeCompare(bDate);
         return (b.createdAt || '').localeCompare(a.createdAt || '');
-      });
+      }), [todos]);
+  function sortedTodosBase() {
+    return sortedTodosBaseMemo;
   }
 
   // 「見た」ボタンを押した人（端末の担当者名）と、見た日時を記録する
@@ -4649,34 +4657,45 @@ async function autoAssignTrucks() {
 
   const activeList = tab === 'sched' ? schedRecords : mgmtRecords;
   const statusList = SCHED_STATUSES;
-  const collectedNames = new Set(mgmtRecords.map((r) => r.name));
+  // 画面のどこか1箇所を操作するだけ（他タブでの入力・トースト表示など）でもアプリ全体が
+  // 再描画される作りのため、下の一覧・配車・請求の集計は依存する値が変わっていない時は
+  // 計算し直さないようにして、無駄な再計算による体感の遅さを減らす（表示結果は変えていない）
+  const collectedNames = useMemo(() => new Set(mgmtRecords.map((r) => r.name)), [mgmtRecords]);
 
-  let filtered = activeList.filter((r) => {
-    if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return false;
-    if (dateFrom && r.date < dateFrom) return false;
-    if (dateTo && r.date > dateTo) return false;
-    if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
-  if (tab === 'sched' && showUncollectedOnly) filtered = filtered.filter((r) => !collectedNames.has(r.name));
+  const filtered = useMemo(() => {
+    let list = activeList.filter((r) => {
+      if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return false;
+      if (dateFrom && r.date < dateFrom) return false;
+      if (dateTo && r.date > dateTo) return false;
+      if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+    if (tab === 'sched' && showUncollectedOnly) list = list.filter((r) => !collectedNames.has(r.name));
+    return list;
+  }, [activeList, tab, kumitenFilter, dateFrom, dateTo, search, showUncollectedOnly, collectedNames]);
 
   // ---- dispatch derived data ----
-  const daySitesBase = schedRecords.filter((r) => r.date === dispatchDate);
-  const extraSites = schedRecords.filter((r) => extraSiteIds.includes(r.id) && r.date !== dispatchDate);
-  const daySites = [...daySitesBase, ...extraSites];
-  const byArea = {};
-  daySites.forEach((s) => {
-    const area = s.area || extractArea(s.address) || '未分類';
-    if (!byArea[area]) byArea[area] = [];
-    byArea[area].push(s);
-  });
-  const unassignedCount = daySites.filter((s) => !assignments[s.id]).length;
-  const truckOptions = buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount);
+  const { daySitesBase, extraSites, daySites, byArea } = useMemo(() => {
+    const daySitesBase = schedRecords.filter((r) => r.date === dispatchDate);
+    const extraSites = schedRecords.filter((r) => extraSiteIds.includes(r.id) && r.date !== dispatchDate);
+    const daySites = [...daySitesBase, ...extraSites];
+    const byArea = {};
+    daySites.forEach((s) => {
+      const area = s.area || extractArea(s.address) || '未分類';
+      if (!byArea[area]) byArea[area] = [];
+      byArea[area].push(s);
+    });
+    return { daySitesBase, extraSites, daySites, byArea };
+  }, [schedRecords, dispatchDate, extraSiteIds]);
+  const unassignedCount = useMemo(() => daySites.filter((s) => !assignments[s.id]).length, [daySites, assignments]);
+  const truckOptions = useMemo(() => buildTruckOptions(regularTruckCount, includeKei, dumpOnlyCount), [regularTruckCount, includeKei, dumpOnlyCount]);
   // トラック台数を後から減らした（または軽自動車をオフにした）ことで、
   // 既に割り振っていたトラックIDがtruckOptionsから消え、「割当済みなのに選択肢にない」
   // 宙ぶらりんになっている件数（未割当としてもカウントされないため見落とされやすい）
-  const truckOptionIdSet = new Set(truckOptions.map((o) => o.id));
-  const orphanedAssignedCount = daySites.filter((s) => assignments[s.id] && !truckOptionIdSet.has(assignments[s.id])).length;
+  const orphanedAssignedCount = useMemo(() => {
+    const truckOptionIdSet = new Set(truckOptions.map((o) => o.id));
+    return daySites.filter((s) => assignments[s.id] && !truckOptionIdSet.has(assignments[s.id])).length;
+  }, [daySites, assignments, truckOptions]);
 
   // ---- invoice derived data ----
   // 「追加」「単発」で入力されたのに、まだ金額（項目）が入力されていない記録＝請求の確認待ち一覧
@@ -4684,17 +4703,23 @@ async function autoAssignTrucks() {
   function needsInvoicePrice(r) {
     return (r.status === '追加' || r.status === '単発') && !r.invoiceDismissed && !(r.lineItems && r.lineItems.length > 0);
   }
-  const invoicePendingItems = mgmtRecords.filter(needsInvoicePrice).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  const invoiceDismissedItems = mgmtRecords.filter((r) => (r.status === '追加' || r.status === '単発') && r.invoiceDismissed)
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const invoicePendingItems = useMemo(
+    () => mgmtRecords.filter(needsInvoicePrice).sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [mgmtRecords]
+  );
+  const invoiceDismissedItems = useMemo(
+    () => mgmtRecords.filter((r) => (r.status === '追加' || r.status === '単発') && r.invoiceDismissed)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [mgmtRecords]
+  );
 
   // 締め日が近い工務店のリマインド（請求書タブの中だけに出す。TODO/伝達には出さない＝新規入力スタッフには関係ないため）
   // 「もうやった」で消した分（今回の締め日と一致するもの）は表示しない。次の月の締め日になれば自動的にまた出る
-  const closingReminders = Object.entries(KUMITEN_CLOSING_DAY)
+  const closingReminders = useMemo(() => Object.entries(KUMITEN_CLOSING_DAY)
     .map(([kumiten, dayRule]) => ({ kumiten, ...nextClosingDate(dayRule, todayStr()) }))
     .filter((x) => x.diffDays <= CLOSING_REMINDER_LEAD_DAYS)
     .filter((x) => !dismissedClosings.includes(`${x.kumiten}__${x.dateStr}`))
-    .sort((a, b) => a.diffDays - b.diffDays);
+    .sort((a, b) => a.diffDays - b.diffDays), [dismissedClosings]);
 
   async function dismissClosingReminder(kumiten, dateStr) {
     const key = `${kumiten}__${dateStr}`;
@@ -4783,29 +4808,37 @@ async function autoAssignTrucks() {
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
-  const invoiceRecords = mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発'));
-  const invoiceBySite = {};
-  invoiceRecords.forEach((r) => {
-    if (!invoiceBySite[r.name]) invoiceBySite[r.name] = { name: r.name, items: [] };
-    (r.lineItems || []).forEach((it) => {
-      const q = parseMoneyNum(it.qty); const p = parseMoneyNum(it.unitPrice);
-      const amount = (isNaN(q) || isNaN(p)) ? 0 : q * p;
-      invoiceBySite[r.name].items.push({ ...it, amount, date: r.date, recordId: r.id });
+  const invoiceRecords = useMemo(
+    () => mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発')),
+    [mgmtRecords, invoiceKumiten, invoiceMonth]
+  );
+  const invoiceRows = useMemo(() => {
+    const invoiceBySite = {};
+    invoiceRecords.forEach((r) => {
+      if (!invoiceBySite[r.name]) invoiceBySite[r.name] = { name: r.name, items: [] };
+      (r.lineItems || []).forEach((it) => {
+        const q = parseMoneyNum(it.qty); const p = parseMoneyNum(it.unitPrice);
+        const amount = (isNaN(q) || isNaN(p)) ? 0 : q * p;
+        invoiceBySite[r.name].items.push({ ...it, amount, date: r.date, recordId: r.id });
+      });
     });
-  });
-  const invoiceRows = Object.values(invoiceBySite)
-    .filter((s) => s.items.length > 0)
-    .map((s) => ({ ...s, items: [...s.items].sort((a, b) => (a.date || '').localeCompare(b.date || '')) })) // 同じ現場名で複数回の記録があっても日付順に並ぶようにする
-    .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
-  const invoiceGrandTotal = invoiceRows.reduce((sum, site) => sum + site.items.reduce((s, it) => s + it.amount, 0), 0);
+    return Object.values(invoiceBySite)
+      .filter((s) => s.items.length > 0)
+      .map((s) => ({ ...s, items: [...s.items].sort((a, b) => (a.date || '').localeCompare(b.date || '')) })) // 同じ現場名で複数回の記録があっても日付順に並ぶようにする
+      .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  }, [invoiceRecords]);
+  const invoiceGrandTotal = useMemo(
+    () => invoiceRows.reduce((sum, site) => sum + site.items.reduce((s, it) => s + it.amount, 0), 0),
+    [invoiceRows]
+  );
 
   // ---- 工務店・現場・日付ごとの集計（期間自由指定） ----
-  const summaryRecords = mgmtRecords.filter((r) => {
+  const summaryRecords = useMemo(() => mgmtRecords.filter((r) => {
     if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return false;
     if (summaryFrom && r.date < summaryFrom) return false;
     if (summaryTo && r.date > summaryTo) return false;
     return true;
-  });
+  }), [mgmtRecords, kumitenFilter, summaryFrom, summaryTo]);
 
   function recordAmount(r) {
     return (r.lineItems || []).reduce((s, it) => {
@@ -4814,12 +4847,15 @@ async function autoAssignTrucks() {
     }, 0);
   }
 
-  const summaryTree = {}; // { kumiten: { siteName: [{date, amount, status}] } }
-  summaryRecords.forEach((r) => {
-    if (!summaryTree[r.kumiten]) summaryTree[r.kumiten] = {};
-    if (!summaryTree[r.kumiten][r.name]) summaryTree[r.kumiten][r.name] = [];
-    summaryTree[r.kumiten][r.name].push({ date: r.date, amount: recordAmount(r), status: r.status });
-  });
+  const summaryTree = useMemo(() => {
+    const tree = {}; // { kumiten: { siteName: [{date, amount, status}] } }
+    summaryRecords.forEach((r) => {
+      if (!tree[r.kumiten]) tree[r.kumiten] = {};
+      if (!tree[r.kumiten][r.name]) tree[r.kumiten][r.name] = [];
+      tree[r.kumiten][r.name].push({ date: r.date, amount: recordAmount(r), status: r.status });
+    });
+    return tree;
+  }, [summaryRecords]);
 
   function buildSummaryTSV() {
     const header = '工務店\t現場名\t日付\tタグ\t金額';
