@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-168';
+  window.__APP_VERSION__ = '2026-09-24-169';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -235,9 +235,14 @@ window.addEventListener('online', retryQueue);
 // ページを開いた直後にも一度試みる
 setTimeout(retryQueue, 2000);
 
+// 請求書タブで入力中だけどまだ「保存」していない数量・単価があるかどうか
+// （Reactコンポーネントの外にあるこの関数からstateを直接見られないため、
+// コンポーネント側でinvoiceEditsが変わるたびにこの変数を更新してもらう）
+let hasUnsavedInvoiceEdits = false;
+
 // 未送信のデータが残っている状態で閉じようとしたら警告する
 window.addEventListener('beforeunload', (e) => {
-  if (getQueue().length + getPhotoQueue().length > 0) {
+  if (getQueue().length + getPhotoQueue().length > 0 || hasUnsavedInvoiceEdits) {
     e.preventDefault();
     e.returnValue = '';
   }
@@ -565,6 +570,20 @@ const KUMITEN_CLOSING_DAY = {
 };
 // 締め日の何日前からリマインドを出すか
 const CLOSING_REMINDER_LEAD_DAYS = 5;
+// 請求書の数量・単価入力用の数値パース。全角数字（１２０）は半角に、
+// 桁区切りのカンマ（1,200）や前後の空白は取り除いてから数値化する。
+// 「1,200」をparseFloatにそのまま渡すと最初のカンマで止まって「1」を返してしまい、
+// 金額が桁違いに小さく計算されてしまう事故を防ぐための専用関数。
+function parseMoneyNum(raw) {
+  if (raw === null || raw === undefined) return NaN;
+  let s = String(raw).trim();
+  if (s === '') return NaN;
+  // 全角数字・記号を半角に変換
+  s = s.replace(/[０-９．－]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  s = s.replace(/,/g, ''); // 桁区切りカンマを除去
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return NaN; // 数値として不正な形式ははっきりNaNにする
+  return parseFloat(s);
+}
 // dayRule（'eom' or 1〜31）から見て、fromDateStr（YYYY-MM-DD）以降で一番近い締め日を計算する
 function nextClosingDate(dayRule, fromDateStr) {
   const from = new Date(`${fromDateStr}T00:00:00`);
@@ -1475,6 +1494,7 @@ function GenbaTracker() {
   const [showInvoiceExport, setShowInvoiceExport] = useState(false);
   const [invoiceExportText, setInvoiceExportText] = useState('');
   const [invoiceEdits, setInvoiceEdits] = useState({}); // recordId -> lineItems編集中バッファ
+  useEffect(() => { hasUnsavedInvoiceEdits = Object.keys(invoiceEdits).length > 0; }, [invoiceEdits]); // 保存前に閉じようとした時の警告用
   const invoicePriceSectionRef = useRef(null);
   const [highlightedInvoiceId, setHighlightedInvoiceId] = useState(null);
   const [showDismissedInvoice, setShowDismissedInvoice] = useState(false);
@@ -3771,19 +3791,26 @@ async function autoAssignTrucks() {
     const items = getEditItems(record);
     const updated = { ...record, lineItems: items };
     try {
-      await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      const result = await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
       // 保存直後にload()で読み直すと反映待ちの間だけ古い内容に巻き戻って見えるため、その場で反映する
       applyLocalRecordUpdate('mgmt', updated);
-      showToast('保存しました');
+      showToast(result && result.queued ? '保存を保留しました。電波が戻り次第、自動的に送信されます' : '保存しました');
       setInvoiceEdits((prev) => { const next = { ...prev }; delete next[record.id]; return next; });
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
   function lineItemAmount(item) {
-    const q = parseFloat(item.qty);
-    const p = parseFloat(item.unitPrice);
+    const q = parseMoneyNum(item.qty);
+    const p = parseMoneyNum(item.unitPrice);
     if (isNaN(q) || isNaN(p)) return 0;
     return q * p;
+  }
+  // 数量・単価のどちらかが入力されているのに数値として読み取れない（金額が0円になっている）行があるか
+  function lineItemHasBadInput(item) {
+    const hasQtyText = (item.qty || '').toString().trim() !== '';
+    const hasPriceText = (item.unitPrice || '').toString().trim() !== '';
+    if (!hasQtyText && !hasPriceText) return false;
+    return isNaN(parseMoneyNum(item.qty)) || isNaN(parseMoneyNum(item.unitPrice));
   }
 
   function tryUnlockInvoiceTab() {
@@ -4649,9 +4676,9 @@ async function autoAssignTrucks() {
   async function dismissInvoiceItem(record) {
     const updated = { ...record, invoiceDismissed: true };
     try {
-      await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      const result = await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
       applyLocalRecordUpdate('mgmt', updated);
-      showToast('請求の確認待ちから外しました');
+      showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に反映されます' : '請求の確認待ちから外しました');
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
@@ -4659,9 +4686,9 @@ async function autoAssignTrucks() {
     const updated = { ...record };
     delete updated.invoiceDismissed;
     try {
-      await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
+      const result = await storage.set(`mgmt:${record.id}`, JSON.stringify(updated));
       applyLocalRecordUpdate('mgmt', updated);
-      showToast('確認待ちに戻しました');
+      showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に反映されます' : '確認待ちに戻しました');
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
@@ -4680,15 +4707,18 @@ async function autoAssignTrucks() {
     const name = invoiceAddName.trim();
     if (!name) { showToast('現場名を入力してください'); return; }
     const date = invoiceAddDate || todayStr();
+    // 同じ現場名・同じ日で既に管理表に記録がないか確認する（うっかり二重請求になるのを防ぐ）
+    const dupExists = mgmtRecords.some((r) => r.name.trim() === name && r.date === date);
+    if (dupExists && !window.confirm(`「${name}」（${date}）は管理表に既に記録があります。それでも別の請求項目として追加しますか？`)) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
       id, name, kumiten: invoiceKumiten, date, status: invoiceAddStatus,
-      staff: deviceStaff || '', items: '', lineItems: [], photos: [], supervisorName: '',
+      staff: deviceStaff || '', items: '', lineItems: [], photos: [], supervisorName: '', createdAt: Date.now(),
     };
     try {
-      await storage.set(`mgmt:${id}`, JSON.stringify(record));
+      const result = await storage.set(`mgmt:${id}`, JSON.stringify(record));
       applyLocalRecordUpdate('mgmt', record);
-      showToast('請求の項目を追加しました');
+      showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に送信されます' : '請求の項目を追加しました');
       setInvoiceMonth(date.slice(0, 7));
       setShowInvoiceAddSite(false);
       setInvoiceAddName('');
@@ -4702,13 +4732,14 @@ async function autoAssignTrucks() {
   invoiceRecords.forEach((r) => {
     if (!invoiceBySite[r.name]) invoiceBySite[r.name] = { name: r.name, items: [] };
     (r.lineItems || []).forEach((it) => {
-      const q = parseFloat(it.qty); const p = parseFloat(it.unitPrice);
+      const q = parseMoneyNum(it.qty); const p = parseMoneyNum(it.unitPrice);
       const amount = (isNaN(q) || isNaN(p)) ? 0 : q * p;
-      invoiceBySite[r.name].items.push({ ...it, amount, date: r.date });
+      invoiceBySite[r.name].items.push({ ...it, amount, date: r.date, recordId: r.id });
     });
   });
   const invoiceRows = Object.values(invoiceBySite)
     .filter((s) => s.items.length > 0)
+    .map((s) => ({ ...s, items: [...s.items].sort((a, b) => (a.date || '').localeCompare(b.date || '')) })) // 同じ現場名で複数回の記録があっても日付順に並ぶようにする
     .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   const invoiceGrandTotal = invoiceRows.reduce((sum, site) => sum + site.items.reduce((s, it) => s + it.amount, 0), 0);
 
@@ -4722,7 +4753,7 @@ async function autoAssignTrucks() {
 
   function recordAmount(r) {
     return (r.lineItems || []).reduce((s, it) => {
-      const q = parseFloat(it.qty); const p = parseFloat(it.unitPrice);
+      const q = parseMoneyNum(it.qty); const p = parseMoneyNum(it.unitPrice);
       return s + (isNaN(q) || isNaN(p) ? 0 : q * p);
     }, 0);
   }
@@ -5915,6 +5946,11 @@ async function autoAssignTrucks() {
                   <div key={record.id} style={{ ...styles.invoiceRow, ...(highlightedInvoiceId === record.id ? styles.invoiceRowHighlight : {}) }}>
                     <div style={styles.invoiceName}>{record.name}</div>
                     <div style={styles.invoiceMeta}>{record.date}／{record.status}</div>
+                    {record.invoiceDismissed && (
+                      <div style={{ color: '#B08900', fontSize: 11.5, marginBottom: 4 }}>
+                        ⚠️「確認待ち」からは不要にした項目です（金額を入力すれば集計・請求書には反映されます）
+                      </div>
+                    )}
                     {items.map((item, idx) => (
                       <div key={idx} style={styles.lineItemRow}>
                         <input style={styles.lineItemName} placeholder="名称（例：混合）" value={item.name} onChange={(e) => updateInvoiceLineItem(record, idx, 'name', e.target.value)} />
@@ -5923,6 +5959,9 @@ async function autoAssignTrucks() {
                         <input style={styles.lineItemSmall} placeholder="単価" value={item.unitPrice} onChange={(e) => updateInvoiceLineItem(record, idx, 'unitPrice', e.target.value)} inputMode="decimal" />
                         <span style={styles.lineItemAmount}>¥{lineItemAmount(item).toLocaleString()}</span>
                         <button type="button" style={styles.lineItemRemove} onClick={() => removeInvoiceLineItem(record, idx)}>✕</button>
+                        {lineItemHasBadInput(item) && (
+                          <div style={{ color: '#E63946', fontSize: 11.5, width: '100%' }}>⚠️数量・単価が数字として読み取れないため、この行は¥0で計算されています</div>
+                        )}
                       </div>
                     ))}
                     <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
@@ -5943,6 +5982,7 @@ async function autoAssignTrucks() {
                         <div style={styles.invoiceName}>{site.name}</div>
                         {site.items.map((it, i) => (
                           <div key={i} style={styles.invoiceItemLine}>
+                            <span style={{ color: '#8A8A83', fontSize: 11 }}>{it.date}</span>
                             <span>{it.name || '（名称未入力）'}</span>
                             <span>{it.qty}{it.unit}</span>
                             <span>単価¥{it.unitPrice}</span>
@@ -6411,7 +6451,7 @@ async function autoAssignTrucks() {
                 <label style={styles.label}>廃棄物の内訳（立米数メモ）</label>
                 <textarea style={{ ...styles.input, minHeight: 70 }} value={form.items || ''} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="例：木0.8 ケイカル0.1 段ボ0.2 プラ0.1" />
 
-                {editingId && (form.status === '追加' || form.status === '単発') && (() => {
+                {editingId && ryubeiUnlocked && (form.status === '追加' || form.status === '単発') && (() => {
                   const invRecord = mgmtRecords.find((r) => r.id === editingId);
                   if (!invRecord) return null;
                   const items = getEditItems(invRecord);
@@ -6428,6 +6468,9 @@ async function autoAssignTrucks() {
                           <input style={styles.lineItemSmall} placeholder="単価" value={item.unitPrice} onChange={(e) => updateInvoiceLineItem(invRecord, idx, 'unitPrice', e.target.value)} inputMode="decimal" />
                           <span style={styles.lineItemAmount}>¥{lineItemAmount(item).toLocaleString()}</span>
                           <button type="button" style={styles.lineItemRemove} onClick={() => removeInvoiceLineItem(invRecord, idx)}>✕</button>
+                          {lineItemHasBadInput(item) && (
+                            <div style={{ color: '#E63946', fontSize: 11.5, width: '100%' }}>⚠️数量・単価が数字として読み取れないため、この行は¥0で計算されています</div>
+                          )}
                         </div>
                       ))}
                       <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
