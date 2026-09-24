@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-24-169';
+  window.__APP_VERSION__ = '2026-09-24-171';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -512,6 +512,7 @@ const USAGE_GUIDE_TEXT = `■ 監督名・ハウスNoを一括更新
 ■ 伝達のルール
 ・宛先を選べるのは洋子さんの端末だけ。選ばなければ自動的に「全員」宛て
 ・「全員」宛てだと、TODOビューア（洋子・本城・酒井）全員に既読が付くまで表示され続ける
+・特定の1人（本城 or 酒井）だけを宛先にすると、その人と洋子さん以外には一覧にすら出なくなる（本当に他の人には見えない）。宛先本人の画面には「🔒あなただけに表示」と出る（v170まではバッジに出るかどうかだけの違いで、実際は誰でも読めてしまっていた）
 ・他の人が「見た」を押すと✓既読で名前と時刻が表示される
 ・まだ誰も見てないうちに編集すると日時も更新される。誰か見た後に編集すると日時はそのまま
 ・不要になった伝達は「📦アーカイブ」へ（全員共通で消える。未読者がいると確認ダイアログが出る）
@@ -533,6 +534,15 @@ const TODO_RECIPIENTS = ['全員', '本城', '酒井'];
 const DEV_TEAM_TARGET = '本城,酒井';
 function memoTargetsMe(t, me) {
   if (!t.target || t.target === '全員') return true;
+  if (!me) return false;
+  return t.target.split(',').map((s) => s.trim()).includes(me);
+}
+// 宛先を絞った伝達を、宛先以外の人の一覧に「そもそも出さない」ようにするための判定。
+// 送信者（洋子さんの端末＝TODO_TARGET_PICKER_STAFF）は、自分が送った宛先を後から
+// 見返せるよう、宛先に関わらず常に見える（送信者自身が見られなくなると困るため）。
+function memoVisibleToMe(t, me) {
+  if (!t.target || t.target === '全員') return true;
+  if (me === TODO_TARGET_PICKER_STAFF) return true;
   if (!me) return false;
   return t.target.split(',').map((s) => s.trim()).includes(me);
 }
@@ -2037,6 +2047,18 @@ function GenbaTracker() {
 
   const QUICK_TODO_TAGS = ['工程表画像添付', '監督連絡', '社長連絡'];
 
+  // TODO・伝達は複数のスタッフがほぼ同時に同じ項目を操作しうる（例：同じ伝達に
+  // 「見た」を続けて押す等）。手元にある古いコピーをそのまま上書き保存すると、
+  // 直前に他の人が書き込んだ内容（別の人の「見た」記録など）が消えてしまう事故が起きるため、
+  // 保存の直前にサーバーの最新状態を取り直してから合体させる
+  async function fetchFreshTodo(id, fallback) {
+    try {
+      const fresh = await storage.get(`todo:${id}`, true);
+      if (fresh && fresh.value) return JSON.parse(fresh.value);
+    } catch (e) { /* 取得に失敗しても手元のデータで続行 */ }
+    return fallback;
+  }
+
   async function addTodo(overrides) {
     const text = (overrides && overrides.text) || todoText.trim();
     if (!text) return;
@@ -2108,7 +2130,8 @@ function GenbaTracker() {
   async function transferGanttAttachTag(oldId, newRecord) {
     const existing = todos.find((t) => !t.archived && t.text === '工程表画像添付' && t.siteId === oldId);
     if (!existing) return;
-    const next = { ...existing, siteId: newRecord.id, siteName: newRecord.name, date: newRecord.date };
+    const fresh = await fetchFreshTodo(existing.id, existing);
+    const next = { ...fresh, siteId: newRecord.id, siteName: newRecord.name, date: newRecord.date };
     setTodos((prev) => prev.map((x) => (x.id === existing.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
     try { await storage.set(`todo:${existing.id}`, JSON.stringify(next), true); } catch (e) { console.error(e); }
@@ -2119,7 +2142,8 @@ function GenbaTracker() {
 
   // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
   async function toggleImportant(t) {
-    const next = { ...t, important: !t.important };
+    const fresh = await fetchFreshTodo(t.id, t);
+    const next = { ...fresh, important: !t.important };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
@@ -2140,14 +2164,23 @@ function GenbaTracker() {
     // 自分以外の誰かがすでに「見た」を押していたら、その人はもう一度見に来てくれるとは限らないので日時はそのまま。
     // 逆に、まだ自分しか見ていない（＝相手にまだ届いていない）うちに直した場合は、書き直した今の日時に更新する。
     const me = getDeviceStaff();
-    const othersSeen = (t.seenBy || []).some((s) => seenName(s) && seenName(s) !== me);
-    const next = othersSeen ? { ...t, text } : { ...t, text, createdAt: new Date().toISOString() };
+    const fresh = await fetchFreshTodo(t.id, t);
+    const othersSeen = (fresh.seenBy || []).some((s) => seenName(s) && seenName(s) !== me);
+    // 既に他の人が見た後の修正は、その人たちに再通知する手段がないため、
+    // 後から見た人にも「これは見た後に内容が変わった」と分かるように印を付けておく
+    const next = othersSeen
+      ? { ...fresh, text, editedAfterSeen: true, editedAt: new Date().toISOString() }
+      : { ...fresh, text, createdAt: new Date().toISOString() };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
-    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
     setEditingTodoId(null);
     setEditingTodoText('');
-    showToast(othersSeen ? '修正しました' : '修正しました（日時も更新しました）');
+    if (result && result.queued) {
+      showToast('修正を保留しました。電波が戻り次第、自動的に送信されます');
+    } else {
+      showToast(othersSeen ? '修正しました（すでに見た人には「編集済み」の印が付きます）' : '修正しました（日時も更新しました）');
+    }
   }
 
   // 座標だけが入っていて、ちゃんとした住所になっていないものを検出（例：35.331,139.445 など）
@@ -2255,11 +2288,13 @@ function GenbaTracker() {
     return sortedTodosBase().filter((t) => t.todoType !== 'memo');
   }
   function sortedMemos() {
-    return sortedTodosBase().filter((t) => t.todoType === 'memo' && !t.archived);
+    const me = getDeviceStaff();
+    return sortedTodosBase().filter((t) => t.todoType === 'memo' && !t.archived && memoVisibleToMe(t, me));
   }
   // 「📦 アーカイブ」で片付けた伝達（削除はせず、見返せるように残す）
   function archivedMemos() {
-    return sortedTodosBase().filter((t) => t.todoType === 'memo' && t.archived)
+    const me = getDeviceStaff();
+    return sortedTodosBase().filter((t) => t.todoType === 'memo' && t.archived && memoVisibleToMe(t, me))
       .sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || ''));
   }
   // 伝達をアーカイブ／元に戻す。伝達は全員共有の一覧なので、誰かがアーカイブするとみんなの画面からも片付く
@@ -2274,18 +2309,20 @@ function GenbaTracker() {
     if (unseenNames.length > 0) {
       if (!window.confirm(`${unseenNames.join('・')}さんがまだ「見た」を押していません。それでもアーカイブしますか？（アーカイブすると通常の一覧からは見えなくなります。「📦 アーカイブ」からはいつでも見返せます）`)) return;
     }
-    const updated = { ...t, archived: true, archivedAt: new Date().toISOString(), archivedBy: me || '' };
+    const fresh = await fetchFreshTodo(t.id, t);
+    const updated = { ...fresh, archived: true, archivedAt: new Date().toISOString(), archivedBy: me || '' };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
-    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
-    showToast('アーカイブしました（「📦 アーカイブ」からいつでも見返せます）');
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    showToast(result && result.queued ? 'アーカイブを保留しました。電波が戻り次第、自動的に反映されます' : 'アーカイブしました（「📦 アーカイブ」からいつでも見返せます）');
   }
   async function unarchiveMemo(t) {
-    const updated = { ...t, archived: false, archivedAt: '', archivedBy: '' };
+    const fresh = await fetchFreshTodo(t.id, t);
+    const updated = { ...fresh, archived: false, archivedAt: '', archivedBy: '' };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
-    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
-    showToast('伝達に戻しました');
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に反映されます' : '伝達に戻しました');
   }
   // アーカイブの中身を完全に削除する（洋子さんの端末だけに出す。ゴミ箱に30日間残して復元もできるようにする）
   async function deleteArchivedMemo(t) {
@@ -2318,7 +2355,11 @@ function GenbaTracker() {
     const me = getDeviceStaff();
     if (!me) { showToast('先に右上で担当者名を設定してください'); return; }
     if (seenIncludes(t.seenBy, me)) return;
-    const updated = { ...t, seenBy: [...(t.seenBy || []), { name: me, at: new Date().toISOString() }] };
+    // 複数人がほぼ同時に「見た」を押すと、手元の古いコピーに自分の分だけ足して上書き保存してしまい、
+    // 直前に他の人が押した「見た」記録が消えてしまう事故が起きるため、保存直前に最新を取り直してから足す
+    const fresh = await fetchFreshTodo(t.id, t);
+    if (seenIncludes(fresh.seenBy, me)) return; // 取り直した結果、既に自分の分は記録済みだった
+    const updated = { ...fresh, seenBy: [...(fresh.seenBy || []), { name: me, at: new Date().toISOString() }] };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
@@ -2332,6 +2373,12 @@ function GenbaTracker() {
     const target = todos.find((t) => t.id === id);
     setTodos((prev) => prev.filter((t) => t.id !== id));
     lastLocalWriteRef.current = Date.now();
+    // 「✅ やった」はワンタップで確認なしのため、誤タップで現場名・日付などの情報が
+    // 完全に消えてしまわないよう、他の削除と同じくゴミ箱に30日間残す
+    // （動作確認タスクなど自動生成の一部は復元しても意味が薄いが、害はないのでまとめて同じ扱いにする）
+    if (target) {
+      try { await storage.set(`trash:${id}`, JSON.stringify({ ...target, name: target.text, _type: 'todo', deletedAt: new Date().toISOString() }), true); } catch (e) { /* ゴミ箱保存に失敗しても本体の削除は続行 */ }
+    }
     try { await storage.delete(`todo:${id}`, true); } catch (e) { console.error(e); }
     // 動作確認タスクは、完了したことを覚えておかないと次の読み込みでまた作られてしまうので、完了済みリストに記録する
     if (target && target.checkType === 'feature' && target.featureKey) {
@@ -2422,9 +2469,12 @@ function GenbaTracker() {
     setTodoQuickTags([]); setTodoText(''); setTodoSiteName(''); setTodoDate(''); setTodoImportant(false); setTodoTarget('全員'); setShowTargetPicker(false);
   }
 
-  // 対応中マークの切り替え（他の人が同じタスクに重複して手を付けないように）
+  // 対応中マークの切り替え（他の人が同じタスクに重複して手を付けないように）。
+  // これ自体が「重複して手を付けない」ための仕組みなので、なおさら手元の古いコピーへの
+  // 上書きで直前の他の人の操作を消してしまわないよう、保存直前に最新を取り直す
   async function toggleInProgress(t) {
-    const next = t.inProgress ? { ...t, inProgress: false, inProgressBy: '' } : { ...t, inProgress: true, inProgressBy: getDeviceStaff() || '担当者未設定' };
+    const fresh = await fetchFreshTodo(t.id, t);
+    const next = t.inProgress ? { ...fresh, inProgress: false, inProgressBy: '' } : { ...fresh, inProgress: true, inProgressBy: getDeviceStaff() || '担当者未設定' };
     await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
     lastLocalWriteRef.current = Date.now();
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
@@ -2432,11 +2482,14 @@ function GenbaTracker() {
 
   // タスク⇔伝達を後から入れ替える（振り分けを間違えた時用）
   async function switchTodoType(t) {
-    const next = { ...t, todoType: (t.todoType === 'memo') ? 'task' : 'memo' };
-    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    const fresh = await fetchFreshTodo(t.id, t);
+    const next = { ...fresh, todoType: (t.todoType === 'memo') ? 'task' : 'memo' };
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
     lastLocalWriteRef.current = Date.now();
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
-    showToast(next.todoType === 'memo' ? '伝達に移動しました' : 'タスクに移動しました');
+    showToast(result && result.queued
+      ? '保留しました。電波が戻り次第、自動的に反映されます'
+      : (next.todoType === 'memo' ? '伝達に移動しました' : 'タスクに移動しました'));
   }
 
   // TODOから該当の現場を開く（予定表タブに切り替えて編集画面を出す）
@@ -3034,6 +3087,14 @@ async function autoAssignTrucks() {
         next.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         setCachedRecords(next, mgmtRecordsRef.current, kumitenList, todos);
         syncAutoTodos(next, todos);
+        return next;
+      });
+    } else if (prefix === 'todo') {
+      // ゴミ箱からの「伝達」復元など、todo:プレフィックスのレコードはtodos一覧に戻す
+      // （以前はこの分岐が無く、mgmt一覧に誤って混入してしまっていた）
+      setTodos((prev) => {
+        const next = [record, ...prev.filter((t) => t.id !== record.id)];
+        setCachedRecords(schedRecordsRef.current, mgmtRecordsRef.current, kumitenList, next);
         return next;
       });
     } else {
@@ -5503,7 +5564,11 @@ async function autoAssignTrucks() {
                         </div>
                       ) : (
                         <div style={{ fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
-                          {t.important && <span style={styles.importantTag}>⚠️重要</span>}{!iSaw && <span style={styles.newTag}>未確認</span>}{t.text}
+                          {t.important && <span style={styles.importantTag}>⚠️重要</span>}{!iSaw && <span style={styles.newTag}>未確認</span>}{t.editedAfterSeen && <span style={{ ...styles.newTag, background: '#F4A300' }} title="内容が変わっています">✏️編集済み</span>}
+                          {t.target && t.target !== '全員' && me !== TODO_TARGET_PICKER_STAFF && (
+                            <span style={{ ...styles.newTag, background: '#5A5A52' }} title="宛先以外の人には表示されません">🔒あなただけに表示</span>
+                          )}
+                          {t.text}
                         </div>
                       )}
                       {(t.siteName || t.date) && (() => {
