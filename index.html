@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-23-161';
+  window.__APP_VERSION__ = '2026-09-24-164';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -245,8 +245,12 @@ window.addEventListener('beforeunload', (e) => {
 
 
 // ---- 写真は容量が大きいので別の一時保存にする（件数に上限あり） ----
+// 写真は送信前に圧縮済み（最大640px・quality0.55、だいたい数十KB）なので、
+// 端末のlocalStorage容量（通常5〜10MB程度）には十分余裕があり、上限は多めに取れる。
+// 以前は上限3枚だったが、電波の悪い現場で1つの記録に何枚も貼るケース（連棟など）で
+// すぐ上限に達して写真が「送信できません」で消えてしまっていたため、30枚まで拡大。
 const PENDING_PHOTO_QUEUE_KEY = 'etsTrackPendingPhotoQueue';
-const MAX_PENDING_PHOTOS = 3;
+const MAX_PENDING_PHOTOS = 30;
 
 function getPhotoQueue() {
   try { return JSON.parse(localStorage.getItem(PENDING_PHOTO_QUEUE_KEY) || '[]'); } catch (e) { return []; }
@@ -296,16 +300,26 @@ async function attachPhotoToRecord(recordId, staff, url, recordPrefix) {
   return true;
 }
 
+// 30秒ごとのタイマー・online復帰イベント・8秒後の再送タイマーが同時に発火すると、
+// 同じ写真が二重送信されたり、同じ記録への書き込みが競合して片方が消えることがあったため、
+// 同時に1つしか実行しないようロックする。
+let photoRetryRunning = false;
 async function retryPhotoQueue() {
-  const q = getPhotoQueue();
-  for (const item of q) {
-    try {
-      const url = await uploadPhotoDirect(item.dataUrl, item.filename);
-      await attachPhotoToRecord(item.recordId, item.staff, url, item.recordPrefix);
-      removeFromPhotoQueue(item.id);
-    } catch (e) {
-      // 引き続き端末に残しておき、また後で試す
+  if (photoRetryRunning) return;
+  photoRetryRunning = true;
+  try {
+    const q = getPhotoQueue();
+    for (const item of q) {
+      try {
+        const url = await uploadPhotoDirect(item.dataUrl, item.filename);
+        await attachPhotoToRecord(item.recordId, item.staff, url, item.recordPrefix);
+        removeFromPhotoQueue(item.id);
+      } catch (e) {
+        // 引き続き端末に残しておき、また後で試す
+      }
     }
+  } finally {
+    photoRetryRunning = false;
   }
 }
 setInterval(retryPhotoQueue, 30000);
@@ -2077,9 +2091,13 @@ function GenbaTracker() {
   async function migrateLegacyGanttTags() {
     const targets = todos.filter((t) => !t.archived && t.text === '工程表画像添付' && !t.siteId);
     if (targets.length === 0) { showToast('siteIdの無い古いタグは見つかりませんでした（対応不要です）'); return; }
-    if (!window.confirm(`古い「工程表添付」タグ${targets.length}件を確認し、現場が1件だけに絞れるものだけ更新します。よろしいですか？`)) return;
+    // 「同じところが毎回1件出てくるのでは」という不安に答えられるよう、対象の現場名・日付を
+    // 実行前にすべて具体的に見せる（今までは件数しか表示しておらず、何が対象か分からなかった）。
+    const targetList = targets.map((t) => `「${t.siteName || '(現場名不明)'}」${t.date ? '（' + t.date + '）' : ''}`).join('\n');
+    if (!window.confirm(`古い「工程表添付」タグ${targets.length}件を確認し、現場が1件だけに絞れるものだけ更新します。\n\n【対象】\n${targetList}\n\nよろしいですか？`)) return;
     const allRecords = [...schedRecords, ...mgmtRecords];
-    let migrated = 0;
+    const migratedNames = [];
+    const failedNames = []; // サーバー保存に失敗した分（画面上は一時的に更新済みに見えるが、次に開き直すと元に戻る）
     let ambiguous = 0;
     let notFound = 0;
     for (const t of targets) {
@@ -2091,12 +2109,23 @@ function GenbaTracker() {
       const target = candidates[0];
       const next = { ...t, siteId: target.id, siteName: target.name, date: target.date };
       setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
-      try { await storage.set(`todo:${t.id}`, JSON.stringify(next), true); migrated++; } catch (e) { console.error(e); }
+      try {
+        await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+        migratedNames.push(`「${target.name}」${target.date ? '（' + target.date + '）' : ''}`);
+      } catch (e) {
+        console.error(e);
+        // 保存に失敗した分は、画面だけ更新済みに見えて実際は反映されていない状態を防ぐため、元に戻しておく
+        // （次に開き直した時に「また同じ1件が出てきた」となる原因そのものなので、ここで必ず区別する）
+        setTodos((prev) => prev.map((x) => (x.id === t.id ? t : x)));
+        failedNames.push(`「${t.siteName || '(現場名不明)'}」${t.date ? '（' + t.date + '）' : ''}`);
+      }
     }
-    let msg = `${migrated}件のタグにsiteIdを追加しました`;
-    if (ambiguous > 0) msg += `（同名の現場が複数あって特定できず見送った分：${ambiguous}件）`;
-    if (notFound > 0) msg += `（該当する現場が見つからなかった分：${notFound}件）`;
-    showToast(msg);
+    let msg = `${migratedNames.length}件のタグにsiteIdを追加しました`;
+    if (migratedNames.length > 0) msg += `\n【更新した現場】\n${migratedNames.join('\n')}`;
+    if (failedNames.length > 0) msg += `\n\n⚠️保存に失敗した分（電波状況などにより。もう一度お試しください）：\n${failedNames.join('\n')}`;
+    if (ambiguous > 0) msg += `\n（同名の現場が複数あって特定できず見送った分：${ambiguous}件）`;
+    if (notFound > 0) msg += `\n（該当する現場が見つからなかった分：${notFound}件）`;
+    window.alert(msg); // 現場名まで含めた詳しい結果は、消えやすいトーストではなく確実に読めるダイアログで表示する
   }
 
   // 重要マークの切り替え（タスク・伝達どちらでも、そのリストの一番上に固定表示される）
@@ -3046,17 +3075,30 @@ async function autoAssignTrucks() {
   async function runBulkImport() {
     const lines = bulkImportText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
     if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
-    // 同じ現場名・同じ日付の予定がすでにある場合は重複として取り込まない（TimeTreeからの移行と、
-    // すでに手入力済みの新規現場が被って二重登録になるのを防ぐため）。現場名は完全一致のみで判定し、
-    // 似ているだけの別現場を誤ってスキップしないようにする。
-    const existingKeys = new Set(schedRecords.map((r) => `${(r.name || '').trim()}__${r.date || ''}`));
+    setBulkImportBusy(true);
+    const EXPECTED_COLS = 13;
+    // 直前にサーバーの最新データを取り直してから重複チェックする（手元の画面がまだ
+    // 他の端末の最新登録を反映していないことがあるため。単発の新規登録と同じ考え方）。
+    let freshSched = schedRecords;
+    try { freshSched = await storage.listWithValues('sched:'); } catch (e) { /* 取得できなければ手元のデータで続行 */ }
+    const existingKeys = new Set(freshSched.map((r) => `${(r.name || '').trim()}__${r.date || ''}`));
     const records = [];
     let skipped = 0;
-    lines.forEach((line) => {
+    const columnErrors = []; // 列数が想定と違う行（Excelでの列ずれの疑いが強い）
+    const dateErrors = []; // 日付欄が空欄の行（そのまま取り込むと「今日」の予定として紛れ込んでしまう）
+    lines.forEach((line, idx) => {
       const cols = line.split('\t');
       const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, keiTruck, expectedVisits, staff, note] = cols;
       if (!name || name === '現場名') return; // ヘッダー行はスキップ
+      if (cols.length !== EXPECTED_COLS) {
+        columnErrors.push(`${idx + 1}行目「${name}」（${cols.length}列／本来${EXPECTED_COLS}列）`);
+        return;
+      }
       const trimmedName = name.trim();
+      if (!(date || '').trim()) {
+        dateErrors.push(`${idx + 1}行目「${trimmedName}」`);
+        return;
+      }
       const normalizedDate = normalizeDateStr(date);
       if (existingKeys.has(`${trimmedName}__${normalizedDate}`)) { skipped++; return; }
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -3080,9 +3122,25 @@ async function autoAssignTrucks() {
         houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
       });
     });
+    // 列ずれ・日付空欄の行があれば、黙って取り込まず必ず知らせる（このまま進めても該当行は取り込まれない）
+    if (columnErrors.length > 0 || dateErrors.length > 0) {
+      let msg = '取り込めない行があります。\n';
+      if (columnErrors.length > 0) msg += `\n【列数が違う行（Excelでの列ずれの疑いがあります）】\n${columnErrors.join('\n')}\n`;
+      if (dateErrors.length > 0) msg += `\n【日付が空欄の行】\n${dateErrors.join('\n')}\n`;
+      msg += `\nこれらの行を除いて、他の${records.length}件だけ取り込みますか？`;
+      if (!window.confirm(msg)) { setBulkImportBusy(false); return; }
+    }
     if (records.length === 0) {
+      setBulkImportBusy(false);
       showToast(skipped > 0 ? `全て重複のため取り込みませんでした（${skipped}件）` : '取り込めるデータがありませんでした');
       return;
+    }
+    // 列ずれ等のエラーがなかった場合でも、実行前に必ず件数を確認してもらう（他の一括操作と同じ扱いに揃える）
+    if (columnErrors.length === 0 && dateErrors.length === 0) {
+      const confirmMsg = skipped > 0
+        ? `${records.length}件を予定表に取り込みます（重複${skipped}件は自動でスキップ）。よろしいですか？`
+        : `${records.length}件を予定表に取り込みます。よろしいですか？`;
+      if (!window.confirm(confirmMsg)) { setBulkImportBusy(false); return; }
     }
     // 以前は「サーバーへの保存が全部終わるまで」件数入りのトースト（＝完了の合図）を待たせていたため、
     // 件数が多いほど画面にドット（取り込み中…）が出てから実際に「◯件取り込みました」と出るまでが長く感じた。
@@ -3199,10 +3257,28 @@ async function autoAssignTrucks() {
   async function runBulkUpdate() {
     const lines = bulkUpdateText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
     if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
+    const EXPECTED_COLS = 4;
+    const columnErrors = [];
+    let matchCount = 0;
+    lines.forEach((line, idx) => {
+      const cols = line.split('\t');
+      const [name] = cols;
+      if (!name || name === '現場名') return;
+      if (cols.length !== EXPECTED_COLS) {
+        columnErrors.push(`${idx + 1}行目「${name}」（${cols.length}列／本来${EXPECTED_COLS}列）`);
+        return;
+      }
+      matchCount += schedRecords.filter((r) => r.name.trim() === name.trim()).length;
+    });
+    if (columnErrors.length > 0) {
+      if (!window.confirm(`列数が違う行があります（Excelでの列ずれの疑いがあります）。この行は更新されません。\n\n${columnErrors.join('\n')}\n\nこれらの行を除いて進めますか？`)) return;
+    }
+    if (!window.confirm(`予定表の${matchCount}件を更新します。よろしいですか？`)) return;
     setBulkImportBusy(true);
     let updated = 0;
     for (const line of lines) {
       const cols = line.split('\t');
+      if (cols.length !== EXPECTED_COLS) continue;
       const [name, supervisorName, supervisorPhone, houseNumber] = cols;
       if (!name || name === '現場名') continue;
       const matches = schedRecords.filter((r) => r.name.trim() === name.trim());
@@ -3423,7 +3499,7 @@ async function autoAssignTrucks() {
     const source = tab === 'sched' ? schedRecords : mgmtRecords;
     const targets = source.filter((r) => r.date >= bulkFrom && r.date <= bulkTo);
     if (targets.length === 0) { showToast('対象がありません'); return; }
-    if (!window.confirm(`${targets.length}件を削除します。よろしいですか？（ゴミ箱に30日間残ります）`)) return;
+    if (!window.confirm(`【${prefix === 'sched' ? '予定表' : '管理表'}】${bulkFrom}〜${bulkTo}の${targets.length}件を削除します。よろしいですか？（ゴミ箱に30日間残ります）`)) return;
     for (const r of targets) {
       await storage.set(`trash:${r.id}`, JSON.stringify({ ...r, _type: prefix, deletedAt: new Date().toISOString() }), true);
       await storage.delete(`${prefix}:${r.id}`, true);
