@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-25-180';
+  window.__APP_VERSION__ = '2026-09-25-181';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3208,6 +3208,17 @@ async function autoAssignTrucks() {
     // pendingTitleを確定させてentriesに積む（内訳行が見つからなかった時はitemsTextを空文字で確定する）
     function flushPendingTitle(itemsText) {
       if (pendingTitle === null) return;
+      // タイトル行の末尾に「【状態:木完】」のように付けておくと、その1件だけ種類タグを
+      // 個別に指定できる（TimeTreeの色分けに合わせて洋子さんが確認した内容をここに埋め込む用途。
+      // 付いていない行は今まで通り、下で選んだ一括タグがそのまま使われる）
+      let titleRaw = pendingTitle;
+      let entryStatus = '';
+      const statusTagMatch = titleRaw.match(/[　\s]*【状態[:：]([^】]+)】\s*$/);
+      if (statusTagMatch) {
+        entryStatus = statusTagMatch[1].trim();
+        titleRaw = titleRaw.slice(0, statusTagMatch.index).trim();
+      }
+      pendingTitle = titleRaw;
       // 連棟現場など「週2回組みたい」現場の目印として工務店名の前に○/〇を付けることがあるため、
       // 工務店プレフィックスと照合する時だけ一旦外し、現場名には印としてそのまま残す
       const circleMatch = pendingTitle.match(/^([○〇]+)\s*/);
@@ -3228,7 +3239,7 @@ async function autoAssignTrucks() {
         }
       }
       if (!prefixEntry) unmatchedKumiten.push(pendingTitle);
-      entries.push({ date: currentDate, kumiten, name: siteName, items: itemsText || '', rawTitle: pendingTitle, supervisorName });
+      entries.push({ date: currentDate, kumiten, name: siteName, items: itemsText || '', rawTitle: pendingTitle, supervisorName, status: entryStatus });
       pendingTitle = null;
     }
     rawLines.forEach((line) => {
@@ -3294,7 +3305,7 @@ async function autoAssignTrucks() {
         name: e.name,
         kumiten: e.kumiten,
         date: e.date,
-        status: mgmtBulkImportStatus || 'クロス',
+        status: e.status || mgmtBulkImportStatus || 'クロス',
         staff: deviceStaff || '',
         items: e.items,
         supervisorName: e.supervisorName || '',
@@ -7376,9 +7387,9 @@ async function autoAssignTrucks() {
               <button style={styles.closeBtn} onClick={() => setShowMgmtBulkImport(false)}>✕</button>
             </div>
             <div style={styles.exportHint}>
-              Googleカレンダーの「予定を検索」の結果画面をそのまま（日付の見出しごと）コピーして、下に貼り付けてください。工務店名は自動で判定し、「不明」は監督名不明の注記として現場名から取り除きます。「終日、」より後ろの内訳はそのまま管理表のメモ欄に入ります。
+              Googleカレンダーの「予定を検索」の結果画面をそのまま（日付の見出しごと）コピーして、下に貼り付けてください。工務店名は自動で判定し、「不明」は監督名不明の注記として現場名から取り除きます。「終日、」より後ろの内訳はそのまま管理表のメモ欄に入ります。1件だけ種類タグを指定したい場合は、そのタイトル行の末尾に「【状態:木完】」のように付けてください（付けなかった行は下で選んだタグになります）。
             </div>
-            <label style={styles.label}>この内容にまとめて付けるゴミの種類タグ（貼り付ける内容が全部同じ種類の場合はこのまま。違う場合は登録後に一覧から個別に直してください）</label>
+            <label style={styles.label}>種類タグを付けなかった行にまとめて使うゴミの種類タグ（貼り付ける内容が全部同じ種類の場合はこのまま。違う場合は登録後に一覧から個別に直してください）</label>
             <div style={styles.statusGrid}>
               {SCHED_STATUSES.map((s) => (
                 <button
@@ -7413,7 +7424,14 @@ async function autoAssignTrucks() {
                 <div style={{ maxHeight: 260, overflowY: 'auto' }}>
                   {mgmtBulkImportPreview.entries.map((e, i) => (
                     <div key={i} style={{ fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid #F0EFE9' }}>
-                      <div style={{ fontWeight: 700 }}>{e.date}／{e.kumiten}／{e.name}{e.supervisorName ? `／監督：${e.supervisorName}` : ''}</div>
+                      <div style={{ fontWeight: 700 }}>
+                        {e.date}／{e.kumiten}／{e.name}{e.supervisorName ? `／監督：${e.supervisorName}` : ''}
+                        {e.status && (
+                          <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: statusColor(SCHED_STATUSES, e.status), border: `1px solid ${statusColor(SCHED_STATUSES, e.status)}`, borderRadius: 4, padding: '1px 5px' }}>
+                            {e.status}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ color: '#8A8A83' }}>{e.items || '（内訳なし）'}</div>
                     </div>
                   ))}
