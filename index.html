@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-25-181';
+  window.__APP_VERSION__ = '2026-09-26-186';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -505,7 +505,7 @@ const TODO_VIEWERS = ['洋子', '本城', '酒井', '金子'];
 // 宛先を指定できるのは洋子さんの端末だけ（他の人が送る伝達は常に「全員」扱いになり、選ぶ手間自体が発生しない）
 const TODO_TARGET_PICKER_STAFF = '洋子';
 
-const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'その他'];
+const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'レイオン', 'その他'];
 
 // 工務店ごとの請求締め日（社長から確認済みの分だけ。'eom'＝月末、数字＝毎月その日）。
 // 未確認・未指定の工務店はここに含めず、締め日リマインドの対象外にする
@@ -590,6 +590,7 @@ const MGMT_KUMITEN_PREFIXES = [
   ['根本', '根本'],
   ['スキルド', 'スキルド'],
   ['リムクラフト', 'リムクラフト'],
+  ['レイオン', 'レイオン'],
 ].sort((a, b) => b[0].length - a[0].length);
 
 // オープンハウス・アーキテクト（OHA）の監督名簿。マニフェスト検索を楽にするため、
@@ -1382,6 +1383,36 @@ function GenbaTracker() {
     setExpandedPhotoId((prev) => (prev === id ? null : id));
   }
   useEffect(() => { setExpandedPhotoId(null); }, [tab]);
+  // すぐるさんの要望：予定表から工務店側の施工管理アプリをすぐ開けるようにする。
+  // どの工務店がどのアプリを使うかはすぐるさんに確認済み（2026-09-25時点）。
+  // 「OHD」はアーキテクトジャンプに含めない、と洋子さんから明示的に指示あり（対象はOHAのみ）。
+  const [expandedAppsId, setExpandedAppsId] = useState(null);
+  function toggleAppsExpand(id) {
+    setExpandedAppsId((prev) => (prev === id ? null : id));
+  }
+  useEffect(() => { setExpandedAppsId(null); }, [tab]);
+  // 各アプリのURLは実際に開いて確認済み（2026-09-25）。ANDPADとKizukuはログイン画面まで
+  // 直接開けることを確認できたが、現場PlusとArchitect Jumpはログイン画面の公開URLが
+  // 見つからず、公式の紹介ページどまりになっている（すぐるさんに確認をお願いしたい）。
+  const EXTERNAL_SITE_APPS = [
+    { key: 'genbaplus', label: '現場Plus', url: 'https://www.kensetsu-cloud.jp/genbaplus/' },
+    { key: 'architectjump', label: 'Architect Jump', url: 'https://oha.openhouse-group.com/architect-jump/' },
+    { key: 'andpad', label: 'ANDPAD', url: 'https://andpad.jp/login' },
+    { key: 'kizuku', label: 'Kizuku', url: 'https://kizuku2.ctx.co.jp/' },
+  ];
+  const KUMITEN_APP_KEY = {
+    'アオイ': 'genbaplus',
+    'ひかり': 'genbaplus',
+    'アール': 'genbaplus',
+    'OHA': 'architectjump',
+    'メルディア': 'andpad',
+    'レイオン': 'andpad',
+    'ケイアイ': 'kizuku',
+  };
+  function getAppsForKumiten(kumiten) {
+    const key = KUMITEN_APP_KEY[kumiten];
+    return key ? EXTERNAL_SITE_APPS.filter((a) => a.key === key) : [];
+  }
   const [showBulkDelete, setShowBulkDelete] = useState(false);
   const [bulkFrom, setBulkFrom] = useState('');
   const [bulkTo, setBulkTo] = useState('');
@@ -2839,7 +2870,9 @@ async function autoAssignTrucks() {
     setShowForm(true);
   }
 
-  // 「移動」＝新しい日付の予定を作って保存した時点で、元の予定は自動的にゴミ箱行き（30日間は復元可能）にする。
+  // 予定表の「移動」＝新しい日付の予定を作って保存した時点で、元の予定は自動的にゴミ箱行き（30日間は復元可能）にする。
+  // ただし管理表は数量などを後から見返すために元のデータを残しておきたいため、管理表からの実行は
+  // 「コピー」扱いにして元のレコードをゴミ箱に送らない（saveRecord()側でprefix==='mgmt'かどうかで分岐、2026-09-26）。
   // form の _moveFromId に元のレコードIDを覚えておき、saveRecord() 側で保存成功後に処理する。
   function duplicateRecord(r, dayOffset = 7) {
     const { id, createdAt, photos, ...rest } = r;
@@ -3006,7 +3039,12 @@ async function autoAssignTrucks() {
     }
     try {
       const result = await storage.set(`${prefix}:${id}`, JSON.stringify(record), true);
-      if (_moveFromId && _moveFromId !== id) {
+      if (_moveFromId && _moveFromId !== id && prefix === 'mgmt') {
+        // 管理表は数量などを後から見返すために使うので、「移動」してもゴミ箱には送らず、
+        // その日の管理表にそのまま残す（洋子さんの指示：2026-09-26）。工程表添付タグの
+        // 付け替えも、元のレコードが消えない以上ここでは行わない
+        showToast(result.queued ? '登録を保留しました。電波が戻り次第、自動的に送信されます' : 'コピーを登録しました（元の管理表はそのまま残っています）');
+      } else if (_moveFromId && _moveFromId !== id) {
         const trashedRecord = await moveOriginalToTrash(prefix, _moveFromId);
         await transferGanttAttachTag(_moveFromId, record);
         if (trashedRecord && !result.queued) {
@@ -5275,8 +5313,8 @@ async function autoAssignTrucks() {
                   <div style={styles.actionRow} onClick={(e) => e.stopPropagation()}>
                     <button style={styles.editOpenBtn} onClick={() => openEdit(r)}>✏️ 開いて編集</button>
                     {tab === 'sched' && <button style={styles.handoffBtn} onClick={() => handoffToMgmt(r)}>→ 今日の管理表を作成</button>}
-                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 移動（1週間後）</button>
-                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 移動（連棟・数日後）</button>
+                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 7)}>📋 {tab === 'mgmt' ? 'コピー（1週間後）' : '移動（1週間後）'}</button>
+                    <button style={styles.dupBtn} onClick={() => duplicateRecord(r, 3)}>📋 {tab === 'mgmt' ? 'コピー（連棟・数日後）' : '移動（連棟・数日後）'}</button>
                     {/* 写真を貼るのは主に工程表で使う現場だけで、貼らない現場の方が多い。
                         写真が0枚のうちは専用の帯（枠線・余白つき）を出さず、他のボタンと同じ
                         1行に収まる小さいボタンにして、縦のスペースを取らないようにする。 */}
@@ -5297,8 +5335,32 @@ async function autoAssignTrucks() {
                         📷 {(r.photos || []).length}枚 {expandedPhotoId === r.id ? '▲閉じる' : '▼開く'}
                       </button>
                     )}
+                    {tab === 'sched' && getAppsForKumiten(r.kumiten).length === 1 && (
+                      <a
+                        href={getAppsForKumiten(r.kumiten)[0].url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ ...styles.dupBtn, textDecoration: 'none', display: 'inline-block' }}
+                      >
+                        🔗 {getAppsForKumiten(r.kumiten)[0].label}を開く
+                      </a>
+                    )}
+                    {tab === 'sched' && getAppsForKumiten(r.kumiten).length > 1 && (
+                      <button type="button" style={styles.dupBtn} onClick={() => toggleAppsExpand(r.id)}>
+                        🔗 工務店アプリ {expandedAppsId === r.id ? '▲閉じる' : '▼開く'}
+                      </button>
+                    )}
                   </div>
                 </div>
+                {tab === 'sched' && expandedAppsId === r.id && getAppsForKumiten(r.kumiten).length > 1 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '6px 0 2px' }} onClick={(e) => e.stopPropagation()}>
+                    {getAppsForKumiten(r.kumiten).map((app) => (
+                      <a key={app.key} href={app.url} target="_blank" rel="noopener noreferrer" style={{ ...styles.dupBtn, textDecoration: 'none', display: 'inline-block' }}>
+                        {app.label}
+                      </a>
+                    ))}
+                  </div>
+                )}
                 {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && expandedPhotoId === r.id && (
                   <div style={styles.photoThread}>
                     {(r.photos || []).map((p, i) => (
