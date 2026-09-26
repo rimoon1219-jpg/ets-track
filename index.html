@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-26-189';
+  window.__APP_VERSION__ = '2026-09-27-191';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1617,6 +1617,12 @@ function GenbaTracker() {
   const [mgmtBulkImportBusy, setMgmtBulkImportBusy] = useState(false);
   const [mgmtBulkImportPreview, setMgmtBulkImportPreview] = useState(null);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
+  // 「📧メール抽出チェック」：毎朝自動実行のメール整理タスクが作るTSV（工務店転送分のみ、
+  // 社長個人宛のマニフェスト直送メモは含めない）を貼り付けると、予定表・管理表とその場で
+  // 突き合わせて「メールにはあるがまだ登録されていない現場」だけを拾い出す機能。
+  // すぐる・シオンが工程を組んだ後の見落とし防止チェックとして使う（本体データは書き換えない）。
+  const [mailCheckText, setMailCheckText] = useState('');
+  const [mailCheckResults, setMailCheckResults] = useState(null);
   const [bulkUpdateText, setBulkUpdateText] = useState('');
   const [deviceStaff, setDeviceStaffState] = useState(getDeviceStaff());
   // 担当者名が未設定の端末では、他の画面を一切見せずに最初に名前を入力してもらう（誰が入力したか必ず分かるようにするため）
@@ -3294,6 +3300,60 @@ async function autoAssignTrucks() {
     runWithLimit(records, 1, async (record) => {
       await storage.set(`sched:${record.id}`, JSON.stringify(record));
     }).catch(() => {});
+  }
+
+  // 「📧メール抽出チェック」：現場名が予定表・管理表のどこかに（日付が違っても）すでに
+  // 存在するかどうかだけを見る、ゆるい表記ゆれ対応の照合（虎の巻の自動アーカイブ判定と同じ考え方）。
+  // ここでは本体データは一切書き換えない（見るだけ）。
+  function findExistingMatchesForMailName(rawName) {
+    const trimmed = (rawName || '').trim();
+    if (!trimmed) return [];
+    const norm = normalizeForCompare(trimmed);
+    const all = [
+      ...schedRecords.map((r) => ({ ...r, _src: '予定表' })),
+      ...mgmtRecords.map((r) => ({ ...r, _src: '管理表' })),
+    ];
+    return all.filter((r) => {
+      const rn = (r.name || '').trim();
+      if (!rn) return false;
+      if (rn === trimmed) return true;
+      const rnorm = normalizeForCompare(rn);
+      if (!rnorm || !norm) return false;
+      if (rnorm === norm) return true;
+      const shorter = norm.length <= rnorm.length ? norm : rnorm;
+      const longer = norm.length <= rnorm.length ? rnorm : norm;
+      return shorter.length >= 4 && longer.includes(shorter);
+    });
+  }
+
+  // 毎朝自動実行のメール整理タスクが作る13列TSV（工務店転送分。予定表の一括インポートと
+  // 同じ列構成）を貼り付けて、予定表・管理表とその場で突き合わせるだけの機能。
+  // 実際に追加する時は、既存の「予定表→＋追加→一括インポート」にこのまま貼り付ければよい
+  // （あちらは日付まで含めた重複チェック・列ずれチェックを既に持っているため、ここでは重複させない）。
+  function runMailCheck() {
+    const lines = mailCheckText.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim().length > 0);
+    if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
+    const EXPECTED_COLS = 13;
+    const rows = [];
+    lines.forEach((line) => {
+      const cols = line.split('\t');
+      const name = (cols[0] || '').trim();
+      if (!name || name === '現場名') return; // ヘッダー行はスキップ
+      rows.push({
+        raw: line,
+        name,
+        kumiten: (cols[1] || '').trim(),
+        date: (cols[3] || '').trim(),
+        status: (cols[5] || '').trim(),
+        supervisorName: (cols[6] || '').trim(),
+        note: (cols[12] || '').trim(),
+        colCount: cols.length,
+        colMismatch: cols.length !== EXPECTED_COLS,
+        matches: findExistingMatchesForMailName(name),
+      });
+    });
+    if (rows.length === 0) { showToast('現場の行が見つかりませんでした（ヘッダー行だけ貼り付けていませんか？）'); return; }
+    setMailCheckResults(rows);
   }
 
   function copyUpdateTemplate() {
@@ -5072,7 +5132,7 @@ async function autoAssignTrucks() {
           <div style={styles.brand}>ETS TRACK</div>
           <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
           <div style={styles.brandSub}>
-            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'todo' ? 'TODO・伝達（新規入力スタッフ用）' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
+            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'todo' ? 'TODO・伝達（新規入力スタッフ用）' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : tab === 'mailcheck' ? 'メール抽出データと予定表・管理表の突き合わせ' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
             {!loading && syncingFromCache && (tab === 'sched' || tab === 'mgmt') && (
               <span style={styles.syncingTag}>🔄 最新件数を確認中…</span>
             )}
@@ -5130,6 +5190,7 @@ async function autoAssignTrucks() {
         <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
+        <button onClick={() => setTab('mailcheck')} style={{ ...styles.tabBtn, ...(tab === 'mailcheck' ? styles.tabBtnActive : {}) }}>📧メール</button>
         <button onClick={() => tryUnlockTodoTab('all')} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
           🔒TODO
           {todoUnlocked && (() => {
@@ -5169,7 +5230,7 @@ async function autoAssignTrucks() {
         </div>
       )}
 
-      {tab !== 'dispatch' && tab !== 'todo' && tab !== 'invoice' && tab !== 'gantt' && (
+      {tab !== 'dispatch' && tab !== 'todo' && tab !== 'invoice' && tab !== 'gantt' && tab !== 'mailcheck' && (
         <>
           <div style={styles.searchBox}>
             <SiteNameAutocomplete
@@ -5335,10 +5396,13 @@ async function autoAssignTrucks() {
                   ) : (
                     <div style={styles.cardName}>{r.name}</div>
                   )}
-                  {tab === 'sched' && (r.address || r.supervisorName || r.supervisorPhone) && (
+                  {tab === 'sched' && (r.address || r.supervisorName || r.supervisorPhone || getAppsForKumiten(r.kumiten).length > 0) && (
                     // 住所と監督名・電話番号は、以前は別々の行で表示していたためカードの縦の高さが
                     // その分だけ増えていた。1行にまとめ、監督名・電話番号は marginLeft: 'auto' で
                     // 右側に寄せることで、カード全体を縦に詰められるようにした。
+                    // 工務店アプリ（Kizukuなど）へのリンクも、以前は下のボタン列に置いていたが、
+                    // ボタンが多い現場だとそれだけでボタン列が2段になり縦に伸びてしまっていたため、
+                    // まだ余裕のあるこの行（📍地図と同じ「外部を開く」系リンク）に移した。
                     <div style={styles.addrRow}>
                       {r.address && (
                         <React.Fragment>
@@ -5353,6 +5417,26 @@ async function autoAssignTrucks() {
                             🗺 地図
                           </a>
                         </React.Fragment>
+                      )}
+                      {getAppsForKumiten(r.kumiten).length === 1 && (
+                        <a
+                          href={getAppsForKumiten(r.kumiten)[0].url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={styles.mapOpenBtn}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          🔗 {getAppsForKumiten(r.kumiten)[0].label}を開く
+                        </a>
+                      )}
+                      {getAppsForKumiten(r.kumiten).length > 1 && (
+                        <button
+                          type="button"
+                          style={{ ...styles.mapOpenBtn, cursor: 'pointer' }}
+                          onClick={(e) => { e.stopPropagation(); toggleAppsExpand(r.id); }}
+                        >
+                          🔗 工務店アプリ {expandedAppsId === r.id ? '▲閉じる' : '▼開く'}
+                        </button>
                       )}
                       {(r.supervisorName || r.supervisorPhone) && (
                         <span style={styles.supervisorInline}>
@@ -5432,21 +5516,6 @@ async function autoAssignTrucks() {
                     {(tab === 'sched' || tab === 'mgmt') && (r.photos || []).length > 0 && (
                       <button type="button" style={styles.dupBtn} onClick={() => togglePhotoExpand(r.id)}>
                         📷 {(r.photos || []).length}枚 {expandedPhotoId === r.id ? '▲閉じる' : '▼開く'}
-                      </button>
-                    )}
-                    {tab === 'sched' && getAppsForKumiten(r.kumiten).length === 1 && (
-                      <a
-                        href={getAppsForKumiten(r.kumiten)[0].url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ ...styles.dupBtn, textDecoration: 'none', display: 'inline-block' }}
-                      >
-                        🔗 {getAppsForKumiten(r.kumiten)[0].label}を開く
-                      </a>
-                    )}
-                    {tab === 'sched' && getAppsForKumiten(r.kumiten).length > 1 && (
-                      <button type="button" style={styles.dupBtn} onClick={() => toggleAppsExpand(r.id)}>
-                        🔗 工務店アプリ {expandedAppsId === r.id ? '▲閉じる' : '▼開く'}
                       </button>
                     )}
                   </div>
@@ -5647,6 +5716,76 @@ async function autoAssignTrucks() {
           />
         );
       })()}
+
+      {tab === 'mailcheck' && (
+        <div style={{ padding: '0 12px 24px' }}>
+          <div style={{ fontSize: 13, color: '#6B6B60', lineHeight: 1.6, marginBottom: 10 }}>
+            毎朝自動で作られる「メール抽出」TSV（工務店転送分）をそのまま貼り付けてください。
+            予定表・管理表に現場名がまだ無いものだけを拾い出します（貼り付けても予定表・管理表は変更されません）。
+            実際に追加する時は、下の結果に出た行をコピーして「予定表→＋追加→一括インポート」に貼り付けてください。
+          </div>
+          <textarea
+            style={{ ...styles.input, minHeight: 140, fontSize: 12 }}
+            placeholder={'現場名\t工務店\t住所\t日付\t時刻\tステータス\t監督名\t監督電話\tガラ\t軽トラ指定\t想定回数\t担当\tメモ\n...'}
+            value={mailCheckText}
+            onChange={(e) => setMailCheckText(e.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 16 }}>
+            <button style={styles.saveBtn} onClick={runMailCheck}>照合する</button>
+            {mailCheckResults && (
+              <button style={styles.linkBtn} onClick={() => { setMailCheckText(''); setMailCheckResults(null); }}>クリア</button>
+            )}
+          </div>
+
+          {mailCheckResults && (() => {
+            const missing = mailCheckResults.filter((r) => r.matches.length === 0);
+            const found = mailCheckResults.filter((r) => r.matches.length > 0);
+            return (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                  全{mailCheckResults.length}件中、未登録の疑いあり {missing.length}件
+                </div>
+                {missing.length === 0 && (
+                  <div style={{ ...styles.empty, marginBottom: 16 }}>全て予定表・管理表のどこかに見つかりました。</div>
+                )}
+                {missing.map((r, i) => (
+                  <div key={i} style={{ background: '#FDEAEA', border: '1px solid #F3C6C6', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>❌ {r.name}</div>
+                    <div style={{ fontSize: 12.5, color: '#555', marginTop: 4 }}>
+                      工務店：{r.kumiten || '（空欄）'} ／ 日付：{r.date || '（空欄）'} ／ 内容：{r.status || '（空欄）'}
+                      {r.supervisorName && <> ／ 監督：{r.supervisorName}</>}
+                    </div>
+                    {r.note && <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>メモ：{r.note}</div>}
+                    {r.colMismatch && (
+                      <div style={{ fontSize: 11.5, color: '#B00020', marginTop: 4 }}>⚠️ この行は{r.colCount}列（本来13列）です。列がずれている可能性があります</div>
+                    )}
+                    <button
+                      style={{ ...styles.linkBtn, marginTop: 6, fontSize: 12 }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(r.raw)
+                          .then(() => showToast('この行をコピーしました。一括インポートに貼り付けてください'))
+                          .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
+                      }}
+                    >
+                      この行をコピー
+                    </button>
+                  </div>
+                ))}
+                {found.length > 0 && (
+                  <details style={{ marginTop: 12 }}>
+                    <summary style={{ fontSize: 12.5, color: '#6B6B60', cursor: 'pointer' }}>すでに見つかったもの（{found.length}件）</summary>
+                    {found.map((r, i) => (
+                      <div key={i} style={{ fontSize: 12, color: '#555', padding: '6px 4px', borderBottom: '1px solid #EEE' }}>
+                        ✅ {r.name} → {r.matches.map((m) => `${m._src}「${m.name}」(${m.date})`).join(' / ')}
+                      </div>
+                    ))}
+                  </details>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {tab === 'todo' && (() => {
         // 表示のたびに一覧の並べ替えや不足チェックを何度も計算し直していたのが、
