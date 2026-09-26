@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-26-186';
+  window.__APP_VERSION__ = '2026-09-26-188';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -173,15 +173,29 @@ async function sendToServer(body) {
 // ここで最終書き込み時刻を記録しておき、個別の保存処理（saveRecordなど）で書き忘れても
 // 自動更新側で必ずガードできるようにする。
 let lastWriteAt = 0;
-async function reliableSend(body) {
+// 「保存が電波不良などで遅れて、未送信のまま端末に残り続け、電波が戻った時にようやく送信される」
+// ケースで、その間に他の人が同じデータに行った変更（アーカイブにした、既読にした、など）を
+// 巻き戻して上書きしてしまう事故があった（2026/9/26発覚）。
+// 原因：未送信キューには「変更しようとした後の内容(value)」がそのまま丸ごと入っており、
+// 実際に送信される時（＝それが最新かどうか分からない、ずっと後になることもある）にも
+// そのまま送られてしまい、待っている間に入った他の変更を上書きしてしまっていた。
+// 対策：キューに入れる時、あわせて「変更しようとする前の内容(baseline)」も一緒に控えておく。
+// 実際に送信する直前（初回はほぼ即座なのでそのまま送るが、再送信の時は必ず）に、
+// baselineとvalueを比べて「本当に変えようとしたフィールドだけ」を洗い出し、
+// その時点の最新のサーバー内容の上にそのフィールドだけを重ねてから送るようにする。
+async function reliableSend(body, baseline) {
   lastWriteAt = Date.now();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const item = { id, body, createdAt: Date.now() };
+  const item = { id, body, baseline: baseline ? JSON.stringify(baseline) : null, createdAt: Date.now() };
   const q = getQueue();
   q.push(item);
   saveQueueToDisk(q);
   notifyPendingChange();
   try {
+    // 初回の送信は、直前に呼び出し元がサーバーの最新状態を取り直した上で内容を組み立てているのが
+    // ほとんどのため、ここで毎回サーバーに確認を取り直すと保存のたびに通信が1往復増えて遅くなる。
+    // ズレが問題になるのは「未送信のまま時間が経ってから再送信される」時なので、
+    // そのケースは下のretryQueue側でだけ、送信直前に必ず最新と突き合わせ直す。
     const result = await sendToServer(body);
     // サーバー側が明示的に失敗（{ok:false}）を返してきた場合（例：他の書き込みと重なって
     // ロックが取れなかった等）も、これまではfetch自体が例外を投げない限り「成功」として
@@ -215,11 +229,37 @@ function scheduleRetry() {
   }, 8000);
 }
 
+// 未送信キューの中身を、実際に送信する直前にサーバーの最新内容と突き合わせ直す。
+// baseline（変更前の内容）が無い場合（新規作成や削除など）はそのまま送る。
+// 何か問題が起きた場合も、元の内容のまま送る（安全側に倒す＝今まで通りの動作に留める）。
+async function resolveFreshSetBody(item) {
+  const body = item.body;
+  if (!body || body.action !== 'set' || !item.baseline) return body;
+  try {
+    const baseline = JSON.parse(item.baseline);
+    const intended = JSON.parse(body.value);
+    const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(body.key)}`);
+    const data = await res.json();
+    if (!data || !data.found) return body; // サーバー側に無ければ（削除済みなど）そのまま送る
+    const current = JSON.parse(data.value);
+    const merged = { ...current };
+    // 「変更しようとする前」と「変更しようとした後」を比べて、実際に変えたかったフィールドだけを
+    // 今の最新内容の上に重ねる（変えていないフィールドは、待っている間の他の変更をそのまま尊重する）
+    Object.keys(intended).forEach((k) => {
+      if (JSON.stringify(intended[k]) !== JSON.stringify(baseline[k])) merged[k] = intended[k];
+    });
+    return { action: 'set', key: body.key, value: JSON.stringify(merged) };
+  } catch (e) {
+    return body;
+  }
+}
+
 async function retryQueue() {
   const q = getQueue();
   for (const item of q) {
     try {
-      const result = await sendToServer(item.body);
+      const bodyToSend = await resolveFreshSetBody(item);
+      const result = await sendToServer(bodyToSend);
       if (result && result.ok === false) { scheduleRetry(); continue; } // サーバーがまだ失敗を返す場合は残して次回に回す
       removeFromQueue(item.id);
     } catch (e) {
@@ -373,8 +413,12 @@ const storage = {
     if (!data.found) throw new Error('not found: ' + key);
     return { key: data.key, value: data.value };
   },
-  async set(key, value) {
-    const r = await reliableSend({ action: 'set', key, value });
+  // baseline（省略可）：この変更を組み立てる直前に取得していた「変更前の内容」。
+  // 渡しておくと、電波不良などで送信が遅れて後から再送信される時に、待っている間に
+  // 他の人が行った変更を巻き戻して上書きしてしまわないよう、実際に変えたフィールドだけを
+  // その時点の最新内容の上に重ねてから送るようになる（reliableSend／retryQueue参照）。
+  async set(key, value, _retry, baseline) {
+    const r = await reliableSend({ action: 'set', key, value }, baseline);
     return { key, value, queued: !r.ok };
   },
   async delete(key) {
@@ -1358,6 +1402,12 @@ function GenbaTracker() {
   const [loading, setLoading] = useState(true);
   // 起動直後、前回のキャッシュを即表示している間だけtrue。件数が古い可能性があることに気づけるよう表示する
   const [syncingFromCache, setSyncingFromCache] = useState(false);
+  // 「最新データの取得（load()の本体部分）」が失敗した回数。0でなければ、今画面に出ている
+  // 予定表・管理表・伝達は、端末に残っていた前回分（古い可能性がある）のままになっている。
+  // 以前はここで失敗しても画面には何も出さず、古いデータがそのまま正しいものとして表示され続けて
+  // しまっていた（2026/9/26発覚：伝達が消えて見えた・アーカイブが戻って見えた原因の一つ）。
+  const [loadErrorCount, setLoadErrorCount] = useState(0);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
   const [toast, setToast] = useState('');
   // 「移動」を実行した直後だけセットされ、15秒間だけ「元に戻す」ボタンを出すための情報
   // { prefix, trashedRecord（元のレコードそのもの）, newRecordId（移動後の新しいレコードID） }
@@ -1922,39 +1972,61 @@ function GenbaTracker() {
       // サーバー側の一時的な取りこぼし（通信が不安定なタイミングでの部分的な失敗）を疑って
       // もう一度だけ静かに取り直してから確定する。実際に大量削除した直後などは、
       // 取り直しても同じ（少ない）件数のままなので、その場合はそのまま正しい件数として扱う。
-      const cachedForSanity = getCachedRecords();
-      async function fetchGroup(prefix, prevCount) {
-        let items = await storage.listWithValues(`${prefix}:`);
-        if (prevCount >= 5 && items.length < prevCount * 0.7) {
-          await sleep(800);
-          const retry = await storage.listWithValues(`${prefix}:`);
-          if (retry.length > items.length) items = retry;
-        }
-        return items;
+      //
+      // 以前は、この一番肝心な部分（予定表・管理表・伝達を実際に取ってきて画面に反映する処理）が
+      // 何らかの理由で失敗した時、外側のcatchで静かにもみ消され、setLoading(false)だけが実行されて
+      // 「読み込み中…」の表示が消え、画面には前回起動時のキャッシュがそのまま、さも最新のように
+      // 表示され続けてしまっていた（2026/9/26発覚：ある端末だけ伝達・予定表が古いまま／
+      // アーカイブが戻って見える、という不具合の実体はこれだった）。ここだけ専用のtry/catchにして、
+      // 失敗したら「画面が古いかもしれない」とはっきり分かるバッジを出すようにする。
+      let freshLoadOk = false;
+      let sItems = schedRecordsRef.current || [];
+      let mItems = mgmtRecordsRef.current || [];
+      let tItems = todos;
+      try {
+        const cachedForSanity = getCachedRecords();
+        const fetchGroup = async (prefix, prevCount) => {
+          let items = await storage.listWithValues(`${prefix}:`);
+          if (prevCount >= 5 && items.length < prevCount * 0.7) {
+            await sleep(800);
+            const retry = await storage.listWithValues(`${prefix}:`);
+            if (retry.length > items.length) items = retry;
+          }
+          return items;
+        };
+        const results = await Promise.all([
+          fetchGroup('sched', ((cachedForSanity && cachedForSanity.sched) || []).length),
+          fetchGroup('mgmt', ((cachedForSanity && cachedForSanity.mgmt) || []).length),
+          fetchGroup('todo', ((cachedForSanity && cachedForSanity.todos) || []).length),
+        ]);
+        sItems = results[0]; mItems = results[1]; tItems = results[2];
+        // 同じ日付の現場が複数ある場合、並び替えの基準が日付だけだと、裏側の自動更新のたびに
+        // 順番が入れ替わって画面がガクッと動いて見えることがあった（id を並び順のタイブレークに
+        // 使うことで、同じ日付内は常に同じ順番になり、自動更新で並びが変わらないようにする）。
+        sItems.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.id || '').localeCompare(b.id || ''));
+        setSchedRecords(sItems);
+
+        mItems.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.id || '').localeCompare(b.id || ''));
+        setMgmtRecords(mItems);
+
+        tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || (a.id || '').localeCompare(b.id || ''));
+        setTodos(tItems);
+        syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
+        freshLoadOk = true;
+        setLoadErrorCount(0);
+        setLastSyncAt(Date.now());
+      } catch (e) {
+        console.error('load()の本体（予定表・管理表・伝達の取得）に失敗:', e);
+        setLoadErrorCount((n) => n + 1);
       }
-      const [sItems, mItems, tItems] = await Promise.all([
-        fetchGroup('sched', ((cachedForSanity && cachedForSanity.sched) || []).length),
-        fetchGroup('mgmt', ((cachedForSanity && cachedForSanity.mgmt) || []).length),
-        fetchGroup('todo', ((cachedForSanity && cachedForSanity.todos) || []).length),
-      ]);
-      // 同じ日付の現場が複数ある場合、並び替えの基準が日付だけだと、裏側の自動更新のたびに
-      // 順番が入れ替わって画面がガクッと動いて見えることがあった（id を並び順のタイブレークに
-      // 使うことで、同じ日付内は常に同じ順番になり、自動更新で並びが変わらないようにする）。
-      sItems.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.id || '').localeCompare(b.id || ''));
-      setSchedRecords(sItems);
-
-      mItems.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.id || '').localeCompare(b.id || ''));
-      setMgmtRecords(mItems);
-
-      tItems.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || (a.id || '').localeCompare(b.id || ''));
-      setTodos(tItems);
-      syncAutoTodos(sItems, tItems); // 大量の片付けが必要な場合でも画面が固まらないよう、待たずにバックグラウンドで実行
 
       // 虎の巻の自動アーカイブ：予定表・管理表のどこにも見つからないまま、確認日から
       // 一定期間（ARCHIVE_AFTER_DAYS）が経ったものは、「見当たらない現場」一覧にいつまでも
       // 溜まり続けてしまわないよう、自動で保管庫（アーカイブ）に移す。完全には消さず、
       // あとで一覧を見て「やっぱり必要だった」場合は元に戻せるようにしておく。
+      // （上の本体取得が失敗した回はsItems/mItemsが古いままなので、この判定はスキップする）
       try {
+        if (!freshLoadOk) throw new Error('skip: stale sItems/mItems');
         const ARCHIVE_AFTER_DAYS = 90;
         const now = Date.now();
         const allRecordsForArchive = [...sItems, ...mItems];
@@ -2019,7 +2091,9 @@ function GenbaTracker() {
         setArchivedIdentifiedSites(archived);
       } catch (e) { /* アーカイブ処理に失敗しても、通常の照合・表示には影響させない */ }
 
-      setCachedRecords(sItems, mItems, list, tItems);
+      // 本体の取得に失敗した回は、フォールバック用の（もしかしたら空の）値でキャッシュを
+      // 上書きしてしまわないよう、キャッシュの保存自体もスキップする（成功した時だけ保存）
+      if (freshLoadOk) setCachedRecords(sItems, mItems, list, tItems);
     } catch (e) { console.error(e); }
     setLoading(false);
     setSyncingFromCache(false);
@@ -2114,7 +2188,7 @@ function GenbaTracker() {
     const next = { ...fresh, siteId: newRecord.id, siteName: newRecord.name, date: newRecord.date };
     setTodos((prev) => prev.map((x) => (x.id === existing.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
-    try { await storage.set(`todo:${existing.id}`, JSON.stringify(next), true); } catch (e) { console.error(e); }
+    try { await storage.set(`todo:${existing.id}`, JSON.stringify(next), true, fresh); } catch (e) { console.error(e); }
   }
 
   // v137より前に作られた古い「工程表添付」タグをsiteId付きに移行する一括お引っ越し処理は、
@@ -2126,7 +2200,7 @@ function GenbaTracker() {
     const next = { ...fresh, important: !t.important };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
-    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    await storage.set(`todo:${t.id}`, JSON.stringify(next), true, fresh);
   }
 
   // タスク・伝達の本文を、送った後でも書き直せるようにする
@@ -2153,7 +2227,7 @@ function GenbaTracker() {
       : { ...fresh, text, createdAt: new Date().toISOString() };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     lastLocalWriteRef.current = Date.now();
-    const result = await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(next), true, fresh);
     setEditingTodoId(null);
     setEditingTodoText('');
     if (result && result.queued) {
@@ -2213,7 +2287,7 @@ function GenbaTracker() {
         const survivor = featureLikeTodos.find((t) => t.text === f.text && !featureDupes.includes(t));
         if (survivor && survivor.checkType !== 'feature') {
           const updated = { ...survivor, auto: true, checkType: 'feature', featureKey: f.key };
-          await storage.set(`todo:${survivor.id}`, JSON.stringify(updated), true);
+          await storage.set(`todo:${survivor.id}`, JSON.stringify(updated), true, survivor);
           setTodos((prev) => prev.map((t) => (t.id === survivor.id ? updated : t)));
         }
       }
@@ -2300,7 +2374,7 @@ function GenbaTracker() {
     const updated = { ...fresh, archived: true, archivedAt: new Date().toISOString(), archivedBy: me || '' };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
-    const result = await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(updated), true, fresh);
     showToast(result && result.queued ? 'アーカイブを保留しました。電波が戻り次第、自動的に反映されます' : 'アーカイブしました（「📦 アーカイブ」からいつでも見返せます）');
   }
   async function unarchiveMemo(t) {
@@ -2308,7 +2382,7 @@ function GenbaTracker() {
     const updated = { ...fresh, archived: false, archivedAt: '', archivedBy: '' };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
-    const result = await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(updated), true, fresh);
     showToast(result && result.queued ? '保留しました。電波が戻り次第、自動的に反映されます' : '伝達に戻しました');
   }
   // アーカイブの中身を完全に削除する（洋子さんの端末だけに出す。ゴミ箱に30日間残して復元もできるようにする）
@@ -2352,7 +2426,7 @@ function GenbaTracker() {
     const updated = { ...fresh, seenBy: [...(fresh.seenBy || []), { name: me, at: new Date().toISOString() }] };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
-    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true);
+    await storage.set(`todo:${t.id}`, JSON.stringify(updated), true, fresh);
   }
 
   function featureCheckTodos() {
@@ -2480,7 +2554,7 @@ function GenbaTracker() {
   async function toggleInProgress(t) {
     const fresh = await fetchFreshTodo(t.id, t);
     const next = t.inProgress ? { ...fresh, inProgress: false, inProgressBy: '' } : { ...fresh, inProgress: true, inProgressBy: getDeviceStaff() || '担当者未設定' };
-    await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    await storage.set(`todo:${t.id}`, JSON.stringify(next), true, fresh);
     lastLocalWriteRef.current = Date.now();
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
   }
@@ -2489,7 +2563,7 @@ function GenbaTracker() {
   async function switchTodoType(t) {
     const fresh = await fetchFreshTodo(t.id, t);
     const next = { ...fresh, todoType: (t.todoType === 'memo') ? 'task' : 'memo' };
-    const result = await storage.set(`todo:${t.id}`, JSON.stringify(next), true);
+    const result = await storage.set(`todo:${t.id}`, JSON.stringify(next), true, fresh);
     lastLocalWriteRef.current = Date.now();
     setTodos((prev) => prev.map((x) => (x.id === t.id ? next : x)));
     showToast(result && result.queued
@@ -5007,6 +5081,13 @@ async function autoAssignTrucks() {
           </button>
           {showPendingBadge && (
             <button style={{ ...styles.pendingBadge, border: 'none', cursor: 'pointer' }} onClick={() => setShowPendingQueueModal(true)}>⏳ 未送信 {pendingCount}件（タップで確認）</button>
+          )}
+          {loadErrorCount > 0 && (
+            // 最新データの取得に失敗した回。今の画面は前回分（古い可能性がある）のままなので、
+            // タップで再読み込みできるようにする（黙って古いまま見せ続けない）
+            <button style={styles.loadErrorBadge} onClick={load} title="予定表・管理表・伝達の最新データがまだ取得できていません。タップして再試行してください">
+              ⚠️ 最新データ未取得（タップで再試行）
+            </button>
           )}
           {tab !== 'todo' && TODO_VIEWERS.includes(deviceStaff) && (() => {
             // 現場が忙しくてTODOタブ（パスワード付き）を開かない人にも、伝達が来ていることだけは
@@ -7587,6 +7668,7 @@ const styles = {
   // position:fixed にして、表示・非表示が切り替わってもページ全体のレイアウトが動かないようにする
   // （以前は他のボタンと同じ並びに置いていたため、出現・消滅のたびに画面がガクッと上下していた）
   pendingBadge: { position: 'fixed', top: 8, right: 8, zIndex: 3000, fontSize: 10.5, background: '#FFF3CD', color: '#8A6D00', borderRadius: 6, padding: '4px 9px', fontWeight: 700, boxShadow: '0 1px 4px rgba(0,0,0,0.15)' },
+  loadErrorBadge: { position: 'fixed', top: 34, right: 8, zIndex: 3001, fontSize: 10.5, background: '#FDEAEA', color: '#B00020', borderRadius: 6, padding: '4px 9px', fontWeight: 700, boxShadow: '0 1px 4px rgba(0,0,0,0.15)', border: 'none', cursor: 'pointer' },
   dupWarningBar: { background: '#FDECEA', color: '#B3261E', fontSize: 13, fontWeight: 700, padding: '10px 14px', margin: '0 16px 8px', borderRadius: 8, cursor: 'pointer' },
   todoAddBox: { background: '#F7F6F1', borderRadius: 10, padding: 12, marginTop: 10 },
   showMoreBtn: { display: 'block', width: '100%', textAlign: 'center', background: '#fff', border: '1px dashed #D8D6CC', color: '#457B9D', borderRadius: 8, padding: '8px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', marginTop: 4 },
