@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-195';
+  window.__APP_VERSION__ = '2026-09-29-198';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -397,6 +397,58 @@ async function runWithLimit(items, limit, fn, retries) {
   await Promise.all(workers);
 }
 
+// 一括取り込みなど「件数が多く、保存に時間がかかる処理」を、保存の途中でタブを閉じたり
+// スマホの画面が消えたりしても最後まで確実に終わらせるための仕組み。
+// 保存すべき内容を先に端末内（localStorage）に控えてから1件ずつ順番に保存し、
+// 保存できた分から控えを消していく。途中でタブが閉じられても控えはそのまま端末に残るので、
+// 次にETSを開いた時に続きから自動で再開される
+// （洋子さんの報告：2026-09-29、9/26の管理表一括取り込みが76件中5件しか反映されなかった件の再発防止。
+// 　以前は「保存できました」の案内を出した直後に裏で保存を始めていたため、案内を見て安心して
+// 　タブを閉じた・画面が消えた場合、まだ保存できていなかった分がそのまま消えてしまっていた）
+const PENDING_SAVE_KEY = 'etsPendingSaveQueueV1';
+function loadPendingSaveQueue() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(PENDING_SAVE_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+function writePendingSaveQueue(queue) {
+  try { localStorage.setItem(PENDING_SAVE_KEY, JSON.stringify(queue)); } catch (e) { /* 端末側の空き容量不足などで控えを書けなくても、今回の保存の試行自体は続行する */ }
+}
+let pendingSaveFlushRunning = false;
+// entries: [{ key, value, label }]（labelは失敗時に何が失敗したか案内するための表示名。省略可）
+function queueBackgroundSaves(entries) {
+  if (!entries || entries.length === 0) return;
+  writePendingSaveQueue(loadPendingSaveQueue().concat(entries));
+  flushPendingSaveQueue();
+}
+// onFailed(failedEntries)：何度再試行してもどうしても保存できなかった分があれば呼ばれる（無くてもよい）
+async function flushPendingSaveQueue(onFailed) {
+  if (pendingSaveFlushRunning) return;
+  pendingSaveFlushRunning = true;
+  const failed = [];
+  try {
+    for (;;) {
+      const queue = loadPendingSaveQueue();
+      if (queue.length === 0) break;
+      const item = queue[0];
+      let ok = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try { await storage.set(item.key, item.value); ok = true; break; } catch (e) {
+          if (attempt < 3) await sleep(400 * attempt);
+        }
+      }
+      if (!ok) failed.push(item);
+      // 保存の成否に関わらず、この1件は控えから外して次へ進む
+      // （1件だけ壊れている場合に残り全部が止まってしまわないようにする）
+      writePendingSaveQueue(loadPendingSaveQueue().slice(1));
+    }
+  } finally {
+    pendingSaveFlushRunning = false;
+  }
+  if (failed.length > 0 && typeof onFailed === 'function') onFailed(failed);
+}
+
 async function fetchWithLimit(keys, limit) {
   const results = [];
   await runWithLimit(keys, limit, async (k, idx) => {
@@ -620,6 +672,9 @@ const HOUSE_NUMBER_KUMITEN = ['OHA', 'OHD', 'メルディア'];
 const MGMT_KUMITEN_PREFIXES = [
   ['Aオープンハウス', 'OHA'], // オープンハウス・アーキテクト
   ['Dオープンハウス', 'OHD'], // オープンハウス・ディベロップメント
+  // 「A」「D」が付け忘れられて「オープンハウス〜」のまま表記されることがある。
+  // 基本的にOHAとして登録する（洋子さんの指示。念のため貼り付け後のプレビュー画面で確認できる）
+  ['オープンハウス', 'OHA'],
   ['メルディア', 'メルディア'],
   ['アオイ', 'アオイ'],
   ['ケイアイスター不動産', 'ケイアイ'],
@@ -805,7 +860,12 @@ function statusColor(list, key) {
 }
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  // 以前はnew Date().toISOString()（UTC基準）で「今日」を出していたため、日本時間の
+  // 午前0時〜9時の間は「昨日」の日付になってしまっていた（洋子さんの指摘：2026-09-29発覚）。
+  // 日本は常にUTC+9（夏時間なし）なので、UTC時刻に9時間足してから日付だけ切り出せば、
+  // 実行環境のタイムゾーンに関わらず必ず日本時間の「今日」になる
+  const jstMs = Date.now() + 9 * 60 * 60 * 1000;
+  return new Date(jstMs).toISOString().slice(0, 10);
 }
 
 // 老眼などでピンチズームを使う人のために拡大自体はできるようにしつつ、
@@ -1426,6 +1486,20 @@ function GenbaTracker() {
   const [showCalendar, setShowCalendar] = useState(false);
   const [monthCursor, setMonthCursor] = useState(todayStr().slice(0, 7));
 
+  // 予定表・管理表タブは、前に見ていた日付の絞り込みがそのまま残ってしまい、
+  // タブを切り替えて戻ってくると「今日」ではなく前回見ていた日のままになっていた。
+  // タブ切り替えのたびに今日の日付に戻すことで、開くたびに必ず今日を指すようにする
+  // （洋子さんの指示：2026-09-29）。
+  function goToTab(t) {
+    if (t === 'sched' || t === 'mgmt') {
+      const today = todayStr();
+      setDateFrom(today);
+      setDateTo(today);
+      setMonthCursor(today.slice(0, 7));
+    }
+    setTab(t);
+  }
+
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   // カード本体の写真帯は、小さいサムネイルだけでは結局中身が読めない（工程表の文字など）ため、
@@ -1733,6 +1807,11 @@ function GenbaTracker() {
     }
     // 裏側で最新データを取りに行き、取れ次第差し替える
     load();
+    // 前回、一括取り込みなどの保存が終わる前にタブを閉じてしまった・画面が消えてしまった場合、
+    // 端末内に保存待ちの控えが残っていることがあるので、起動時に必ず続きを再開する
+    flushPendingSaveQueue((failed) => {
+      showToast(`⚠️前回保存できなかったデータが${failed.length}件あります。お手数ですが該当箇所を貼り直してください`);
+    });
   }, []);
 
   // 端末の「戻る」操作（Androidの戻るボタン・スワイプなど）でうっかりアプリごと閉じてしまうのを防ぐ。
@@ -3313,9 +3392,8 @@ async function autoAssignTrucks() {
     // サーバー（スプレッドシート）側は同時に複数件書き込むと、お互いの書き込みが競合して
     // 一部が消えてしまうことがあるため、裏での保存は同時並行ではなく1件ずつ順番に行う。
     // 画面には既に反映済みなので、待たされている感覚はない。
-    runWithLimit(records, 1, async (record) => {
-      await storage.set(`sched:${record.id}`, JSON.stringify(record));
-    }).catch(() => {});
+    // 控え（端末内）に積んでおくので、保存の途中でタブを閉じても次に開いた時に続きが自動で進む。
+    queueBackgroundSaves(records.map((record) => ({ key: `sched:${record.id}`, value: JSON.stringify(record), label: record.name })));
   }
 
   // 「📧メール抽出チェック」：現場名が予定表・管理表のどこかに（日付が違っても）すでに
@@ -3583,9 +3661,8 @@ async function autoAssignTrucks() {
     setMgmtBulkImportBusy(false);
     showToast(skipped > 0 ? `${records.length}件、管理表に登録しました（重複${skipped}件はスキップ）` : `${records.length}件、管理表に登録しました`);
     // 予定表側と同じ理由で、裏での保存は同時並行ではなく1件ずつ順番に行う（競合で消える事故を防ぐ）
-    runWithLimit(records, 1, async (record) => {
-      await storage.set(`mgmt:${record.id}`, JSON.stringify(record));
-    }).catch(() => {});
+    // 控え（端末内）に積んでおくので、保存の途中でタブを閉じても次に開いた時に続きが自動で進む。
+    queueBackgroundSaves(records.map((record) => ({ key: `mgmt:${record.id}`, value: JSON.stringify(record), label: record.name })));
   }
 
   async function runBulkUpdate() {
@@ -5277,7 +5354,7 @@ async function autoAssignTrucks() {
       </div>
 
       <div style={styles.tabRow}>
-        <button onClick={() => setTab('sched')} style={{ ...styles.tabBtn, ...(tab === 'sched' ? styles.tabBtnActive : {}) }}>
+        <button onClick={() => goToTab('sched')} style={{ ...styles.tabBtn, ...(tab === 'sched' ? styles.tabBtnActive : {}) }}>
           予定表
           {TODO_VIEWERS.includes(deviceStaff) && (() => {
             // メールから仮登録した「要確認」現場の件数だけをバッジで知らせる。
@@ -5288,7 +5365,7 @@ async function autoAssignTrucks() {
             return <span style={styles.todoTabBadgeImportant}>⚠️{count}</span>;
           })()}
         </button>
-        <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
+        <button onClick={() => goToTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
         {/* 📧メールタブはまだ調整中で、すぐる・シオンにはまだ見せたくない（洋子さんの指示）。
