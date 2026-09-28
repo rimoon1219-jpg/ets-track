@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-28-192';
+  window.__APP_VERSION__ = '2026-09-29-193';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3083,6 +3083,12 @@ async function autoAssignTrucks() {
         const entry = { from: before.date, to: record.date, by: deviceStaff || form.staff || '（担当者不明）', at: new Date().toISOString() };
         record = { ...record, dateHistory: [...(record.dateHistory || []), entry].slice(-10) };
       }
+      // メール由来の「仮日付・要確認」現場は、すぐる・シオンが監督さんと調整して
+      // 編集・保存した時点で「確認済み」とみなし、印を外して他の全スタッフにも
+      // 通常通り見えるようにする（洋子さんの指示：2026-09-29）。
+      if (before && before.mailPending) {
+        record = { ...record, mailPending: false };
+      }
     }
     let extraPhotos = [];
     if (pendingPhotos.length > 0) {
@@ -3354,6 +3360,50 @@ async function autoAssignTrucks() {
     });
     if (rows.length === 0) { showToast('現場の行が見つかりませんでした（ヘッダー行だけ貼り付けていませんか？）'); return; }
     setMailCheckResults(rows);
+  }
+
+  // 洋子さんが内容を確認して「OK」を押した行だけを、予定表に「📅仮日付・要確認」として仮登録する。
+  // メールに書かれている日付はまだ仮のものなので、確定するまでは洋子・社長・すぐる・シオンの
+  // 4人にしか見せない（filtered側でmailPendingを見て絞り込む）。すぐる・シオンが監督さんと
+  // 調整して日付を編集・保存した時点で印が外れ、全スタッフに通常通り見えるようになる。
+  async function registerMailCandidate(row) {
+    const cols = row.raw.split('\t');
+    if (cols.length !== 13) { showToast('列数が13列ではないため登録できません。「この行をコピー」から一括インポートに貼り付けてください'); return; }
+    const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, keiTruck, expectedVisits, staff, note] = cols;
+    const trimmedName = (name || '').trim();
+    if (!trimmedName || !(date || '').trim()) { showToast('現場名または日付が空欄のため登録できません'); return; }
+    const normalizedDate = normalizeDateStr(date);
+    let freshSched = schedRecords;
+    try { freshSched = await storage.listWithValues('sched:'); } catch (e) { /* 取得できなければ手元のデータで続行 */ }
+    const dupKey = `${trimmedName}__${normalizedDate}`;
+    const dup = freshSched.find((r) => `${(r.name || '').trim()}__${r.date || ''}` === dupKey);
+    if (dup) { showToast('すでに予定表に同じ現場・日付があります'); return; }
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const record = {
+      id, createdAt: Date.now(),
+      name: trimmedName,
+      kumiten: (kumiten || 'その他').trim(),
+      address: (address || '').trim(),
+      area: address ? extractArea(address) : '',
+      date: normalizedDate,
+      time: (time || '').trim(),
+      status: (status || '新規').trim(),
+      supervisorName: (supervisorName || '').trim(),
+      supervisorPhone: (supervisorPhone || '').trim(),
+      garaRequired: (gara || '').trim() === '○' || (gara || '').trim().toLowerCase() === 'true',
+      keiTruckRequired: (keiTruck || '').trim() === '○' || (keiTruck || '').trim().toLowerCase() === 'true',
+      expectedVisits: (expectedVisits || '').trim(),
+      staff: (staff || '').trim(),
+      note: (note || '').trim(),
+      houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
+      mailPending: true,
+    };
+    try {
+      applyLocalRecordUpdate('sched', record);
+      await storage.set(`sched:${id}`, JSON.stringify(record));
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true } : r)) : prev));
+      showToast('予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
+    } catch (e) { showToast('登録に失敗しました'); }
   }
 
   function copyUpdateTemplate() {
@@ -4836,8 +4886,21 @@ async function autoAssignTrucks() {
       return true;
     });
     if (tab === 'sched' && showUncollectedOnly) list = list.filter((r) => !collectedNames.has(r.name));
+    if (tab === 'sched') {
+      // メールから仮登録した「📅仮日付・要確認」現場は、日付が確定するまで
+      // 洋子・社長(酒井)・すぐる(本城)・シオン(金子)の4人にしか見せない。
+      // 他のスタッフには確定していない日付で動かれたくないため、そもそも一覧に出さない。
+      // 編集して保存されるとmailPendingが外れ、以降は普通に全員へ見えるようになる。
+      list = list.filter((r) => !r.mailPending || TODO_VIEWERS.includes(deviceStaff));
+      // 見えている人には、確定作業を忘れないよう日付順より優先して一番上に固定表示する
+      const pending = list.filter((r) => r.mailPending);
+      if (pending.length > 0) {
+        const rest = list.filter((r) => !r.mailPending);
+        list = [...pending, ...rest];
+      }
+    }
     return list;
-  }, [activeList, tab, kumitenFilter, dateFrom, dateTo, search, showUncollectedOnly, collectedNames]);
+  }, [activeList, tab, kumitenFilter, dateFrom, dateTo, search, showUncollectedOnly, collectedNames, deviceStaff]);
 
   // ---- dispatch derived data ----
   const { daySitesBase, extraSites, daySites, byArea } = useMemo(() => {
@@ -5186,7 +5249,17 @@ async function autoAssignTrucks() {
       </div>
 
       <div style={styles.tabRow}>
-        <button onClick={() => setTab('sched')} style={{ ...styles.tabBtn, ...(tab === 'sched' ? styles.tabBtnActive : {}) }}>予定表</button>
+        <button onClick={() => setTab('sched')} style={{ ...styles.tabBtn, ...(tab === 'sched' ? styles.tabBtnActive : {}) }}>
+          予定表
+          {TODO_VIEWERS.includes(deviceStaff) && (() => {
+            // メールから仮登録した「要確認」現場の件数だけをバッジで知らせる。
+            // 見えるのは洋子・社長(酒井)・すぐる(本城)・シオン(金子)の4人だけ
+            // （他のスタッフにはそもそもこの現場自体が予定表に出ないので、常に0件になる）。
+            const count = schedRecords.filter((r) => r.mailPending).length;
+            if (count === 0) return null;
+            return <span style={styles.todoTabBadgeImportant}>⚠️{count}</span>;
+          })()}
+        </button>
         <button onClick={() => setTab('mgmt')} style={{ ...styles.tabBtn, ...(tab === 'mgmt' ? styles.tabBtnActive : {}) }}>管理表</button>
         <button onClick={() => setTab('dispatch')} style={{ ...styles.tabBtn, ...(tab === 'dispatch' ? styles.tabBtnActive : {}) }}>配車</button>
         <button onClick={() => setTab('gantt')} style={{ ...styles.tabBtn, ...(tab === 'gantt' ? styles.tabBtnActive : {}) }}>工程表</button>
@@ -5319,10 +5392,15 @@ async function autoAssignTrucks() {
 
           <div style={styles.list}>
             {filtered.map((r) => (
-              <div key={r.id} style={styles.card}>
+              <div key={r.id} style={{ ...styles.card, ...(r.mailPending ? { border: '2px solid #F4A300' } : {}) }}>
                 <div style={{ ...styles.cardBar, background: statusColor(statusList, r.status) }} />
                 <div style={styles.cardBody} onClick={() => openEdit(r)}>
                   <div style={styles.cardTop}>
+                    {tab === 'sched' && r.mailPending && (
+                      <span style={{ ...styles.garaBadge, background: '#FFF3D6', color: '#8A5A00', border: '1px solid #F4A300' }} title="メールから届いた仮の日付です。監督さんと調整して確定したら編集・保存してください">
+                        📅仮日付・要確認
+                      </span>
+                    )}
                     {tab === 'sched' && r.time && <span style={styles.timeBadge}>⏰ {r.time}</span>}
                     {tab === 'sched' && r.keiTruckRequired && <span style={styles.keiBadge}>🚚 軽トラ指定</span>}
                     {tab === 'sched' && r.garaRequired && <span style={styles.garaBadge}>🧺 ガラ袋必須</span>}
@@ -5726,8 +5804,9 @@ async function autoAssignTrucks() {
         <div style={{ padding: '0 12px 24px' }}>
           <div style={{ fontSize: 13, color: '#6B6B60', lineHeight: 1.6, marginBottom: 10 }}>
             毎朝自動で作られる「メール抽出」TSV（工務店転送分）をそのまま貼り付けてください。
-            予定表・管理表に現場名がまだ無いものだけを拾い出します（貼り付けても予定表・管理表は変更されません）。
-            実際に追加する時は、下の結果に出た行をコピーして「予定表→＋追加→一括インポート」に貼り付けてください。
+            予定表・管理表に現場名がまだ無いものだけを拾い出します（貼り付けただけでは予定表・管理表は変更されません）。
+            内容を確認して問題なければ「✅ OK→予定表に登録」を押してください。メールの日付はまだ仮のものとして「📅仮日付・要確認」付きで登録され、
+            すぐる・シオン（と洋子さん・社長）の予定表の一番上に出ます。日付を確定して編集・保存すると、印が外れて他のスタッフにも通常通り見えるようになります。
           </div>
           <textarea
             style={{ ...styles.input, minHeight: 140, fontSize: 12 }}
@@ -5764,16 +5843,29 @@ async function autoAssignTrucks() {
                     {r.colMismatch && (
                       <div style={{ fontSize: 11.5, color: '#B00020', marginTop: 4 }}>⚠️ この行は{r.colCount}列（本来13列）です。列がずれている可能性があります</div>
                     )}
-                    <button
-                      style={{ ...styles.linkBtn, marginTop: 6, fontSize: 12 }}
-                      onClick={() => {
-                        navigator.clipboard.writeText(r.raw)
-                          .then(() => showToast('この行をコピーしました。一括インポートに貼り付けてください'))
-                          .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
-                      }}
-                    >
-                      この行をコピー
-                    </button>
+                    {r.registered ? (
+                      <div style={{ fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, marginTop: 6 }}>✅ 予定表に仮登録しました（すぐる・シオンの確認待ち）</div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                        <button
+                          style={{ ...styles.linkBtn, fontSize: 12 }}
+                          onClick={() => {
+                            navigator.clipboard.writeText(r.raw)
+                              .then(() => showToast('この行をコピーしました。一括インポートに貼り付けてください'))
+                              .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
+                          }}
+                        >
+                          この行をコピー
+                        </button>
+                        <button
+                          style={{ ...styles.saveBtn, fontSize: 12, padding: '4px 10px' }}
+                          disabled={r.colMismatch}
+                          onClick={() => registerMailCandidate(r)}
+                        >
+                          ✅ OK→予定表に登録
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {found.length > 0 && (
