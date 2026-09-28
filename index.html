@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-193';
+  window.__APP_VERSION__ = '2026-09-29-194';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2312,7 +2312,10 @@ function GenbaTracker() {
   // 計算し直さないようにする（infoGapsByKumitenが毎回これを2重に呼んでいた無駄も併せて解消）
   const infoGapSitesMemo = useMemo(() => {
     const today = todayStr();
+    // メールから仮登録した「📅仮日付・要確認」現場は、日付・監督名などが未確定のまま
+    // TODOタブの「情報不足」リストに全員へ出てしまわないよう、見える4人以外には対象外にする
     return schedRecords
+      .filter((r) => !r.mailPending || TODO_VIEWERS.includes(deviceStaff))
       .map((r) => {
         const gaps = [];
         // 座標のみの住所は地図には出せるので、情報不足としては挙げない（洋子さんの指示）。
@@ -2337,7 +2340,7 @@ function GenbaTracker() {
         if (aAddr !== bAddr) return aAddr - bAddr;
         return (a.r.date || '').localeCompare(b.r.date || '');
       });
-  }, [schedRecords]);
+  }, [schedRecords, deviceStaff]);
   function infoGapSites() {
     return infoGapSitesMemo;
   }
@@ -2786,7 +2789,8 @@ async function autoAssignTrucks() {
       const yesterday = addDays(dispatchDate, -1);
       const tomorrow = addDays(dispatchDate, 1);
       const todaySet = new Set(daySites.map((s) => s.id));
-      const adjacentSites = schedRecords.filter((r) => (r.date === yesterday || r.date === tomorrow) && !todaySet.has(r.id));
+      // 配車画面と同じ考え方で、日付未確定の「📅仮日付・要確認」現場は近場ヒントにも出さない
+      const adjacentSites = schedRecords.filter((r) => !r.mailPending && (r.date === yesterday || r.date === tomorrow) && !todaySet.has(r.id));
       if (adjacentSites.length === 0) { setNearbyHints([]); return; }
 
       const geocodeCache = {};
@@ -3084,9 +3088,12 @@ async function autoAssignTrucks() {
         record = { ...record, dateHistory: [...(record.dateHistory || []), entry].slice(-10) };
       }
       // メール由来の「仮日付・要確認」現場は、すぐる・シオンが監督さんと調整して
-      // 編集・保存した時点で「確認済み」とみなし、印を外して他の全スタッフにも
-      // 通常通り見えるようにする（洋子さんの指示：2026-09-29）。
-      if (before && before.mailPending) {
+      // 実際に日付を確定（変更）した時点で初めて「確認済み」とみなし、印を外して
+      // 他の全スタッフにも通常通り見えるようにする（洋子さんの指示：2026-09-29）。
+      // ※日付以外の項目（住所の誤字修正など）だけを直した保存では印を外さない。
+      // 日付を変えていないのに印が外れてしまうと、まだ確定していない現場が
+      // うっかり配車・全員閲覧に出てしまう事故につながるため。
+      if (before && before.mailPending && before.date !== record.date) {
         record = { ...record, mailPending: false };
       }
     }
@@ -3404,6 +3411,20 @@ async function autoAssignTrucks() {
       setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true } : r)) : prev));
       showToast('予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
     } catch (e) { showToast('登録に失敗しました'); }
+  }
+
+  // 「📅仮日付・要確認」の印は、通常は日付を実際に変更して保存した時に自動で外れる。
+  // ただしメールに書かれていた日付のまま確定できる（日付を変える必要がない）場合もあるため、
+  // その時のための「このまま確定する」専用ボタン。日付以外の項目を直しただけでは
+  // 絶対に印が外れないようにする代わりに、この明示的な操作を用意した。
+  async function confirmMailPendingDate(record) {
+    if (!window.confirm(`「${record.name}」（${record.date}）の日付をこのまま確定しますか？\n確定すると「要確認」の印が外れ、他のスタッフにも通常通り見えるようになります。`)) return;
+    const updated = { ...record, mailPending: false };
+    try {
+      applyLocalRecordUpdate('sched', updated);
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated));
+      showToast('日付を確定しました');
+    } catch (e) { showToast('確定に失敗しました'); }
   }
 
   function copyUpdateTemplate() {
@@ -4169,7 +4190,7 @@ async function autoAssignTrucks() {
   function supervisorOptionsFor(kumiten) {
     if (!kumiten) return [];
     const fromDirectory = (supervisorDirectory[kumiten] || []).map((s) => s.name);
-    const fromRecords = schedRecords.filter((r) => r.kumiten === kumiten && (r.supervisorName || '').trim()).map((r) => r.supervisorName.trim());
+    const fromRecords = schedRecords.filter((r) => !r.mailPending && r.kumiten === kumiten && (r.supervisorName || '').trim()).map((r) => r.supervisorName.trim());
     return Array.from(new Set([...fromDirectory, ...fromRecords]));
   }
 
@@ -4180,7 +4201,7 @@ async function autoAssignTrucks() {
     const inDirectory = (supervisorDirectory[kumiten] || []).find((s) => s.name === trimmed);
     if (inDirectory && inDirectory.phone) return inDirectory.phone;
     const candidates = schedRecords
-      .filter((r) => r.kumiten === kumiten && (r.supervisorName || '').trim() === trimmed && r.supervisorPhone)
+      .filter((r) => !r.mailPending && r.kumiten === kumiten && (r.supervisorName || '').trim() === trimmed && r.supervisorPhone)
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     return candidates[0] ? candidates[0].supervisorPhone : '';
   }
@@ -4904,8 +4925,12 @@ async function autoAssignTrucks() {
 
   // ---- dispatch derived data ----
   const { daySitesBase, extraSites, daySites, byArea } = useMemo(() => {
-    const daySitesBase = schedRecords.filter((r) => r.date === dispatchDate);
-    const extraSites = schedRecords.filter((r) => extraSiteIds.includes(r.id) && r.date !== dispatchDate);
+    // メールから仮登録した「📅仮日付・要確認」現場は、日付がまだ確定していないため、
+    // 実際にトラックを割り振る配車画面には誰の画面でも出さない（見える4人でも同様）。
+    // 誤って未確定の日付のままトラックを割り振ってしまう事故を防ぐため。
+    const visibleSched = schedRecords.filter((r) => !r.mailPending);
+    const daySitesBase = visibleSched.filter((r) => r.date === dispatchDate);
+    const extraSites = visibleSched.filter((r) => extraSiteIds.includes(r.id) && r.date !== dispatchDate);
     const daySites = [...daySitesBase, ...extraSites];
     const byArea = {};
     daySites.forEach((s) => {
@@ -5354,7 +5379,7 @@ async function autoAssignTrucks() {
 
           {(tab === 'sched' || tab === 'mgmt') && showCalendar && (
             <MonthCalendar
-              records={tab === 'sched' ? schedRecords : mgmtRecords}
+              records={tab === 'sched' ? schedRecords.filter((r) => !r.mailPending || TODO_VIEWERS.includes(deviceStaff)) : mgmtRecords}
               monthCursor={monthCursor}
               setMonthCursor={setMonthCursor}
               selectedDate={dateFrom === dateTo ? dateFrom : ''}
@@ -5400,6 +5425,15 @@ async function autoAssignTrucks() {
                       <span style={{ ...styles.garaBadge, background: '#FFF3D6', color: '#8A5A00', border: '1px solid #F4A300' }} title="メールから届いた仮の日付です。監督さんと調整して確定したら編集・保存してください">
                         📅仮日付・要確認
                       </span>
+                    )}
+                    {tab === 'sched' && r.mailPending && TODO_VIEWERS.includes(deviceStaff) && (
+                      <button
+                        type="button"
+                        style={{ ...styles.linkBtn, fontSize: 11.5, padding: '2px 8px' }}
+                        onClick={(e) => { e.stopPropagation(); confirmMailPendingDate(r); }}
+                      >
+                        ✅このまま確定
+                      </button>
                     )}
                     {tab === 'sched' && r.time && <span style={styles.timeBadge}>⏰ {r.time}</span>}
                     {tab === 'sched' && r.keiTruckRequired && <span style={styles.keiBadge}>🚚 軽トラ指定</span>}
@@ -5788,7 +5822,7 @@ async function autoAssignTrucks() {
         const winEnd = winEndDate.toISOString().slice(0, 10);
         return (
           <GanttChart
-            schedRecords={schedRecords}
+            schedRecords={schedRecords.filter((r) => !r.mailPending || TODO_VIEWERS.includes(deviceStaff))}
             kumitenFilter={kumitenFilter}
             windowStart={winStart}
             windowEnd={winEnd}
@@ -7704,7 +7738,7 @@ async function autoAssignTrucks() {
             />
             <div style={{ marginTop: 10, maxHeight: 320, overflowY: 'auto' }}>
               {schedRecords
-                .filter((r) => r.date !== dispatchDate && !extraSiteIds.includes(r.id))
+                .filter((r) => !r.mailPending && r.date !== dispatchDate && !extraSiteIds.includes(r.id))
                 .filter((r) => !extraSiteSearch || r.name.toLowerCase().includes(extraSiteSearch.toLowerCase()))
                 .slice(0, 30)
                 .map((r) => (
