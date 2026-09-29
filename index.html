@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-203';
+  window.__APP_VERSION__ = '2026-09-29-205';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -876,6 +876,34 @@ const SCHED_STATUSES = [
   { key: '会社予定', color: '#2A9D8F' },
   { key: '単発', color: '#6C757D' },
 ];
+
+// 一括インポート・📧メールタブどちらも、ステータス欄にはメール由来の「産廃最終回収」のような
+// やや長い自由文がそのまま来ることがある。SCHED_STATUSESのタグ(新規/木完/最終など)と文字列が
+// 完全一致しないと、予定表を開いた時にどのタグも選択されていない状態のまま、すぐる・シオンの
+// 手元に届いてしまう。よくある言い回しから一番近いタグに正規化しておき、最初から正しいタグが
+// 選ばれた状態で「日付を確定するだけ」で済むようにする。判断できない場合は元の文字列をそのまま残す
+// (無理に「新規」などに丸めてしまうと、かえって間違った情報になるため)。
+function normalizeSchedStatus(raw) {
+  const text = (raw || '').trim();
+  if (!text) return '';
+  const exact = SCHED_STATUSES.find((s) => s.key === text);
+  if (exact) return exact.key;
+  const rules = [
+    { key: '最終', test: /最終/ },
+    { key: '追加', test: /追加/ },
+    { key: 'クリーニング', test: /クリーニング/ },
+    { key: 'クロス', test: /クロス/ },
+    { key: 'ボード・サイディング', test: /ボード.*サイディング|サイディング.*ボード/ },
+    { key: 'ボード', test: /ボード/ },
+    { key: '木・断熱', test: /断熱/ },
+    { key: '木完', test: /木完/ },
+    { key: '新規', test: /新規/ },
+    { key: '単発', test: /単発/ },
+    { key: '会社予定', test: /会社予定/ },
+  ];
+  const hit = rules.find((r) => r.test.test(text));
+  return hit ? hit.key : text;
+}
 
 function statusColor(list, key) {
   const found = list.find((s) => s.key === key);
@@ -3371,7 +3399,7 @@ async function autoAssignTrucks() {
         area: (address ? extractArea(address) : ''),
         date: normalizedDate,
         time: (time || '').trim(),
-        status: (status || '新規').trim(),
+        status: normalizeSchedStatus(status) || '新規',
         supervisorName: (supervisorName || '').trim(),
         supervisorPhone: (supervisorPhone || '').trim(),
         garaRequired: (gara || '').trim() === '○' || (gara || '').trim().toLowerCase() === 'true',
@@ -3477,6 +3505,7 @@ async function autoAssignTrucks() {
         kumiten: (cols[1] || '').trim(),
         date: rowDate,
         status: (cols[5] || '').trim(),
+        statusTag: normalizeSchedStatus((cols[5] || '').trim()),
         supervisorName: (cols[6] || '').trim(),
         note: (cols[12] || '').trim(),
         colCount: cols.length,
@@ -3513,7 +3542,7 @@ async function autoAssignTrucks() {
       area: address ? extractArea(address) : '',
       date: normalizedDate,
       time: (time || '').trim(),
-      status: (status || '新規').trim(),
+      status: normalizeSchedStatus(status) || '新規',
       supervisorName: (supervisorName || '').trim(),
       supervisorPhone: (supervisorPhone || '').trim(),
       garaRequired: (gara || '').trim() === '○' || (gara || '').trim().toLowerCase() === 'true',
@@ -3526,9 +3555,17 @@ async function autoAssignTrucks() {
     };
     try {
       applyLocalRecordUpdate('sched', record);
-      await storage.set(`sched:${id}`, JSON.stringify(record));
-      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true } : r)) : prev));
-      showToast('予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
+      // storage.setは電波不良でサーバーに届かなくても例外を投げず、端末内に保留して
+      // 自動再送信に回すだけなので(reliableSend参照)、ここでcatchに来ないからといって
+      // 必ずサーバーまで届いたとは限らない。result.queuedを見て、届いたのか保留中なのかを
+      // はっきり区別して伝える(洋子さんの報告：2026-09-29、通信が不安定な時にOKを押しても
+      // 何が起きたのか画面から分からなかった)。
+      const result = await storage.set(`sched:${id}`, JSON.stringify(record));
+      const queued = !!(result && result.queued);
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true, queued } : r)) : prev));
+      showToast(queued
+        ? '電波状況が悪いため保留しました。予定表にはこの端末上だけ先に反映済みで、電波が戻り次第サーバーに自動送信されます（それまではすぐる・シオンの画面にはまだ出ません）'
+        : '予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
     } catch (e) { showToast('登録に失敗しました'); }
   }
 
@@ -5987,6 +6024,9 @@ async function autoAssignTrucks() {
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{warn ? '⚠️' : '❌'} {r.name}</div>
                 <div style={{ fontSize: 12.5, color: '#555', marginTop: 4 }}>
                   工務店：{r.kumiten || '（空欄）'} ／ 日付：{r.date || '（空欄）'} ／ 内容：{r.status || '（空欄）'}
+                  {r.statusTag && (
+                    <> ／ 登録されるタグ：<span style={{ fontWeight: 700, color: statusColor(SCHED_STATUSES, r.statusTag) }}>{r.statusTag}</span></>
+                  )}
                   {r.supervisorName && <> ／ 監督：{r.supervisorName}</>}
                 </div>
                 {r.note && <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>メモ：{r.note}</div>}
@@ -6037,8 +6077,8 @@ async function autoAssignTrucks() {
                   <details style={{ marginTop: 12 }}>
                     <summary style={{ fontSize: 12.5, color: '#6B6B60', cursor: 'pointer' }}>登録済み（{registeredCount}件）</summary>
                     {mailCheckResults.filter((r) => r.registered).map((r, i) => (
-                      <div key={i} style={{ fontSize: 12, color: '#2A9D8F', padding: '6px 4px', borderBottom: '1px solid #EEE' }}>
-                        ✅ {r.name}（{r.date}）予定表に仮登録済み
+                      <div key={i} style={{ fontSize: 12, color: r.queued ? '#B8860B' : '#2A9D8F', padding: '6px 4px', borderBottom: '1px solid #EEE' }}>
+                        {r.queued ? `⏳ ${r.name}（${r.date}）電波待ちで保留中（この端末で電波が戻れば自動送信されます）` : `✅ ${r.name}（${r.date}）予定表に仮登録済み`}
                       </div>
                     ))}
                   </details>
