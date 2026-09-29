@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-201';
+  window.__APP_VERSION__ = '2026-09-29-203';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3419,13 +3419,26 @@ async function autoAssignTrucks() {
     queueBackgroundSaves(records.map((record) => ({ key: `sched:${record.id}`, value: JSON.stringify(record), label: record.name })));
   }
 
-  // 「📧メール抽出チェック」：現場名が予定表・管理表のどこかに（日付が違っても）すでに
-  // 存在するかどうかだけを見る、ゆるい表記ゆれ対応の照合（虎の巻の自動アーカイブ判定と同じ考え方）。
+  // 「📧メール抽出チェック」：現場名が予定表・管理表のどこかにすでに存在するかどうかを見る、
+  // ゆるい表記ゆれ対応の照合（虎の巻の自動アーカイブ判定と同じ考え方）。
   // ここでは本体データは一切書き換えない（見るだけ）。
-  function findExistingMatchesForMailName(rawName) {
+  // 同じ現場でも「新規→木完→回収指定」のように何度も回収が入ることがあり、その間隔は
+  // 数日のこともあれば数か月のこともあって一定しないため、日数の自動判定では
+  // 「同じ予定の重複」か「同じ現場の別予定」かを機械的に見分けられない。
+  // そのため名前が一致した既存記録は自動でブロックせず、参考情報（_daysDiffは表示用）として
+  // 見せるだけにして、実際に同じ予定かどうかは洋子さんがメールの内容を見て毎回判断する。
+  function daysBetweenDates(a, b) {
+    if (!a || !b) return null;
+    const da = new Date(a);
+    const db = new Date(b);
+    if (isNaN(da.getTime()) || isNaN(db.getTime())) return null;
+    return Math.round(Math.abs(da.getTime() - db.getTime()) / 86400000);
+  }
+  function findExistingMatchesForMailName(rawName, rowDate) {
     const trimmed = (rawName || '').trim();
     if (!trimmed) return [];
     const norm = normalizeForCompare(trimmed);
+    const normalizedRowDate = rowDate ? normalizeDateStr(rowDate) : '';
     const all = [
       ...schedRecords.map((r) => ({ ...r, _src: '予定表' })),
       ...mgmtRecords.map((r) => ({ ...r, _src: '管理表' })),
@@ -3440,7 +3453,7 @@ async function autoAssignTrucks() {
       const shorter = norm.length <= rnorm.length ? norm : rnorm;
       const longer = norm.length <= rnorm.length ? rnorm : norm;
       return shorter.length >= 4 && longer.includes(shorter);
-    });
+    }).map((r) => ({ ...r, _daysDiff: daysBetweenDates(normalizedRowDate, r.date) }));
   }
 
   // 毎朝自動実行のメール整理タスクが作る13列TSV（工務店転送分。予定表の一括インポートと
@@ -3456,17 +3469,19 @@ async function autoAssignTrucks() {
       const cols = line.split('\t');
       const name = (cols[0] || '').trim();
       if (!name || name === '現場名') return; // ヘッダー行はスキップ
+      const rowDate = (cols[3] || '').trim();
+      const allMatches = findExistingMatchesForMailName(name, rowDate);
       rows.push({
         raw: line,
         name,
         kumiten: (cols[1] || '').trim(),
-        date: (cols[3] || '').trim(),
+        date: rowDate,
         status: (cols[5] || '').trim(),
         supervisorName: (cols[6] || '').trim(),
         note: (cols[12] || '').trim(),
         colCount: cols.length,
         colMismatch: cols.length !== EXPECTED_COLS,
-        matches: findExistingMatchesForMailName(name),
+        matches: allMatches,
       });
     });
     if (rows.length === 0) { showToast('現場の行が見つかりませんでした（ヘッダー行だけ貼り付けていませんか？）'); return; }
@@ -5944,6 +5959,7 @@ async function autoAssignTrucks() {
             予定表・管理表に現場名がまだ無いものだけを拾い出します（貼り付けただけでは予定表・管理表は変更されません）。
             内容を確認して問題なければ「✅ OK→予定表に登録」を押してください。メールの日付はまだ仮のものとして「📅仮日付・要確認」付きで登録され、
             すぐる・シオン（と洋子さん・社長）の予定表の一番上に出ます。日付を確定して編集・保存すると、印が外れて他のスタッフにも通常通り見えるようになります。
+            なお似た名前の現場が予定表・管理表に見つかった場合は「⚠️要確認」として既存の記録（日付・内容）を表示します。同じ予定の重複でなければ、そのまま「✅ OK→予定表に登録」を押して大丈夫です（同じ現場でも新規・木完・最終回収のように何度も予定が入ることがあるため、日付の近さだけでは自動で判断していません）。
           </div>
           <textarea
             style={{ ...styles.input, minHeight: 140, fontSize: 12 }}
@@ -5959,58 +5975,70 @@ async function autoAssignTrucks() {
           </div>
 
           {mailCheckResults && (() => {
-            const missing = mailCheckResults.filter((r) => r.matches.length === 0);
-            const found = mailCheckResults.filter((r) => r.matches.length > 0);
+            // 一致なし＝そのまま登録してよいもの／類似の記録あり＝洋子さんが内容を見て
+            // 「同じ予定の重複」か「別の予定（新規→木完→回収指定など）」かを判断するもの。
+            // どちらも登録ボタン自体は出す（日数の自動判定はしない）。
+            const actionable = mailCheckResults.filter((r) => !r.registered);
+            const noMatch = actionable.filter((r) => r.matches.length === 0);
+            const hasMatch = actionable.filter((r) => r.matches.length > 0);
+            const registeredCount = mailCheckResults.length - actionable.length;
+            const renderRow = (r, i, warn) => (
+              <div key={i} style={{ background: warn ? '#FFF6E0' : '#FDEAEA', border: `1px solid ${warn ? '#E9D08A' : '#F3C6C6'}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{warn ? '⚠️' : '❌'} {r.name}</div>
+                <div style={{ fontSize: 12.5, color: '#555', marginTop: 4 }}>
+                  工務店：{r.kumiten || '（空欄）'} ／ 日付：{r.date || '（空欄）'} ／ 内容：{r.status || '（空欄）'}
+                  {r.supervisorName && <> ／ 監督：{r.supervisorName}</>}
+                </div>
+                {r.note && <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>メモ：{r.note}</div>}
+                {warn && (
+                  <div style={{ fontSize: 11.5, color: '#8A6D1A', marginTop: 4 }}>
+                    似た名前の既存記録があります。同じ予定の重複でなければそのまま登録してください：
+                    {r.matches.map((m, j) => (
+                      <span key={j}>{j > 0 ? ' / ' : ''}{m._src}「{m.name}」({m.date || '日付不明'}{m._daysDiff !== null ? `・${m._daysDiff}日差` : ''})</span>
+                    ))}
+                  </div>
+                )}
+                {r.colMismatch && (
+                  <div style={{ fontSize: 11.5, color: '#B00020', marginTop: 4 }}>⚠️ この行は{r.colCount}列（本来13列）です。列がずれている可能性があります</div>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                  <button
+                    style={{ ...styles.linkBtn, fontSize: 12 }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(r.raw)
+                        .then(() => showToast('この行をコピーしました。一括インポートに貼り付けてください'))
+                        .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
+                    }}
+                  >
+                    この行をコピー
+                  </button>
+                  <button
+                    style={{ ...styles.saveBtn, fontSize: 12, padding: '4px 10px' }}
+                    disabled={r.colMismatch}
+                    onClick={() => registerMailCandidate(r)}
+                  >
+                    {warn ? '✅ OK→別の予定として登録' : '✅ OK→予定表に登録'}
+                  </button>
+                </div>
+              </div>
+            );
             return (
               <>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
-                  全{mailCheckResults.length}件中、未登録の疑いあり {missing.length}件
+                  全{mailCheckResults.length}件中、未処理 {actionable.length}件（うち類似記録あり {hasMatch.length}件）
+                  {registeredCount > 0 && <>／登録済み {registeredCount}件</>}
                 </div>
-                {missing.length === 0 && (
-                  <div style={{ ...styles.empty, marginBottom: 16 }}>全て予定表・管理表のどこかに見つかりました。</div>
+                {actionable.length === 0 && (
+                  <div style={{ ...styles.empty, marginBottom: 16 }}>すべて処理済みです。</div>
                 )}
-                {missing.map((r, i) => (
-                  <div key={i} style={{ background: '#FDEAEA', border: '1px solid #F3C6C6', borderRadius: 8, padding: 10, marginBottom: 8 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>❌ {r.name}</div>
-                    <div style={{ fontSize: 12.5, color: '#555', marginTop: 4 }}>
-                      工務店：{r.kumiten || '（空欄）'} ／ 日付：{r.date || '（空欄）'} ／ 内容：{r.status || '（空欄）'}
-                      {r.supervisorName && <> ／ 監督：{r.supervisorName}</>}
-                    </div>
-                    {r.note && <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>メモ：{r.note}</div>}
-                    {r.colMismatch && (
-                      <div style={{ fontSize: 11.5, color: '#B00020', marginTop: 4 }}>⚠️ この行は{r.colCount}列（本来13列）です。列がずれている可能性があります</div>
-                    )}
-                    {r.registered ? (
-                      <div style={{ fontSize: 12.5, color: '#2A9D8F', fontWeight: 700, marginTop: 6 }}>✅ 予定表に仮登録しました（すぐる・シオンの確認待ち）</div>
-                    ) : (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-                        <button
-                          style={{ ...styles.linkBtn, fontSize: 12 }}
-                          onClick={() => {
-                            navigator.clipboard.writeText(r.raw)
-                              .then(() => showToast('この行をコピーしました。一括インポートに貼り付けてください'))
-                              .catch(() => showToast('コピーできませんでした。手動で選択してコピーしてください'));
-                          }}
-                        >
-                          この行をコピー
-                        </button>
-                        <button
-                          style={{ ...styles.saveBtn, fontSize: 12, padding: '4px 10px' }}
-                          disabled={r.colMismatch}
-                          onClick={() => registerMailCandidate(r)}
-                        >
-                          ✅ OK→予定表に登録
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {found.length > 0 && (
+                {noMatch.map((r, i) => renderRow(r, `n${i}`, false))}
+                {hasMatch.map((r, i) => renderRow(r, `h${i}`, true))}
+                {registeredCount > 0 && (
                   <details style={{ marginTop: 12 }}>
-                    <summary style={{ fontSize: 12.5, color: '#6B6B60', cursor: 'pointer' }}>すでに見つかったもの（{found.length}件）</summary>
-                    {found.map((r, i) => (
-                      <div key={i} style={{ fontSize: 12, color: '#555', padding: '6px 4px', borderBottom: '1px solid #EEE' }}>
-                        ✅ {r.name} → {r.matches.map((m) => `${m._src}「${m.name}」(${m.date})`).join(' / ')}
+                    <summary style={{ fontSize: 12.5, color: '#6B6B60', cursor: 'pointer' }}>登録済み（{registeredCount}件）</summary>
+                    {mailCheckResults.filter((r) => r.registered).map((r, i) => (
+                      <div key={i} style={{ fontSize: 12, color: '#2A9D8F', padding: '6px 4px', borderBottom: '1px solid #EEE' }}>
+                        ✅ {r.name}（{r.date}）予定表に仮登録済み
                       </div>
                     ))}
                   </details>
