@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-200';
+  window.__APP_VERSION__ = '2026-09-29-201';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -511,7 +511,12 @@ const storage = {
     const MAX_TRIES = 3;
     for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
       try {
-        const res = await fetchWithTimeout(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`, undefined, 20000);
+        // listWithValuesはシート全体を読んでprefixで絞り込むため、データ件数が増えるほど
+        // 時間がかかる（洋子さんの報告：2026-09-29、データ量が増えた後に予定表・管理表だけ
+        // 「読み込み中」が長引くようになった）。短すぎるタイムアウトだと、正常に返ってくる
+        // はずの通信を途中であきらめてしまい、かえって遅い代替処理（1件ずつ取得）に
+        // 切り替わってしまうため、ここは他の通信より長めに待つ。
+        const res = await fetchWithTimeout(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`, undefined, 45000);
         const data = await res.json();
         if (!data.items) throw new Error('listWithValues not supported');
         let parseFailures = 0;
@@ -532,7 +537,7 @@ const storage = {
   // キー付きのまま欲しい時はこちらを使う（1回のサーバー読み込みで済ませ、現場ごとに問い合わせずに済ませるため）
   async listWithKeys(prefix) {
     try {
-      const res = await fetchWithTimeout(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`, undefined, 20000);
+      const res = await fetchWithTimeout(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`, undefined, 45000);
       const data = await res.json();
       if (!data.items) throw new Error('listWithValues not supported');
       return data.items;
