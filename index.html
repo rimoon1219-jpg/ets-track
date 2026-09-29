@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-205';
+  window.__APP_VERSION__ = '2026-09-29-206';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -5054,10 +5054,19 @@ async function autoAssignTrucks() {
   const collectedNames = useMemo(() => new Set(mgmtRecords.map((r) => r.name)), [mgmtRecords]);
 
   const filtered = useMemo(() => {
+    // 「📅仮日付・要確認」(mailPending)の現場は、メールの日付がまだ仮の状態で、
+    // 実際の日付から離れた仮日付になっていることがある(今回のように2ヶ月以上先など)。
+    // 通常の日付範囲フィルター(dateFrom/dateTo)にかけてしまうと、その範囲の外にある間は
+    // 一覧にすら出てこなくなり、見える4人(洋子・社長・すぐる・シオン)でも「確認待ちがある」こと
+    // 自体に気づけなくなってしまう(洋子さんの報告：2026-09-29、登録したのに何も見えなかった)。
+    // 一番上に固定表示する意図に合わせて、日付範囲フィルターも素通りさせる。
     let list = activeList.filter((r) => {
       if (kumitenFilter !== '全て' && r.kumiten !== kumitenFilter) return false;
-      if (dateFrom && r.date < dateFrom) return false;
-      if (dateTo && r.date > dateTo) return false;
+      const skipDateRange = tab === 'sched' && r.mailPending && TODO_VIEWERS.includes(deviceStaff);
+      if (!skipDateRange) {
+        if (dateFrom && r.date < dateFrom) return false;
+        if (dateTo && r.date > dateTo) return false;
+      }
       if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
