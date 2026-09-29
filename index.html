@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-208';
+  window.__APP_VERSION__ = '2026-09-29-210';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -203,7 +203,15 @@ async function reliableSend(body, baseline) {
   lastWriteAt = Date.now();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const item = { id, body, baseline: baseline ? JSON.stringify(baseline) : null, createdAt: Date.now() };
-  const q = getQueue();
+  let q = getQueue();
+  // 【2026-09-29 追加】同じ現場(key)がすでに未送信キューに残っている場合、古い方は取り除く。
+  // 電波が悪い間に同じ現場を繰り返し保存しようとすると、これまでは古い内容も含めてキューに
+  // 積み重なり、電波が戻った瞬間にまとめて送られて重複や上書きの原因になっていた
+  // （洋子さんの報告：2026-09-29、富岡西で3件の重複登録が発生した件）。
+  // 最新の1件だけ残せば十分なので、同じkey宛の古いものは送信せず捨てる。
+  if (body && body.key) {
+    q = q.filter((i) => !(i.body && i.body.key === body.key));
+  }
   q.push(item);
   saveQueueToDisk(q);
   notifyPendingChange();
@@ -234,15 +242,25 @@ function removeFromQueue(id) {
   const q = getQueue().filter((i) => i.id !== id);
   saveQueueToDisk(q);
   notifyPendingChange();
+  // 送信できたので、次にまた失敗した時の待ち時間を元に戻しておく
+  retryBackoffMs = RETRY_BACKOFF_BASE_MS;
 }
 
+// 【2026-09-29 追加】再送信の間隔を、失敗が続くほど少しずつ空けるようにする（8秒→16秒→…→上限2分）。
+// これまでは失敗するたびに一律8秒後に再試行していたため、サーバーが本当に混み合っている時ほど
+// 短い間隔で送信が集中し、余計に混み合う一因になっていた。1回でも成功すればすぐ8秒に戻る。
+const RETRY_BACKOFF_BASE_MS = 8000;
+const RETRY_BACKOFF_MAX_MS = 120000;
+let retryBackoffMs = RETRY_BACKOFF_BASE_MS;
 let retryTimer = null;
 function scheduleRetry() {
   if (retryTimer) return;
+  const delay = retryBackoffMs;
   retryTimer = setTimeout(async () => {
     retryTimer = null;
     await retryQueue();
-  }, 8000);
+  }, delay);
+  retryBackoffMs = Math.min(retryBackoffMs * 2, RETRY_BACKOFF_MAX_MS);
 }
 
 // 未送信キューの中身を、実際に送信する直前にサーバーの最新内容と突き合わせ直す。
@@ -1751,6 +1769,9 @@ function GenbaTracker() {
   // すぐる・シオンが工程を組んだ後の見落とし防止チェックとして使う（本体データは書き換えない）。
   const [mailCheckText, setMailCheckText] = useState('');
   const [mailCheckResults, setMailCheckResults] = useState(null);
+  // 【2026-09-29 追加】同じ行の「OK→登録」を連打しても二重に登録処理が走らないようにするための
+  // 目印（行のオブジェクトそのものをキーにする）。stateの更新を待たず即座に判定できるようにref管理する。
+  const registeringMailRowsRef = useRef(new Set());
   const [bulkUpdateText, setBulkUpdateText] = useState('');
   const [deviceStaff, setDeviceStaffState] = useState(getDeviceStaff());
   // 担当者名が未設定の端末では、他の画面を一切見せずに最初に名前を入力してもらう（誰が入力したか必ず分かるようにするため）
@@ -3522,17 +3543,29 @@ async function autoAssignTrucks() {
   // 4人にしか見せない（filtered側でmailPendingを見て絞り込む）。すぐる・シオンが監督さんと
   // 調整して日付を編集・保存した時点で印が外れ、全スタッフに通常通り見えるようになる。
   async function registerMailCandidate(row) {
+    // 【2026-09-29 追加】連打による二重登録の防止（洋子さんの報告：富岡西で3件の重複登録が
+    // 発生した実例）。電波が悪くて反応が遅い時ほど「反応がない」と思って連打されやすいため、
+    // 最初のクリックの時点ですぐにこの行をロックし、処理中は同じ行のボタンを押しても
+    // 何も起きないようにする（stateの更新を待たず、refで即座に判定する）。
+    if (row.registered || registeringMailRowsRef.current.has(row)) return;
+    registeringMailRowsRef.current.add(row);
+    setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registering: true } : r)) : prev));
+    const stopRegistering = () => {
+      registeringMailRowsRef.current.delete(row);
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registering: false } : r)) : prev));
+    };
+
     const cols = row.raw.split('\t');
-    if (cols.length !== 13) { showToast('列数が13列ではないため登録できません。「この行をコピー」から一括インポートに貼り付けてください'); return; }
+    if (cols.length !== 13) { showToast('列数が13列ではないため登録できません。「この行をコピー」から一括インポートに貼り付けてください'); stopRegistering(); return; }
     const [name, kumiten, address, date, time, status, supervisorName, supervisorPhone, gara, keiTruck, expectedVisits, staff, note] = cols;
     const trimmedName = (name || '').trim();
-    if (!trimmedName || !(date || '').trim()) { showToast('現場名または日付が空欄のため登録できません'); return; }
+    if (!trimmedName || !(date || '').trim()) { showToast('現場名または日付が空欄のため登録できません'); stopRegistering(); return; }
     const normalizedDate = normalizeDateStr(date);
     let freshSched = schedRecords;
     try { freshSched = await storage.listWithValues('sched:'); } catch (e) { /* 取得できなければ手元のデータで続行 */ }
     const dupKey = `${trimmedName}__${normalizedDate}`;
     const dup = freshSched.find((r) => `${(r.name || '').trim()}__${r.date || ''}` === dupKey);
-    if (dup) { showToast('すでに予定表に同じ現場・日付があります'); return; }
+    if (dup) { showToast('すでに予定表に同じ現場・日付があります'); stopRegistering(); return; }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
       id, createdAt: Date.now(),
@@ -3562,11 +3595,12 @@ async function autoAssignTrucks() {
       // 何が起きたのか画面から分からなかった)。
       const result = await storage.set(`sched:${id}`, JSON.stringify(record));
       const queued = !!(result && result.queued);
-      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true, queued } : r)) : prev));
+      registeringMailRowsRef.current.delete(row);
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true, queued, registering: false } : r)) : prev));
       showToast(queued
         ? '電波状況が悪いため保留しました。予定表にはこの端末上だけ先に反映済みで、電波が戻り次第サーバーに自動送信されます（それまではすぐる・シオンの画面にはまだ出ません）'
         : '予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
-    } catch (e) { showToast('登録に失敗しました'); }
+    } catch (e) { showToast('登録に失敗しました'); stopRegistering(); }
   }
 
   // 「📅仮日付・要確認」の印は、通常は日付を実際に変更して保存した時に自動で外れる。
@@ -5417,9 +5451,9 @@ async function autoAssignTrucks() {
                 setManualRetryingLoad(false);
                 showToast(ok ? '最新データを取得しました' : 'まだ取得できませんでした。電波の良い場所でもう一度お試しください');
               }}
-              title="予定表・管理表・伝達の最新データがまだ取得できていません。タップして再試行してください"
+              title="予定表・管理表・伝達の最新データを裏側で自動的に取り直しています。急ぐ場合はタップしてください"
             >
-              {manualRetryingLoad ? '再試行中…' : '⚠️ 最新データ未取得（タップで再試行）'}
+              {manualRetryingLoad ? '再試行中…' : '⚠️ 最新データ取得中（急ぐ時はタップ）'}
             </button>
           )}
           {tab !== 'todo' && TODO_VIEWERS.includes(deviceStaff) && (() => {
@@ -6065,11 +6099,11 @@ async function autoAssignTrucks() {
                     この行をコピー
                   </button>
                   <button
-                    style={{ ...styles.saveBtn, fontSize: 12, padding: '4px 10px' }}
-                    disabled={r.colMismatch}
+                    style={{ ...styles.saveBtn, fontSize: 12, padding: '4px 10px', opacity: r.registering ? 0.6 : 1 }}
+                    disabled={r.colMismatch || r.registering}
                     onClick={() => registerMailCandidate(r)}
                   >
-                    {warn ? '✅ OK→別の予定として登録' : '✅ OK→予定表に登録'}
+                    {r.registering ? '登録中…' : (warn ? '✅ OK→別の予定として登録' : '✅ OK→予定表に登録')}
                   </button>
                 </div>
               </div>
