@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-198';
+  window.__APP_VERSION__ = '2026-09-29-200';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -158,8 +158,24 @@ function notifyPendingChange() {
   pendingListeners.forEach((fn) => fn(count));
 }
 
+// 現場は電波の悪い場所も多く、素のfetchのままだと通信が「失敗」ではなく「いつまでも応答が
+// 返ってこない」状態になることがある。これまでタイムアウトが無かったため、電波が悪いと
+// 「最新データ未取得（タップで再試行）」を押しても、応答が返ってこないままボタンが
+// 何分も「再試行中…」のまま固まって見えてしまっていた（洋子さんの報告：2026-09-29、
+// 現場のスタッフが忙しくてこの画面を開いたまま待っていられない）。
+// 一定時間で必ずあきらめる（＝早く失敗を知らせる）ようにし、待たされる時間の上限を決める。
+async function fetchWithTimeout(url, options, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...(options || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function sendToServer(body) {
-  const res = await fetch(API_URL, {
+  const res = await fetchWithTimeout(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(body),
@@ -238,7 +254,7 @@ async function resolveFreshSetBody(item) {
   try {
     const baseline = JSON.parse(item.baseline);
     const intended = JSON.parse(body.value);
-    const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(body.key)}`);
+    const res = await fetchWithTimeout(`${API_URL}?action=get&key=${encodeURIComponent(body.key)}`);
     const data = await res.json();
     if (!data || !data.found) return body; // サーバー側に無ければ（削除済みなど）そのまま送る
     const current = JSON.parse(data.value);
@@ -323,11 +339,12 @@ function removeFromPhotoQueue(id) {
 }
 
 async function uploadPhotoDirect(dataUrl, filename) {
-  const res = await fetch(API_URL, {
+  // 写真は他の通信よりデータが大きく時間がかかるため、タイムアウトを長めにする
+  const res = await fetchWithTimeout(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: 'uploadPhoto', dataUrl, filename }),
-  });
+  }, 45000);
   const data = await res.json();
   return data.url;
 }
@@ -335,7 +352,7 @@ async function uploadPhotoDirect(dataUrl, filename) {
 // アップロードに失敗した写真を、あとで自動的にその現場の記録へ追加する
 async function attachPhotoToRecord(recordId, staff, url, recordPrefix) {
   const prefix = recordPrefix || 'mgmt';
-  const r = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(prefix + ':' + recordId)}`);
+  const r = await fetchWithTimeout(`${API_URL}?action=get&key=${encodeURIComponent(prefix + ':' + recordId)}`);
   const data = await r.json();
   if (!data.found) return false;
   const record = JSON.parse(data.value);
@@ -460,7 +477,7 @@ async function fetchWithLimit(keys, limit) {
 
 const storage = {
   async get(key) {
-    const res = await fetch(`${API_URL}?action=get&key=${encodeURIComponent(key)}`);
+    const res = await fetchWithTimeout(`${API_URL}?action=get&key=${encodeURIComponent(key)}`);
     const data = await res.json();
     if (!data.found) throw new Error('not found: ' + key);
     return { key: data.key, value: data.value };
@@ -478,7 +495,7 @@ const storage = {
     return { key, deleted: true, queued: !r.ok };
   },
   async list(prefix) {
-    const res = await fetch(`${API_URL}?action=list&prefix=${encodeURIComponent(prefix || '')}`);
+    const res = await fetchWithTimeout(`${API_URL}?action=list&prefix=${encodeURIComponent(prefix || '')}`);
     const data = await res.json();
     return { keys: data.keys || [] };
   },
@@ -494,7 +511,7 @@ const storage = {
     const MAX_TRIES = 3;
     for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
       try {
-        const res = await fetch(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`);
+        const res = await fetchWithTimeout(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`, undefined, 20000);
         const data = await res.json();
         if (!data.items) throw new Error('listWithValues not supported');
         let parseFailures = 0;
@@ -515,7 +532,7 @@ const storage = {
   // キー付きのまま欲しい時はこちらを使う（1回のサーバー読み込みで済ませ、現場ごとに問い合わせずに済ませるため）
   async listWithKeys(prefix) {
     try {
-      const res = await fetch(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`);
+      const res = await fetchWithTimeout(`${API_URL}?action=listWithValues&prefix=${encodeURIComponent(prefix || '')}`, undefined, 20000);
       const data = await res.json();
       if (!data.items) throw new Error('listWithValues not supported');
       return data.items;
@@ -693,6 +710,7 @@ const MGMT_KUMITEN_PREFIXES = [
   ['スキルド', 'スキルド'],
   ['リムクラフト', 'リムクラフト'],
   ['レイオン', 'レイオン'],
+  ['カマクラ工務店', 'カマクラ工務店'],
 ].sort((a, b) => b[0].length - a[0].length);
 
 // オープンハウス・アーキテクト（OHA）の監督名簿。マニフェスト検索を楽にするため、
