@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-207';
+  window.__APP_VERSION__ = '2026-09-29-208';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -6593,6 +6593,30 @@ async function autoAssignTrucks() {
                 </div>
               )}
 
+              {/* 工務店・対象月の選択は、以前は「確認待ち」の長い一覧(100件を超えることもある)の下にあり、
+                  そこにたどり着くまで洋子さんが毎回大量にスクロールする必要があった(洋子さんの報告：
+                  2026-09-29、100件くらいスクロールが大変で、工務店を選ぶところが上の方にあった方がいい)。
+                  「確認待ち」は工務店を選ぶ前の全工務店共通の一覧なので、選択自体は一覧より上に置いても
+                  意味は変わらない。ここに移動して、開いてすぐ工務店・対象月を選べるようにする。 */}
+              <div style={styles.searchBox}>
+                <label style={styles.label}>工務店</label>
+                <div style={styles.chipRow}>
+                  {kumitenList.map((k) => (
+                    <button key={k} onClick={() => setInvoiceKumiten(k)} style={{ ...styles.chip, ...(invoiceKumiten === k ? styles.chipActive : {}) }}>{k}</button>
+                  ))}
+                  <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
+                </div>
+                <label style={styles.label}>対象月</label>
+                <input type="month" style={styles.input} value={invoiceMonth} onChange={(e) => setInvoiceMonth(e.target.value)} />
+                <button
+                  type="button"
+                  style={{ ...styles.linkBtnSmall, marginTop: 8 }}
+                  onClick={() => { if (invoicePriceSectionRef.current) invoicePriceSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                >
+                  ↓ 下の「確認待ち」を飛ばして金額入力へ
+                </button>
+              </div>
+
               <div style={styles.areaGroupTitle}>🔔 確認待ち（{invoicePendingItems.length}件・「追加」「単発」で金額未入力のもの・全工務店）</div>
               {invoicePendingItems.length === 0 && <div style={styles.empty}>確認待ちの項目はありません</div>}
               {invoicePendingItems.map((record) => (
@@ -6613,18 +6637,6 @@ async function autoAssignTrucks() {
               <button style={{ ...styles.linkBtnSmall, marginTop: 4, marginBottom: 14 }} onClick={() => setShowDismissedInvoice(true)}>
                 🗑 不要にした項目を見る（{invoiceDismissedItems.length}件）
               </button>
-
-              <div style={styles.searchBox}>
-                <label style={styles.label}>工務店</label>
-                <div style={styles.chipRow}>
-                  {kumitenList.map((k) => (
-                    <button key={k} onClick={() => setInvoiceKumiten(k)} style={{ ...styles.chip, ...(invoiceKumiten === k ? styles.chipActive : {}) }}>{k}</button>
-                  ))}
-                  <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
-                </div>
-                <label style={styles.label}>対象月</label>
-                <input type="month" style={styles.input} value={invoiceMonth} onChange={(e) => setInvoiceMonth(e.target.value)} />
-              </div>
 
               <button style={{ ...styles.linkBtn, marginBottom: 10 }} onClick={() => { setInvoiceAddDate(`${invoiceMonth}-01`); setShowInvoiceAddSite(true); }}>
                 ＋ 現場を追加（管理表に無いものを請求だけしたい時）
