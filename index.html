@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-01-228';
+  window.__APP_VERSION__ = '2026-10-01-234';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -587,6 +587,21 @@ const storage = {
 // 立米数（請求書関連）を編集するための合言葉。後で洋子さんの希望のものに変更します。
 const RYUBEI_PASSWORD = '8989';
 const TODO_PASSWORD = '4455';
+
+// 【2026-10-01追加】「この端末を登録」機能。合言葉そのものは絶対にlocalStorageへ保存せず、
+// 「この端末は解除済み」という印（opaqueな'1'）だけを端末ごとに保存する。他の人がこのファイルや
+// ブラウザの中身を見ても合言葉（8989／4455）自体は分からない仕組みにしている。
+const DEVICE_TRUST_KEY = { ryubei: 'ets_device_trust_ryubei', todo: 'ets_device_trust_todo' };
+function isDeviceTrusted(kind) {
+  try { return window.localStorage.getItem(DEVICE_TRUST_KEY[kind]) === '1'; }
+  catch (e) { return false; }
+}
+function trustDevice(kind) {
+  try { window.localStorage.setItem(DEVICE_TRUST_KEY[kind], '1'); } catch (e) { /* 保存できなくても致命的ではない */ }
+}
+function untrustDevice(kind) {
+  try { window.localStorage.removeItem(DEVICE_TRUST_KEY[kind]); } catch (e) { /* noop */ }
+}
 
 // 社長・洋子さん専用の使い方メモ（8989でだけ開ける「📖使い方メモ」に表示）。
 // 内容を直すときはここを書き換えるだけでOK。
@@ -1631,12 +1646,14 @@ function GenbaTracker() {
   const [showExport, setShowExport] = useState(false);
   const [exportMeta, setExportMeta] = useState({ totalCount: 0, missingCount: 0 });
   const [exportText, setExportText] = useState('');
-  const [ryubeiUnlocked, setRyubeiUnlocked] = useState(false);
-  const [todoUnlocked, setTodoUnlocked] = useState(false);
-  // ロック解除の状態はパスワードを消すまでどこにも保存されず、この画面を開いている間だけの
-  // 一時的なものだが、スマホの「閉じる」がアプリを裏に回しただけ（完全終了ではない）の場合、
-  // 開き直した時も解除されたままになってしまう。誰かが後でその端末を触った時に見えてしまわないよう、
-  // 裏に回してから一定時間（10分）経って戻ってきた時は、自動でロックし直す。
+  // 【2026-10-01変更】「この端末を登録」済みなら、アプリを開き直しても最初から解除済み状態にする。
+  const [ryubeiUnlocked, setRyubeiUnlocked] = useState(() => isDeviceTrusted('ryubei'));
+  const [todoUnlocked, setTodoUnlocked] = useState(() => isDeviceTrusted('todo'));
+  // ロック解除の状態は基本、この画面を開いている間だけの一時的なものだが、スマホの「閉じる」が
+  // アプリを裏に回しただけ（完全終了ではない）の場合、開き直した時も解除されたままになってしまう。
+  // 誰かが後でその端末を触った時に見えてしまわないよう、裏に回してから一定時間（10分）経って
+  // 戻ってきた時は、自動でロックし直す。ただし「この端末を登録」済み（isDeviceTrusted）の場合は、
+  // 本人の端末として信頼しているので自動ロックし直しの対象からは外す。
   const hiddenAtRef = useRef(null);
   useEffect(() => {
     const AUTO_RELOCK_MS = 10 * 60 * 1000;
@@ -1647,8 +1664,8 @@ function GenbaTracker() {
         const elapsed = Date.now() - hiddenAtRef.current;
         hiddenAtRef.current = null;
         if (elapsed > AUTO_RELOCK_MS) {
-          setRyubeiUnlocked(false);
-          setTodoUnlocked(false);
+          if (!isDeviceTrusted('ryubei')) setRyubeiUnlocked(false);
+          if (!isDeviceTrusted('todo')) setTodoUnlocked(false);
         }
       }
     }
@@ -1907,8 +1924,8 @@ function GenbaTracker() {
       setLoading(false);
       setSyncingFromCache(true);
     }
-    // 裏側で最新データを取りに行き、取れ次第差し替える
-    load();
+    // 裏側で最新データを取りに行き、取れ次第差し替える（キャッシュがある時は件数表示を維持したまま静かに）
+    load(!!cached);
     // 前回、一括取り込みなどの保存が終わる前にタブを閉じてしまった・画面が消えてしまった場合、
     // 端末内に保存待ちの控えが残っていることがあるので、起動時に必ず続きを再開する
     flushPendingSaveQueue((failed) => {
@@ -1961,7 +1978,7 @@ function GenbaTracker() {
       if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（この画面での保存）
       if (now - lastWriteAt < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（書き込み全般の保険）
       lastAutoRefreshRef.current = now;
-      load();
+      load(true);
       if (tab === 'dispatch') loadDispatch(dispatchDate);
     }
     document.addEventListener('visibilitychange', handleVisible);
@@ -1986,7 +2003,7 @@ function GenbaTracker() {
       if (now - lastLocalWriteRef.current < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（この画面での保存）
       if (now - lastWriteAt < SAVE_SETTLE_MS) return; // 保存直後はサーバー反映待ち（書き込み全般の保険）
       lastAutoRefreshRef.current = now;
-      load();
+      load(true);
       if (tab === 'dispatch') loadDispatch(dispatchDate);
     }, intervalMs);
     return () => clearInterval(timer);
@@ -2061,8 +2078,16 @@ function GenbaTracker() {
     return () => { cancelled = true; };
   }, [showDispatchMap, dispatchDate, assignments, regularTruckCount, includeKei]);
 
-  async function load() {
-    setLoading(true);
+  // silent=true: 他アプリからの復帰・定期自動更新など、裏側で静かに最新化したいだけの時に使う。
+  // 【2026-10-01】以前はどのタイミングのload()でも画面上部の件数表示が「読み込み中…」に
+  // 置き換わってしまい、スマホで他アプリと行き来するたび（LINEを見る、スクリーンショットを
+  // 撮ろうとして音量ボタンを押した時など）や45秒ごとの自動更新のたびに毎回そうなって、
+  // 作業中に何度も「読み込み中」表示が出て気になる、という報告があった。
+  // すでに手元に表示するデータがある裏側の更新では、件数表示はそのまま維持し、代わりに
+  // 小さな「🔄 最新件数を確認中…」の表示（syncingFromCache）だけにする。
+  async function load(silent) {
+    if (silent) setSyncingFromCache(true);
+    else setLoading(true);
     let list = kumitenList;
     let loadSucceededForReturn = false;
     try {
@@ -3619,6 +3644,17 @@ async function autoAssignTrucks() {
     const m = note.match(/ETS TRACK既存登録あり\(旧メモ[:：]?\s*([^)]*)\)/);
     return m ? m[1].trim() : '';
   }
+  // 【2026-10-01追加】毎朝のメール整理タスクが、メモ欄の先頭に
+  // 「受信:2026-10-01 22:03｜要約:一言要約｜」の形で付けてくる受信日時・一言要約を取り出す。
+  // すぐる・シオン向けの「📧メール確認」タブで、この予定がどのメールから来たものかの
+  // 目印として使う（本文は共有受信箱に届いているので、見つける手がかりだけここに出す）。
+  // 取り出した後は、通常のメモ欄が読みにくくならないよう先頭のこの部分は取り除いて保存する。
+  function extractMailMetaFromNote(note) {
+    if (!note) return { receivedAt: '', summary: '', restNote: note || '' };
+    const m = note.match(/^受信[:：]\s*([^｜]*)｜要約[:：]\s*([^｜]*)｜\s*/);
+    if (!m) return { receivedAt: '', summary: '', restNote: note };
+    return { receivedAt: m[1].trim(), summary: m[2].trim(), restNote: note.slice(m[0].length) };
+  }
   function runMailCheck() {
     const lines = mailCheckText.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim().length > 0);
     if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
@@ -3697,6 +3733,7 @@ async function autoAssignTrucks() {
     const dup = freshSched.find((r) => `${(r.name || '').trim()}__${r.date || ''}` === dupKey);
     if (dup) { showToast('すでに予定表に同じ現場・日付があります'); stopRegistering(); return; }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const mailMeta = extractMailMetaFromNote((note || '').trim());
     const record = {
       id, createdAt: Date.now(),
       name: trimmedName,
@@ -3712,7 +3749,9 @@ async function autoAssignTrucks() {
       keiTruckRequired: (keiTruck || '').trim() === '○' || (keiTruck || '').trim().toLowerCase() === 'true',
       expectedVisits: (expectedVisits || '').trim(),
       staff: (staff || '').trim(),
-      note: (note || '').trim(),
+      note: mailMeta.restNote.trim(),
+      mailReceivedAt: mailMeta.receivedAt,
+      mailSummary: mailMeta.summary,
       houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
       mailPending: true,
     };
@@ -4461,8 +4500,16 @@ async function autoAssignTrucks() {
   function tryUnlockRyubei() {
     const input = window.prompt('立米数を編集するには合言葉を入力してください');
     if (input === null) return;
-    if (input === RYUBEI_PASSWORD) { setRyubeiUnlocked(true); showToast('ロック解除しました'); }
+    if (input === RYUBEI_PASSWORD) { setRyubeiUnlocked(true); offerTrustDevice('ryubei'); showToast('ロック解除しました'); }
     else showToast('合言葉が違います');
+  }
+
+  // 【2026-10-01追加】合言葉が正しかった直後に、「この端末を登録して次回から省略するか」を確認する。
+  // 合言葉そのものは保存せず、「解除済み」という印だけをこの端末に残す（trustDevice参照）。
+  function offerTrustDevice(kind) {
+    if (isDeviceTrusted(kind)) return;
+    const ok = window.confirm('この端末を登録しますか？\n登録すると、次回からこの端末では合言葉の入力が不要になります。\n（共有のパソコン・タブレットでは登録しないことをおすすめします）');
+    if (ok) { trustDevice(kind); showToast('この端末を登録しました'); }
   }
 
   function getEditItems(record) {
@@ -4560,6 +4607,7 @@ async function autoAssignTrucks() {
     if (input === RYUBEI_PASSWORD) {
       setRyubeiUnlocked(true);
       setTab('invoice');
+      offerTrustDevice('ryubei');
       showToast('ロック解除しました');
     } else {
       showToast('合言葉が違います');
@@ -4573,6 +4621,7 @@ async function autoAssignTrucks() {
     if (input === RYUBEI_PASSWORD) {
       setRyubeiUnlocked(true);
       setShowStaffManager(true);
+      offerTrustDevice('ryubei');
       showToast('ロック解除しました');
     } else {
       showToast('合言葉が違います');
@@ -4612,6 +4661,23 @@ async function autoAssignTrucks() {
     if (input === TODO_PASSWORD) {
       setTodoUnlocked(true);
       setTab('todo');
+      offerTrustDevice('todo');
+      showToast('ロック解除しました');
+    } else {
+      showToast('合言葉が違います');
+    }
+  }
+
+  // 【2026-10-01追加】すぐる・シオン向け「📧メール確認」タブ。TODOタブと同じ合言葉を使い回す
+  // （新しい合言葉を覚えてもらう手間を増やさないため）。一度TODOタブを解除していればそのまま開ける。
+  function tryUnlockMailInfoTab() {
+    if (todoUnlocked) { setTab('mailinfo'); return; }
+    const input = window.prompt('メール確認タブを開くには合言葉を入力してください（TODOタブと同じです）');
+    if (input === null) return;
+    if (input === TODO_PASSWORD) {
+      setTodoUnlocked(true);
+      setTab('mailinfo');
+      offerTrustDevice('todo');
       showToast('ロック解除しました');
     } else {
       showToast('合言葉が違います');
@@ -5460,6 +5526,24 @@ async function autoAssignTrucks() {
     const next = [...dismissedClosings, key];
     setDismissedClosings(next);
     try { await storage.set('meta:dismissedClosings', JSON.stringify(next), true); } catch (e) { /* 保存に失敗しても表示上は消えたままにしておく */ }
+
+    // 【2026-10-01追加】締め日を「もうやった」＝その工務店は今たまっている分をまとめて
+    // 提出し終えたはずなので、下の「確認待ち」一覧からも一緒に片付ける（洋子さんの要望）。
+    // 完全に消すわけではなく、他の「不要にする」と同じ扱いなので、🗑「不要にした項目を見る」から
+    // いつでも個別に元に戻せる（金額を入力すれば集計・請求書には引き続き反映される）。
+    const targets = mgmtRecords.filter((r) => r.kumiten === kumiten && needsInvoicePrice(r));
+    let clearedCount = 0;
+    for (const r of targets) {
+      const updated = { ...r, invoiceDismissed: true };
+      try {
+        await storage.set(`mgmt:${r.id}`, JSON.stringify(updated));
+        applyLocalRecordUpdate('mgmt', updated);
+        clearedCount++;
+      } catch (e) { /* 1件失敗しても他は続ける。片付けられなかった分は確認待ちに残るので後で個別に気づける */ }
+    }
+    showToast(clearedCount > 0
+      ? `${kumiten}の締め日を確認済みにしました（確認待ちから${clearedCount}件を片付けました。🗑からいつでも戻せます）`
+      : `${kumiten}の締め日を確認済みにしました`);
   }
 
   async function dismissInvoiceItem(record) {
@@ -5703,7 +5787,7 @@ async function autoAssignTrucks() {
           <div style={styles.brand}>ETS TRACK</div>
           <div style={styles.brandTag}>Ecolotex Shonan Co., Ltd.</div>
           <div style={styles.brandSub}>
-            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'todo' ? 'TODO・伝達（新規入力スタッフ用）' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : tab === 'mailcheck' ? 'メール抽出データと予定表・管理表の突き合わせ' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
+            {tab === 'dispatch' ? `${dispatchDate} の配車` : tab === 'gantt' ? '現場の工期を一覧表示' : tab === 'todo' ? 'TODO・伝達（新規入力スタッフ用）' : tab === 'invoice' ? '請求書（社長・洋子さん専用）' : tab === 'mailcheck' ? 'メール抽出データと予定表・管理表の突き合わせ' : tab === 'mailinfo' ? '予定表「📅仮日付・要確認」のメール受信情報' : loading ? '読み込み中…' : `${filtered.length}件表示中`}
             {!loading && syncingFromCache && (tab === 'sched' || tab === 'mgmt') && (
               <span style={styles.syncingTag}>🔄 最新件数を確認中…</span>
             )}
@@ -5793,6 +5877,20 @@ async function autoAssignTrucks() {
             );
           })()}
         </button>
+        {/* 【2026-10-01追加】すぐる・シオン向け「📧メール確認」タブ。TODOタブと同じ合言葉。
+            自分たちの共有受信箱(ecolotex.information宛)に来ているメールと、この予定表の
+            「📅仮日付・要確認」項目とを照らし合わせやすいよう、受信日時・一言要約だけを見せる
+            （メール本文そのものは表示しない。本文は各自の受信箱で確認する）。 */}
+        {TODO_VIEWERS.includes(deviceStaff) && (
+          <button onClick={tryUnlockMailInfoTab} style={{ ...styles.tabBtn, ...(tab === 'mailinfo' ? styles.tabBtnActive : {}) }}>
+            🔒📧メール確認
+            {(() => {
+              const count = schedRecords.filter((r) => r.mailPending).length;
+              if (count === 0) return null;
+              return <span style={styles.todoTabBadgeImportant}>{count}</span>;
+            })()}
+          </button>
+        )}
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
         )}
@@ -5816,7 +5914,7 @@ async function autoAssignTrucks() {
         </div>
       )}
 
-      {tab !== 'dispatch' && tab !== 'todo' && tab !== 'invoice' && tab !== 'gantt' && tab !== 'mailcheck' && (
+      {tab !== 'dispatch' && tab !== 'todo' && tab !== 'invoice' && tab !== 'gantt' && tab !== 'mailcheck' && tab !== 'mailinfo' && (
         <>
           <div style={styles.searchBox}>
             <SiteNameAutocomplete
@@ -6339,6 +6437,35 @@ async function autoAssignTrucks() {
           />
         );
       })()}
+
+      {tab === 'mailinfo' && (
+        <div style={{ padding: '0 12px 24px' }}>
+          <div style={{ fontSize: 13, color: '#6B6B60', lineHeight: 1.6, marginBottom: 10 }}>
+            予定表に「📅仮日付・要確認」として仮登録されている現場の一覧です。それぞれ、元になったメールの受信日時・内容の一言要約を出しています。
+            メール本文そのものはここには出ないので、詳しい内容は自分たちの共有受信箱（ecolotex.information宛）で該当のメールを探して確認してください（下の受信日時が目印になります）。
+            調整して日付が決まったら「ここで確認する」から予定表を開き、日付を編集・保存してください（保存すると「要確認」の印が外れます）。
+          </div>
+          {schedRecords.filter((r) => r.mailPending).length === 0 && (
+            <div style={styles.empty}>今は「要確認」の項目はありません</div>
+          )}
+          {schedRecords.filter((r) => r.mailPending).sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((r) => (
+            <div key={r.id} style={styles.invoiceRow}>
+              <div style={styles.invoiceName}>{r.name}</div>
+              <div style={styles.invoiceMeta}>{r.kumiten}／仮日付:{r.date}</div>
+              {r.mailReceivedAt ? (
+                <div style={{ fontSize: 12.5, color: '#6B6B60', marginTop: 4 }}>
+                  📧 受信:{r.mailReceivedAt}{r.mailSummary ? `／${r.mailSummary}` : ''}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#B0AFA6', marginTop: 4 }}>（この項目には受信日時の記録がありません）</div>
+              )}
+              <div style={{ marginTop: 6 }}>
+                <button type="button" style={styles.handoffBtn} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>ここで確認する</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {tab === 'mailcheck' && (
         <div style={{ padding: '0 12px 24px' }}>
@@ -7658,6 +7785,19 @@ async function autoAssignTrucks() {
             </div>
             <div style={{ color: '#8A8A83', fontSize: 12.5, marginBottom: 10, lineHeight: 1.6 }}>
               これまでに予定表・管理表・伝達で名前が使われたスタッフの一覧です。「退出させる」にすると、その名前ではこのアプリを開けなくなります（すでに開いたままの端末がある場合、次にアプリを開き直した時からブロックされます）。
+            </div>
+            <div style={{ background: '#F7F6F1', borderRadius: 10, padding: '10px 12px', marginBottom: 14 }}>
+              <div style={{ fontSize: 12.5, color: '#8A8A83', lineHeight: 1.6, marginBottom: 8 }}>
+                このスマホ／パソコンは「登録済み」にすると、次回から請求書・TODOタブなどを開く時の合言葉入力を省略できます（合言葉入力後に確認が出ます）。共有のパソコンやタブレットは登録しないでください。
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  style={styles.kumitenDeleteBtn}
+                  onClick={() => { untrustDevice('ryubei'); untrustDevice('todo'); showToast('この端末の登録を解除しました'); }}
+                >
+                  この端末の登録を解除する
+                </button>
+              </div>
             </div>
             {allKnownStaffNames().length === 0 && (
               <div style={{ color: '#8A8A83', fontSize: 13, padding: '4px 4px 10px' }}>まだ記録がありません</div>
