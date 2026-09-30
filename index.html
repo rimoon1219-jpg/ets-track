@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-30-225';
+  window.__APP_VERSION__ = '2026-09-30-226';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -504,7 +504,10 @@ const storage = {
   // 渡しておくと、電波不良などで送信が遅れて後から再送信される時に、待っている間に
   // 他の人が行った変更を巻き戻して上書きしてしまわないよう、実際に変えたフィールドだけを
   // その時点の最新内容の上に重ねてから送るようになる（reliableSend／retryQueue参照）。
-  async set(key, value, _retry, baseline) {
+  // 第3引数は以前は再試行フラグ用だったが、実際にはreliableSend側で常に再試行するため
+  // 中身では使われていなかった（呼び出し側は今も習慣でtrueを渡しているが無視される）。
+  // 呼び出し側を全部直すと影響範囲が大きいので、ここでは引数名だけ実情に合わせておく。
+  async set(key, value, _unused, baseline) {
     const r = await reliableSend({ action: 'set', key, value }, baseline);
     return { key, value, queued: !r.ok };
   },
@@ -3525,7 +3528,7 @@ async function autoAssignTrucks() {
   // 一致しているかどうかだけを見せる方式にした。一致していれば「同じ連絡の重複かも」、
   // 違えば何も言わない（違う内容＝次の工程だろうと自然に伝わるため、わざわざ説明しない）。
   // 判断に数字の計算がいらず、一致／不一致を見るだけで済む。
-  function findExistingMatchesForMailName(rawName, rowDate) {
+  function findExistingMatchesForMailName(rawName) {
     const trimmed = (rawName || '').trim();
     if (!trimmed) return [];
     const norm = normalizeForCompare(trimmed);
@@ -3573,7 +3576,7 @@ async function autoAssignTrucks() {
       const rowDate = (cols[3] || '').trim();
       const rowStatus = (cols[5] || '').trim();
       const note = (cols[12] || '').trim();
-      const allMatches = findExistingMatchesForMailName(name, rowDate);
+      const allMatches = findExistingMatchesForMailName(name);
       const reviewReasonFromMemo = extractReviewReasonFromNote(note);
       const schedMatches = allMatches.filter((m) => m._src === '予定表');
       rows.push({
@@ -3696,33 +3699,47 @@ async function autoAssignTrucks() {
   // 「対応済み」ログや誰がいつ確認したかの記録はあえて持たない（運用の手間を増やさないため）。
   // 印は、実際に日付が変更・保存された時点で自動で消える（すぐるは普段通り日付を直すだけでよい）。
   async function setNeedsReview(record, reason, silent) {
+    // 【2026-09-30 追加】このrecordは、呼び出し元（📧メールタブの照合結果や一括貼り付け）が
+    // 少し前に読み込んだままの内容のことがある。そのまま丸ごと上書き保存すると、その間に
+    // 他の端末で加わった変更（写真の追加や別項目の編集など）を巻き戻してしまう恐れがあるため、
+    // 保存の直前にサーバーの最新内容を取り直し、印の項目だけをそこに重ねて保存する。
+    let latest = record;
+    try {
+      const fresh = await storage.get(`sched:${record.id}`);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得できなければ手元の内容のまま続行 */ }
     const updated = {
-      ...record,
+      ...latest,
       needsReviewReason: (reason || '').trim() || '要確認',
     };
     try {
       applyLocalRecordUpdate('sched', updated);
-      await storage.set(`sched:${record.id}`, JSON.stringify(updated));
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated), true, latest);
       if (!silent) showToast('印を立てました');
     } catch (e) { if (!silent) showToast('登録に失敗しました'); throw e; }
   }
   // 日付を変えずに「確認したが変更不要だった」場合の手動解除。こちらも誰が・いつ解除したかを
   // 自動で記録する（本人が追加で何か入力する必要はない＝ボタンを押すだけ）。
   async function clearNeedsReview(record) {
+    let latest = record;
+    try {
+      const fresh = await storage.get(`sched:${record.id}`);
+      if (fresh && fresh.value) latest = JSON.parse(fresh.value);
+    } catch (e) { /* 取得できなければ手元の内容のまま続行 */ }
     const logEntry = {
-      reason: record.needsReviewReason,
+      reason: latest.needsReviewReason,
       resolvedBy: deviceStaff || '（担当者不明）',
       resolvedAt: new Date().toISOString(),
       via: '確認のみ（変更不要）',
     };
     const updated = {
-      ...record,
+      ...latest,
       needsReviewReason: '',
-      reviewLog: [...(record.reviewLog || []), logEntry].slice(-5),
+      reviewLog: [...(latest.reviewLog || []), logEntry].slice(-5),
     };
     try {
       applyLocalRecordUpdate('sched', updated);
-      await storage.set(`sched:${record.id}`, JSON.stringify(updated));
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated), true, latest);
     } catch (e) { showToast('印の解除に失敗しました'); }
   }
 
