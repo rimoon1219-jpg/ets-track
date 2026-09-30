@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-30-226';
+  window.__APP_VERSION__ = '2026-09-30-227';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1646,6 +1646,10 @@ function GenbaTracker() {
   const [showStaffManager, setShowStaffManager] = useState(false);
   const [revokedStaff, setRevokedStaff] = useState([]);
   const [dismissedClosings, setDismissedClosings] = useState([]); // 「もうやった」で消した締め日リマインドの一覧（"工務店__締め日"の形。次の締め日が来たら自動的にまた出る）
+  // 「同じ住所で日付違い」警告のうち「別物なので無視」と確認済みの組み合わせ（"住所||id1,id2"の形。
+  // 全端末・全スタッフで共有（誰か一人が確認すれば他の人にはもう出ない）。対象のidの組み合わせが
+  // 変わったら（新しい予定が増えた等）別グループ扱いになり、また警告が出る
+  const [dismissedAddressDups, setDismissedAddressDups] = useState([]);
 
   // dispatch state
   const [dispatchDate, setDispatchDate] = useState(todayStr());
@@ -2136,6 +2140,12 @@ function GenbaTracker() {
         const dc = await storage.get('meta:dismissedClosings', true);
         setDismissedClosings(dc && dc.value ? JSON.parse(dc.value) : []);
       } catch (e) { setDismissedClosings([]); }
+
+      // 「同じ住所で日付違い」警告で「別物なので無視」と確認済みの組み合わせ
+      try {
+        const adg = await storage.get('meta:dismissedAddressDups', true);
+        setDismissedAddressDups(adg && adg.value ? JSON.parse(adg.value) : []);
+      } catch (e) { setDismissedAddressDups([]); }
 
       // 「マニフェスト側に反映した」とマークした内容（工務店＋現場名＋監督名＋ハウスNoの組み合わせ）。
       // 同じ内容のうちはもう一覧に出さないが、また値が変わればそれは新しい未反映として出す
@@ -3116,6 +3126,9 @@ async function autoAssignTrucks() {
   // 現場名の表記が微妙に違っていても住所は同じなので、こちらは名前ではなく住所で突き合わせる）。
   // 予定表（sched）は基本的に1現場につき「次の予定」が1件だけのはずなので、同じ住所が
   // 違う日付で複数残っているのは重複の可能性が高い。
+  function addressDupGroupKey(group) {
+    return `${group[0].address}||${group.map((r) => r.id).sort().join(',')}`;
+  }
   function findAddressDuplicateGroups() {
     const map = {};
     schedRecords.forEach((r) => {
@@ -3124,7 +3137,17 @@ async function autoAssignTrucks() {
       if (!map[addr]) map[addr] = [];
       map[addr].push(r);
     });
-    return Object.values(map).filter((g) => g.length > 1 && new Set(g.map((r) => r.date)).size > 1);
+    return Object.values(map)
+      .filter((g) => g.length > 1 && new Set(g.map((r) => r.date)).size > 1)
+      .filter((g) => !dismissedAddressDups.includes(addressDupGroupKey(g)));
+  }
+  // 「別物なので無視」ボタン用。このidの組み合わせのままなら次からは警告に出さない
+  // （後から予定が増減してidの組み合わせが変わったら、それは新しい組み合わせとしてまた警告される）
+  async function dismissAddressDupGroup(group) {
+    const key = addressDupGroupKey(group);
+    const next = Array.from(new Set([...dismissedAddressDups, key]));
+    setDismissedAddressDups(next);
+    try { await storage.set('meta:dismissedAddressDups', JSON.stringify(next), true); } catch (e) { /* 保存に失敗しても表示上は消えたままにしておく */ }
   }
 
   function openEdit(r) {
@@ -8330,6 +8353,14 @@ async function autoAssignTrucks() {
                       </div>
                     </div>
                   ))}
+                  <div style={{ marginTop: 6, textAlign: 'right' }}>
+                    <button
+                      style={{ ...styles.pickTempBtn, color: '#8A8A83' }}
+                      onClick={() => dismissAddressDupGroup(group)}
+                    >
+                      別物なので今後は表示しない
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
