@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-01-242';
+  window.__APP_VERSION__ = '2026-10-01-243';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -2605,9 +2605,20 @@ function GenbaTracker() {
   function sortedTasks() {
     return sortedTodosBase().filter((t) => t.todoType !== 'memo');
   }
+  // 【2026-10-01変更】伝達は日付順ではなく必ず新しい順にする。伝達に日付が付いていると
+  // （現場の予定日など）そちらが優先されてしまい、新しく投稿した伝達が古い日付付きの伝達より
+  // 下に埋もれて気づかれない問題があったため（「既読」も全員が必ず押すとは限らないので、
+  // それに頼らず新着が確実に一番上に来るようにする）。「重要」フラグだけは引き続き最優先。
   function sortedMemos() {
     const me = getDeviceStaff();
-    return sortedTodosBase().filter((t) => t.todoType === 'memo' && !t.archived && memoVisibleToMe(t, me));
+    return [...todos]
+      .filter((t) => t.checkType !== 'feature' && t.todoType === 'memo' && !t.archived && memoVisibleToMe(t, me))
+      .sort((a, b) => {
+        const aImp = a.important ? 0 : 1;
+        const bImp = b.important ? 0 : 1;
+        if (aImp !== bImp) return aImp - bImp;
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
   }
   // 「📦 アーカイブ」で片付けた伝達（削除はせず、見返せるように残す）
   function archivedMemos() {
