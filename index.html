@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-30-227';
+  window.__APP_VERSION__ = '2026-10-01-228';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1021,6 +1021,18 @@ function normalizeDateStr(input) {
     const y = m[1];
     const mo = m[2].padStart(2, '0');
     const d = m[3].padStart(2, '0');
+    return `${y}-${mo}-${d}`;
+  }
+  // 【2026-10-01追加】カレンダーアプリからのコピーなどで「10/1」のように年を書かない
+  // 月/日だけの表記で貼り付けられることがある。以前はこの形式に対応しておらず、
+  // 正規化されないまま文字列そのものが保存されてしまい、カレンダー表示や日付検索に
+  // 出てこなくなる不具合があった（一括インポートで気づかれにくい）。今年として扱う
+  // （年をまたぐ一括貼り付けの時だけ、手動で「2026/10/1」のように年を含めて書く必要がある）
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m2) {
+    const y = new Date().getFullYear();
+    const mo = m2[1].padStart(2, '0');
+    const d = m2[2].padStart(2, '0');
     return `${y}-${mo}-${d}`;
   }
   return s; // それでも分からなければそのまま返す
@@ -2186,6 +2198,26 @@ function GenbaTracker() {
           fetchGroup('todo', ((cachedForSanity && cachedForSanity.todos) || []).length),
         ]);
         sItems = results[0]; mItems = results[1]; tItems = results[2];
+        // 【2026-10-01】一括インポートの日付欄に年を書かず「10/1」のような表記のまま貼り付けると、
+        // 以前のnormalizeDateStr()が対応しておらず、正規化されない文字列のまま保存されてしまい、
+        // カレンダー表示や日付検索に出てこなくなる不具合があった（関数側は修正済み）。
+        // すでにこの形で保存されてしまった分は、次にアプリを開いた時に自動で「年-月-日」に直して
+        // 保存し直す（今年として扱う。年をまたいだ分がもしあれば、その時だけ手動で直す必要がある）
+        const YEARLESS_DATE_RE = /^(\d{1,2})\/(\d{1,2})$/;
+        if (sItems.some((r) => YEARLESS_DATE_RE.test((r.date || '').trim()))) {
+          const fixedNow = [];
+          sItems = sItems.map((r) => {
+            const dm = YEARLESS_DATE_RE.exec((r.date || '').trim());
+            if (!dm) return r;
+            const y = new Date().getFullYear();
+            const mo = dm[1].padStart(2, '0');
+            const d = dm[2].padStart(2, '0');
+            const fixed = { ...r, date: `${y}-${mo}-${d}` };
+            fixedNow.push(fixed);
+            return fixed;
+          });
+          queueBackgroundSaves(fixedNow.map((r) => ({ key: `sched:${r.id}`, value: JSON.stringify(r), label: r.name })));
+        }
         // 同じ日付の現場が複数ある場合、並び替えの基準が日付だけだと、裏側の自動更新のたびに
         // 順番が入れ替わって画面がガクッと動いて見えることがあった（id を並び順のタイブレークに
         // 使うことで、同じ日付内は常に同じ順番になり、自動更新で並びが変わらないようにする）。
