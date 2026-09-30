@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-09-29-210';
+  window.__APP_VERSION__ = '2026-09-30-225';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1678,8 +1678,9 @@ function GenbaTracker() {
   // invoice state
   const [invoiceKumiten, setInvoiceKumiten] = useState('OHA');
   const [invoiceMonth, setInvoiceMonth] = useState(todayStr().slice(0, 7));
-  const [showInvoiceExport, setShowInvoiceExport] = useState(false);
-  const [invoiceExportText, setInvoiceExportText] = useState('');
+  // 【2026-09-30 追加】「確認待ち」を選んだ工務店だけに絞るかどうか。デフォルトは絞る（洋子さんの要望）が、
+  // 元々は工務店をまたいで見逃さないための一覧だったので、全工務店に切り替えられるようにしておく
+  const [invoicePendingAllKumiten, setInvoicePendingAllKumiten] = useState(false);
   const [invoiceEdits, setInvoiceEdits] = useState({}); // recordId -> lineItems編集中バッファ
   useEffect(() => { hasUnsavedInvoiceEdits = Object.keys(invoiceEdits).length > 0; }, [invoiceEdits]); // 保存前に閉じようとした時の警告用
   const invoicePriceSectionRef = useRef(null);
@@ -1699,6 +1700,12 @@ function GenbaTracker() {
   const [kumitenList, setKumitenList] = useState(DEFAULT_KUMITEN);
   const [supervisorDirectory, setSupervisorDirectory] = useState(DEFAULT_SUPERVISORS);
   const [showSupervisorEditor, setShowSupervisorEditor] = useState(false);
+  const [showFlagReview, setShowFlagReview] = useState(false);
+  const [flagReviewQuery, setFlagReviewQuery] = useState('');
+  const [flagReviewReason, setFlagReviewReason] = useState('');
+  const [flagReviewSelectedId, setFlagReviewSelectedId] = useState('');
+  const [flagBulkText, setFlagBulkText] = useState('');
+  const [flagBulkResult, setFlagBulkResult] = useState(null);
   const [supervisorEditorKumiten, setSupervisorEditorKumiten] = useState('OHA');
   const [supervisorBulkText, setSupervisorBulkText] = useState('');
   const [showSupervisorDeleteHistory, setShowSupervisorDeleteHistory] = useState(false);
@@ -1772,6 +1779,10 @@ function GenbaTracker() {
   // 【2026-09-29 追加】同じ行の「OK→登録」を連打しても二重に登録処理が走らないようにするための
   // 目印（行のオブジェクトそのものをキーにする）。stateの更新を待たず即座に判定できるようにref管理する。
   const registeringMailRowsRef = useRef(new Set());
+  // 【2026-09-30 追加】「見た」ボタンは保存前にサーバーの最新状態を取りに行くため、通信が遅いと
+  // ボタンが消えるまで時間がかかり「押しても反応がない」ように見えてしまう（社長さんの報告）。
+  // 連打で二重処理にならないようにする目印として使う。
+  const seeingTodoIdsRef = useRef(new Set());
   const [bulkUpdateText, setBulkUpdateText] = useState('');
   const [deviceStaff, setDeviceStaffState] = useState(getDeviceStaff());
   // 担当者名が未設定の端末では、他の画面を一切見せずに最初に名前を入力してもらう（誰が入力したか必ず分かるようにするため）
@@ -2586,14 +2597,36 @@ function GenbaTracker() {
     const me = getDeviceStaff();
     if (!me) { showToast('先に右上で担当者名を設定してください'); return; }
     if (seenIncludes(t.seenBy, me)) return;
-    // 複数人がほぼ同時に「見た」を押すと、手元の古いコピーに自分の分だけ足して上書き保存してしまい、
-    // 直前に他の人が押した「見た」記録が消えてしまう事故が起きるため、保存直前に最新を取り直してから足す
+    if (seeingTodoIdsRef.current.has(t.id)) return; // 連打で二重処理にならないようにする
+    seeingTodoIdsRef.current.add(t.id);
+    // 【2026-09-30 追加】通信が遅いと画面が変わるまで時間がかかり「押しても反応がない」ように
+    // 見えてしまうため、まず自分の画面だけ先に「確認済み」の見た目にしておく（裏で正式に保存する）
+    setTodos((prev) => prev.map((x) => (x.id === t.id ? { ...x, seenBy: [...(x.seenBy || []), { name: me, at: new Date().toISOString() }] } : x)));
+    try {
+      // 複数人がほぼ同時に「見た」を押すと、手元の古いコピーに自分の分だけ足して上書き保存してしまい、
+      // 直前に他の人が押した「見た」記録が消えてしまう事故が起きるため、保存直前に最新を取り直してから足す
+      const fresh = await fetchFreshTodo(t.id, t);
+      if (seenIncludes(fresh.seenBy, me)) return; // 取り直した結果、既に自分の分は記録済みだった
+      const updated = { ...fresh, seenBy: [...(fresh.seenBy || []), { name: me, at: new Date().toISOString() }] };
+      setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+      lastLocalWriteRef.current = Date.now();
+      await storage.set(`todo:${t.id}`, JSON.stringify(updated), true, fresh);
+    } finally {
+      seeingTodoIdsRef.current.delete(t.id);
+    }
+  }
+
+  // 【2026-09-30 追加】間違えて「見た」を押した時や、後でもう一度「未確認」に戻して
+  // 読み直したい時のために、自分の「見た」記録だけを取り消せるようにする
+  async function unmarkSeenBy(t) {
+    const me = getDeviceStaff();
+    if (!me) { showToast('先に右上で担当者名を設定してください'); return; }
     const fresh = await fetchFreshTodo(t.id, t);
-    if (seenIncludes(fresh.seenBy, me)) return; // 取り直した結果、既に自分の分は記録済みだった
-    const updated = { ...fresh, seenBy: [...(fresh.seenBy || []), { name: me, at: new Date().toISOString() }] };
+    const updated = { ...fresh, seenBy: (fresh.seenBy || []).filter((s) => seenName(s) !== me) };
     setTodos((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
     lastLocalWriteRef.current = Date.now();
     await storage.set(`todo:${t.id}`, JSON.stringify(updated), true, fresh);
+    showToast('「見た」を取り消しました');
   }
 
   function featureCheckTodos() {
@@ -3250,6 +3283,19 @@ async function autoAssignTrucks() {
       if (before && before.mailPending && before.date !== record.date) {
         record = { ...record, mailPending: false };
       }
+      // 「⚠️指定日要確認」の印も、日付が実際に変更・保存されたら自動で外す
+      // （すぐるが「対応済み」ボタンを別途押す手間を増やさないための仕組み）。
+      // 誰が・いつ確認（解消）したかは、この日付変更の保存操作自体から自動で記録する
+      // （新しく何かを押させるのではなく、いつもの保存にそのまま乗せる＝洋子さんの指示：2026-09-30）。
+      if (before && before.needsReviewReason && before.date !== record.date) {
+        const logEntry = {
+          reason: before.needsReviewReason,
+          resolvedBy: deviceStaff || form.staff || '（担当者不明）',
+          resolvedAt: new Date().toISOString(),
+          via: '日付変更',
+        };
+        record = { ...record, needsReviewReason: '', reviewLog: [...(record.reviewLog || []), logEntry].slice(-5) };
+      }
     }
     let extraPhotos = [];
     if (pendingPhotos.length > 0) {
@@ -3473,26 +3519,20 @@ async function autoAssignTrucks() {
   // ここでは本体データは一切書き換えない（見るだけ）。
   // 同じ現場でも「新規→木完→回収指定」のように何度も回収が入ることがあり、その間隔は
   // 数日のこともあれば数か月のこともあって一定しないため、日数の自動判定では
-  // 「同じ予定の重複」か「同じ現場の別予定」かを機械的に見分けられない。
-  // そのため名前が一致した既存記録は自動でブロックせず、参考情報（_daysDiffは表示用）として
-  // 見せるだけにして、実際に同じ予定かどうかは洋子さんがメールの内容を見て毎回判断する。
-  function daysBetweenDates(a, b) {
-    if (!a || !b) return null;
-    const da = new Date(a);
-    const db = new Date(b);
-    if (isNaN(da.getTime()) || isNaN(db.getTime())) return null;
-    return Math.round(Math.abs(da.getTime() - db.getTime()) / 86400000);
-  }
+  // 「同じ予定の重複」か「同じ現場の別予定」かを機械的に見分けられない
+  // （実際、日数差の表示は洋子さんにとって毎回計算・解釈が必要でかえって分かりにくかった）。
+  // 【2026-09-30変更】日数差の代わりに、既存記録の「内容（ステータス）」とメールの内容が
+  // 一致しているかどうかだけを見せる方式にした。一致していれば「同じ連絡の重複かも」、
+  // 違えば何も言わない（違う内容＝次の工程だろうと自然に伝わるため、わざわざ説明しない）。
+  // 判断に数字の計算がいらず、一致／不一致を見るだけで済む。
   function findExistingMatchesForMailName(rawName, rowDate) {
     const trimmed = (rawName || '').trim();
     if (!trimmed) return [];
     const norm = normalizeForCompare(trimmed);
-    const normalizedRowDate = rowDate ? normalizeDateStr(rowDate) : '';
-    const all = [
+    return [
       ...schedRecords.map((r) => ({ ...r, _src: '予定表' })),
       ...mgmtRecords.map((r) => ({ ...r, _src: '管理表' })),
-    ];
-    return all.filter((r) => {
+    ].filter((r) => {
       const rn = (r.name || '').trim();
       if (!rn) return false;
       if (rn === trimmed) return true;
@@ -3502,13 +3542,25 @@ async function autoAssignTrucks() {
       const shorter = norm.length <= rnorm.length ? norm : rnorm;
       const longer = norm.length <= rnorm.length ? rnorm : norm;
       return shorter.length >= 4 && longer.includes(shorter);
-    }).map((r) => ({ ...r, _daysDiff: daysBetweenDates(normalizedRowDate, r.date) }));
+    });
   }
 
   // 毎朝自動実行のメール整理タスクが作る13列TSV（工務店転送分。予定表の一括インポートと
   // 同じ列構成）を貼り付けて、予定表・管理表とその場で突き合わせるだけの機能。
   // 実際に追加する時は、既存の「予定表→＋追加→一括インポート」にこのまま貼り付ければよい
   // （あちらは日付まで含めた重複チェック・列ずれチェックを既に持っているため、ここでは重複させない）。
+  // 【2026-09-30 追加】メモ欄に「ETS TRACK既存登録あり(旧メモ:最終指定10/16)」のように
+  // 書かれている行は、夜間タスクがすでに“予定表のどれかの現場の指定日が変わっていそう”と
+  // 気づいたもの。以前は照合結果を見た後、別画面（予定表タブの🚩ボタン）にもう一度
+  // 候補一覧を貼り直す必要があったが、対象が予定表の中でちょうど1件に決まる場合は
+  // ここでそのままワンクリックで印を立てられるようにする（貼り付けが2回→1回で済む）。
+  // 0件・2件以上ヒットする場合は誤って違う現場に印を立てないよう自動処理せず、
+  // 従来通り予定表タブの🚩ボタンから手動で対応する。
+  function extractReviewReasonFromNote(note) {
+    if (!note) return '';
+    const m = note.match(/ETS TRACK既存登録あり\(旧メモ[:：]?\s*([^)]*)\)/);
+    return m ? m[1].trim() : '';
+  }
   function runMailCheck() {
     const lines = mailCheckText.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim().length > 0);
     if (lines.length === 0) { showToast('貼り付けるデータがありません'); return; }
@@ -3519,23 +3571,43 @@ async function autoAssignTrucks() {
       const name = (cols[0] || '').trim();
       if (!name || name === '現場名') return; // ヘッダー行はスキップ
       const rowDate = (cols[3] || '').trim();
+      const rowStatus = (cols[5] || '').trim();
+      const note = (cols[12] || '').trim();
       const allMatches = findExistingMatchesForMailName(name, rowDate);
+      const reviewReasonFromMemo = extractReviewReasonFromNote(note);
+      const schedMatches = allMatches.filter((m) => m._src === '予定表');
       rows.push({
         raw: line,
         name,
         kumiten: (cols[1] || '').trim(),
         date: rowDate,
-        status: (cols[5] || '').trim(),
-        statusTag: normalizeSchedStatus((cols[5] || '').trim()),
+        status: rowStatus,
+        statusTag: normalizeSchedStatus(rowStatus),
         supervisorName: (cols[6] || '').trim(),
-        note: (cols[12] || '').trim(),
+        note,
         colCount: cols.length,
         colMismatch: cols.length !== EXPECTED_COLS,
         matches: allMatches,
+        reviewReasonFromMemo,
+        flagTarget: (reviewReasonFromMemo && schedMatches.length === 1) ? schedMatches[0] : null,
+        flagged: false,
+        flagging: false,
       });
     });
     if (rows.length === 0) { showToast('現場の行が見つかりませんでした（ヘッダー行だけ貼り付けていませんか？）'); return; }
     setMailCheckResults(rows);
+  }
+  async function flagMailRowTarget(row) {
+    if (!row.flagTarget || row.flagging || row.flagged) return;
+    setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, flagging: true } : r)) : prev));
+    try {
+      await setNeedsReview(row.flagTarget, row.reviewReasonFromMemo, true);
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, flagging: false, flagged: true } : r)) : prev));
+      showToast(`「${row.flagTarget.name}」（予定表）に🚩の印を立てました`);
+    } catch (e) {
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, flagging: false } : r)) : prev));
+      showToast('印の登録に失敗しました');
+    }
   }
 
   // 洋子さんが内容を確認して「OK」を押した行だけを、予定表に「📅仮日付・要確認」として仮登録する。
@@ -3617,6 +3689,87 @@ async function autoAssignTrucks() {
     } catch (e) { showToast('確定に失敗しました'); }
   }
 
+  // 「旧メモ:最終指定10/16」のように、夜間メール整理タスク経由で洋子さんだけが気づく
+  // “予定日が変わっているかもしれない”情報を、予定表のカードに直接目立つ印として出すための
+  // ごく軽い仕組み。すぐるが工程を組む時に必ず見る予定表そのものに出すことで、ToDo一覧に
+  // 埋もれて見落とされるのを防ぐ（洋子さんの指示：2026-09-30）。
+  // 「対応済み」ログや誰がいつ確認したかの記録はあえて持たない（運用の手間を増やさないため）。
+  // 印は、実際に日付が変更・保存された時点で自動で消える（すぐるは普段通り日付を直すだけでよい）。
+  async function setNeedsReview(record, reason, silent) {
+    const updated = {
+      ...record,
+      needsReviewReason: (reason || '').trim() || '要確認',
+    };
+    try {
+      applyLocalRecordUpdate('sched', updated);
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated));
+      if (!silent) showToast('印を立てました');
+    } catch (e) { if (!silent) showToast('登録に失敗しました'); throw e; }
+  }
+  // 日付を変えずに「確認したが変更不要だった」場合の手動解除。こちらも誰が・いつ解除したかを
+  // 自動で記録する（本人が追加で何か入力する必要はない＝ボタンを押すだけ）。
+  async function clearNeedsReview(record) {
+    const logEntry = {
+      reason: record.needsReviewReason,
+      resolvedBy: deviceStaff || '（担当者不明）',
+      resolvedAt: new Date().toISOString(),
+      via: '確認のみ（変更不要）',
+    };
+    const updated = {
+      ...record,
+      needsReviewReason: '',
+      reviewLog: [...(record.reviewLog || []), logEntry].slice(-5),
+    };
+    try {
+      applyLocalRecordUpdate('sched', updated);
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated));
+    } catch (e) { showToast('印の解除に失敗しました'); }
+  }
+
+  // 🚩の印を1件ずつ検索→選択→入力するのは、夜間タスクが出す「🚩要確認候補」一覧のように
+  // 件数が多い時は面倒なので、そのままコピペできる一括版。1行1件「現場名 — 理由」の形
+  // （夜間タスクの出力そのままでOK。先頭の「・」は自動で取り除く）で貼ると、現場名が
+  // 予定表の中でちょうど1件だけに一致する行だけ自動で印を立てる。0件や複数件ヒットした行は
+  // 何もせず「要確認」として一覧に残す（誤って違う現場に印を立てないため。この判断は
+  // 洋子さんが一覧を見て、通常の検索欄から手動で対応する）。
+  function findSchedMatchesByName(rawQuery) {
+    const q = (rawQuery || '').trim();
+    if (!q) return [];
+    const qNorm = normalizeForCompare(q);
+    return schedRecords.filter((r) => {
+      const rn = (r.name || '').trim();
+      if (!rn) return false;
+      if (rn.includes(q)) return true;
+      const rnorm = normalizeForCompare(rn);
+      return !!(qNorm && rnorm && rnorm.includes(qNorm));
+    });
+  }
+  async function applyBulkFlags(text) {
+    const lines = (text || '').split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    const applied = [];
+    const skipped = [];
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/^[・\-\*\s]+/, '').trim();
+      if (!line) continue;
+      const sepIdx = line.indexOf('—');
+      const name = (sepIdx >= 0 ? line.slice(0, sepIdx) : line).trim();
+      const reason = (sepIdx >= 0 ? line.slice(sepIdx + 1) : '').trim();
+      if (!name) continue;
+      const matches = findSchedMatchesByName(name);
+      if (matches.length === 1) {
+        try {
+          await setNeedsReview(matches[0], reason, true);
+          applied.push({ name: matches[0].name, reason });
+        } catch (e) {
+          skipped.push({ name, reasonText: reason, matchCount: 1, failed: true });
+        }
+      } else {
+        skipped.push({ name, reasonText: reason, matchCount: matches.length });
+      }
+    }
+    return { applied, skipped };
+  }
+
   function copyUpdateTemplate() {
     const header = '現場名\t監督名\t監督電話\tハウスNo・事業場コード';
     navigator.clipboard.writeText(header)
@@ -3665,14 +3818,24 @@ async function autoAssignTrucks() {
       const kumiten = prefixEntry ? prefixEntry[1] : 'その他';
       let siteName = prefixEntry ? circlePrefix + titleForMatch.slice(prefixEntry[0].length).trim() : pendingTitle.trim();
       siteName = siteName.replace(/\s*不明\s*$/, '').trim();
-      // メルディアは現場名の後ろに「◯◯さん」の形で監督名が付くことがある。
-      // 「さん」付きの末尾語だけを監督名として切り出す（それ以外は現場名として一切いじらない＝推測しない）
+      // 現場名の後ろに監督名・施主名が付くことがある（工務店によって付き方が違う）。
+      // メルディア：「◯◯さん」、OHA等：「(◯◯邸)」「◯◯邸」「◯◯監督」など。
+      // 末尾のこのパターンだけを監督名として切り出す（それ以外は現場名として一切いじらない＝推測しない）。
+      // 上から順に試して最初に一致したものだけを使う（同時に複数当てはまることは無い想定）
       let supervisorName = '';
-      if (kumiten === 'メルディア') {
-        const supMatch = siteName.match(/^(.+?)[\s　]+([^\s　]+?)さん$/);
+      const SUPERVISOR_SUFFIX_PATTERNS = [
+        /^(.+?)[\s　]+([^\s　()（）]+?)さん$/,   // 末尾「 ◯◯さん」
+        /^(.+?)[\s　]+([^\s　()（）]+?)様$/,     // 末尾「 ◯◯様」
+        /^(.+?)[（(]([^（）()]+?)邸[）)]$/,      // 末尾「(◯◯邸)」
+        /^(.+?)[\s　]*([^\s　()（）]+?)邸$/,     // 末尾「◯◯邸」（かっこ無し）
+        /^(.+?)[\s　]*([^\s　()（）]+?)監督$/,   // 末尾「◯◯監督」
+      ];
+      for (const re of SUPERVISOR_SUFFIX_PATTERNS) {
+        const supMatch = siteName.match(re);
         if (supMatch) {
           siteName = supMatch[1].trim();
           supervisorName = supMatch[2].trim();
+          break;
         }
       }
       if (!prefixEntry) unmatchedKumiten.push(pendingTitle);
@@ -4234,14 +4397,56 @@ async function autoAssignTrucks() {
     return invoiceEdits[record.id] !== undefined ? invoiceEdits[record.id] : (record.lineItems || []);
   }
 
+  // 【2026-09-30 追加】名称ごとの既定の単位。「産業廃棄物収集運搬」は床面積(㎡)で計算するため、
+  // それだけ既定の単位をm3ではなく㎡にする（洋子さんの確認：アールの請求書フォーマットより）。
+  // 他の名称は今まで通りm3を既定にしておく。
+  function defaultUnitForName(name) {
+    return (name || '').trim() === '産業廃棄物収集運搬' ? '㎡' : 'm3';
+  }
+
+  // 【2026-09-29 追加】「廃棄物の内訳」メモ（例：「木0.1 仕分け0.1」）を名称・数量のペアに分解する。
+  // 数字で終わる単語ひとつひとつを「名称＋数量」とみなす。うまく分解できない単語は無視する。
+  function parseItemsMemoToLineItems(itemsText) {
+    if (!itemsText) return [];
+    return itemsText.trim().split(/\s+/).filter(Boolean).map((token) => {
+      const m = token.match(/^(.+?)(\d+(?:\.\d+)?)$/);
+      if (!m) return null;
+      return { name: m[1], qty: m[2], unit: defaultUnitForName(m[1]), unitPrice: '' };
+    }).filter(Boolean);
+  }
+
   function addInvoiceLineItem(record) {
-    const items = [...getEditItems(record), { name: '', qty: '', unit: 'm3', unitPrice: '' }];
+    const current = getEditItems(record);
+    // まだ何も項目が無い時だけ、内訳メモから名称・数量を自動で作る（２回目以降は今まで通り空欄を１行追加）
+    if (current.length === 0 && record.items) {
+      const parsed = parseItemsMemoToLineItems(record.items);
+      if (parsed.length > 0) {
+        // 【2026-09-30 追加】名称が前にも使ったことがあれば、その時の単価を自動で入れておく
+        const withPrices = parsed.map((it) => ({ ...it, unitPrice: lookupLastUnitPrice(record.kumiten, it.name) }));
+        setInvoiceEdits((prev) => ({ ...prev, [record.id]: withPrices }));
+        return;
+      }
+    }
+    const items = [...current, { name: '', qty: '', unit: 'm3', unitPrice: '' }];
     setInvoiceEdits((prev) => ({ ...prev, [record.id]: items }));
   }
 
   function updateInvoiceLineItem(record, idx, field, value) {
     const items = [...getEditItems(record)];
-    items[idx] = { ...items[idx], [field]: value };
+    const nextItem = { ...items[idx], [field]: value };
+    if (field === 'name') {
+      // 【2026-09-30 追加】名称を入力し直した時、単位欄がまだ既定のm3のままなら、
+      // 名称に合った既定の単位（産業廃棄物収集運搬なら㎡）に自動で直す。すでに手で変えていれば触らない
+      if (items[idx].unit === 'm3' || !items[idx].unit) {
+        nextItem.unit = defaultUnitForName(value);
+      }
+      // 単価欄がまだ空なら、前に使った単価を自動で入れる（すでに単価が入っている時は上書きしない）
+      if (!nextItem.unitPrice) {
+        const remembered = lookupLastUnitPrice(record.kumiten, value);
+        if (remembered) nextItem.unitPrice = remembered;
+      }
+    }
+    items[idx] = nextItem;
     setInvoiceEdits((prev) => ({ ...prev, [record.id]: items }));
   }
 
@@ -5158,8 +5363,11 @@ async function autoAssignTrucks() {
     return (r.status === '追加' || r.status === '単発') && !r.invoiceDismissed && !(r.lineItems && r.lineItems.length > 0);
   }
   const invoicePendingItems = useMemo(
-    () => mgmtRecords.filter(needsInvoicePrice).sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-    [mgmtRecords]
+    () => mgmtRecords
+      .filter(needsInvoicePrice)
+      .filter((r) => invoicePendingAllKumiten || r.kumiten === invoiceKumiten)
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [mgmtRecords, invoicePendingAllKumiten, invoiceKumiten]
   );
   const invoiceDismissedItems = useMemo(
     () => mgmtRecords.filter((r) => (r.status === '追加' || r.status === '単発') && r.invoiceDismissed)
@@ -5262,6 +5470,30 @@ async function autoAssignTrucks() {
     } catch (e) { showToast('保存に失敗しました'); }
   }
 
+  // 【2026-09-30 追加】工務店ごと・名称ごとに、一番最近使った単価を覚えておく。
+  // 同じ品目でも工務店が違えば単価が違うことがあるため、工務店＋名称のペアで覚える。
+  const lastUnitPriceByKumitenName = useMemo(() => {
+    const map = {};
+    mgmtRecords
+      .filter((r) => r.status === '追加' || r.status === '単発')
+      .slice()
+      .sort((a, b) => (a.date || '').localeCompare(b.date || '')) // 古い→新しいの順に処理し、新しい方で上書きする
+      .forEach((r) => {
+        (r.lineItems || []).forEach((it) => {
+          const name = (it.name || '').trim();
+          if (!name) return;
+          const price = parseMoneyNum(it.unitPrice);
+          if (isNaN(price) || price === 0) return;
+          map[`${r.kumiten}__${name}`] = it.unitPrice;
+        });
+      });
+    return map;
+  }, [mgmtRecords]);
+  function lookupLastUnitPrice(kumiten, name) {
+    const key = `${kumiten}__${(name || '').trim()}`;
+    return Object.prototype.hasOwnProperty.call(lastUnitPriceByKumitenName, key) ? lastUnitPriceByKumitenName[key] : '';
+  }
+
   const invoiceRecords = useMemo(
     () => mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発')),
     [mgmtRecords, invoiceKumiten, invoiceMonth]
@@ -5326,28 +5558,6 @@ async function autoAssignTrucks() {
     return [header, ...rows].join('\n');
   }
 
-  function buildInvoiceTSV() {
-    const header = '現場名\t名称\t数量\t単位\t単価\t金額\t備考（日付）';
-    const blocks = invoiceRows.map((site) => {
-      const rows = site.items.map((it) => `${site.name}\t${it.name}\t${it.qty}\t${it.unit}\t${it.unitPrice}\t${Math.round(it.amount)}\t${it.date}`);
-      const subtotal = site.items.reduce((s, it) => s + it.amount, 0);
-      rows.push(`${site.name}\t小計\t\t\t\t${Math.round(subtotal)}\t`);
-      return rows.join('\n');
-    });
-    return [header, ...blocks, `合計\t\t\t\t\t${Math.round(invoiceGrandTotal)}\t`].join('\n');
-  }
-
-  function openInvoiceExport() {
-    setInvoiceExportText(buildInvoiceTSV());
-    setShowInvoiceExport(true);
-  }
-
-  async function copyInvoiceExport() {
-    try {
-      await navigator.clipboard.writeText(invoiceExportText);
-      showToast('コピーしました。Excelなどに貼り付けてください');
-    } catch (e) { showToast('コピーできませんでした。手動で選択してコピーしてください'); }
-  }
 
   // 退出させたスタッフの端末は、他の画面を一切表示せずここで止める。
   // すでにアプリを開いたままの端末をその場で強制的にログアウトさせることはできない（アカウント管理の仕組みが無いため）が、
@@ -5593,6 +5803,7 @@ async function autoAssignTrucks() {
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkImport(true)}>TimeTreeから一括インポート</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowBulkUpdate(true)}>監督名・ハウスNoを一括更新</button>}
         {tab === 'sched' && (ryubeiUnlocked || todoUnlocked) && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowSupervisorEditor(true)}>⚙ 監督名簿を編集</button>}
+        {tab === 'sched' && (ryubeiUnlocked || todoUnlocked) && <button style={{ ...styles.linkBtn, marginLeft: 16, color: '#B00020' }} onClick={() => { setFlagReviewQuery(''); setFlagReviewReason(''); setShowFlagReview(true); }}>🚩指定日要確認の印を立てる</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={() => setShowIdentifiedSitesEditor(true)}>⚙ 特定済み現場データを編集</button>}
         {tab === 'sched' && ryubeiUnlocked && <button style={{ ...styles.linkBtn, marginLeft: 16 }} onClick={openReconcileModal}>🔍 特定済み現場と照合</button>}
         {tab === 'sched' && ryubeiUnlocked && findManifestPushCandidates().length > 0 && (
@@ -5618,10 +5829,25 @@ async function autoAssignTrucks() {
 
           <div style={styles.list}>
             {filtered.map((r) => (
-              <div key={r.id} style={{ ...styles.card, ...(r.mailPending ? { border: '2px solid #F4A300' } : {}) }}>
+              <div key={r.id} style={{ ...styles.card, ...(r.mailPending ? { border: '2px solid #F4A300' } : {}), ...(r.needsReviewReason ? { border: '2px solid #E53935' } : {}) }}>
                 <div style={{ ...styles.cardBar, background: statusColor(statusList, r.status) }} />
                 <div style={styles.cardBody} onClick={() => openEdit(r)}>
                   <div style={styles.cardTop}>
+                    {tab === 'sched' && r.needsReviewReason && (
+                      <span style={{ ...styles.garaBadge, background: '#FDEAEA', color: '#B00020', border: '1px solid #E53935' }}>
+                        ⚠️指定日要確認（{r.needsReviewReason}）
+                      </span>
+                    )}
+                    {tab === 'sched' && r.needsReviewReason && (
+                      <button
+                        type="button"
+                        style={{ ...styles.linkBtn, fontSize: 11.5, padding: '2px 8px' }}
+                        onClick={(e) => { e.stopPropagation(); clearNeedsReview(r); }}
+                        title="このまま変更不要な場合は印だけ消せます"
+                      >
+                        ✕印を消す
+                      </button>
+                    )}
                     {tab === 'sched' && r.mailPending && (
                       <span style={{ ...styles.garaBadge, background: '#FFF3D6', color: '#8A5A00', border: '1px solid #F4A300' }} title="メールから届いた仮の日付です。監督さんと調整して確定したら編集・保存してください">
                         📅仮日付・要確認
@@ -5807,6 +6033,13 @@ async function autoAssignTrucks() {
                     <div style={styles.dateHistoryBox}>
                       {r.dateHistory.slice(-3).reverse().map((h, i) => (
                         <div key={i} style={styles.dateHistoryText}>📅日付変更：{h.from}→{h.to}（{h.by}・{formatDateTime(h.at)}）</div>
+                      ))}
+                    </div>
+                  )}
+                  {tab === 'sched' && r.reviewLog && r.reviewLog.length > 0 && (
+                    <div style={styles.dateHistoryBox}>
+                      {r.reviewLog.slice(-3).reverse().map((h, i) => (
+                        <div key={i} style={styles.dateHistoryText}>✅指定日確認済み：{h.reason}（{h.via}・{h.resolvedBy}・{formatDateTime(h.resolvedAt)}）</div>
                       ))}
                     </div>
                   )}
@@ -6043,6 +6276,7 @@ async function autoAssignTrucks() {
             内容を確認して問題なければ「✅ OK→予定表に登録」を押してください。メールの日付はまだ仮のものとして「📅仮日付・要確認」付きで登録され、
             すぐる・シオン（と洋子さん・社長）の予定表の一番上に出ます。日付を確定して編集・保存すると、印が外れて他のスタッフにも通常通り見えるようになります。
             なお似た名前の現場が予定表・管理表に見つかった場合は「⚠️要確認」として既存の記録（日付・内容）を表示します。同じ予定の重複でなければ、そのまま「✅ OK→予定表に登録」を押して大丈夫です（同じ現場でも新規・木完・最終回収のように何度も予定が入ることがあるため、日付の近さだけでは自動で判断していません）。
+            メモ欄に「ETS TRACK既存登録あり(旧メモ:…)」が入っていて、予定表の現場がちょうど1件に決まる場合は、その場に🚩ボタンが出るのでそのまま押せば印が立てられます（予定表タブの🚩ボタンに貼り直す必要はありません）。
           </div>
           <textarea
             style={{ ...styles.input, minHeight: 140, fontSize: 12 }}
@@ -6065,6 +6299,8 @@ async function autoAssignTrucks() {
             const noMatch = actionable.filter((r) => r.matches.length === 0);
             const hasMatch = actionable.filter((r) => r.matches.length > 0);
             const registeredCount = mailCheckResults.length - actionable.length;
+            const flaggableCount = actionable.filter((r) => r.flagTarget && !r.flagged).length;
+            const flaggedCount = actionable.filter((r) => r.flagged).length;
             const renderRow = (r, i, warn) => (
               <div key={i} style={{ background: warn ? '#FFF6E0' : '#FDEAEA', border: `1px solid ${warn ? '#E9D08A' : '#F3C6C6'}`, borderRadius: 8, padding: 10, marginBottom: 8 }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{warn ? '⚠️' : '❌'} {r.name}</div>
@@ -6079,13 +6315,35 @@ async function autoAssignTrucks() {
                 {warn && (
                   <div style={{ fontSize: 11.5, color: '#8A6D1A', marginTop: 4 }}>
                     似た名前の既存記録があります。同じ予定の重複でなければそのまま登録してください：
-                    {r.matches.map((m, j) => (
-                      <span key={j}>{j > 0 ? ' / ' : ''}{m._src}「{m.name}」({m.date || '日付不明'}{m._daysDiff !== null ? `・${m._daysDiff}日差` : ''})</span>
-                    ))}
+                    {r.matches.map((m, j) => {
+                      const sameStatus = !!(m.status && r.statusTag && m.status === r.statusTag);
+                      return (
+                        <div key={j} style={{ marginTop: j > 0 ? 2 : 0 }}>
+                          {m._src}「{m.name}」（既存の内容：{m.status || '不明'}・{m.date || '日付不明'}）
+                          {sameStatus && (
+                            <span style={{ color: '#B00020', fontWeight: 700 }}> ⚠️今回と同じ「{m.status}」です。同じ連絡の重複登録かもしれません、内容をご確認ください</span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {r.colMismatch && (
                   <div style={{ fontSize: 11.5, color: '#B00020', marginTop: 4 }}>⚠️ この行は{r.colCount}列（本来13列）です。列がずれている可能性があります</div>
+                )}
+                {r.flagTarget && !r.flagged && (
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      style={{ ...styles.linkBtn, fontSize: 12, color: '#B00020', borderColor: '#E53935' }}
+                      disabled={r.flagging}
+                      onClick={() => flagMailRowTarget(r)}
+                    >
+                      {r.flagging ? '印を立てています…' : `🚩「${r.flagTarget.name}」（予定表）に旧メモ:${r.reviewReasonFromMemo}として印を立てる`}
+                    </button>
+                  </div>
+                )}
+                {r.flagged && (
+                  <div style={{ fontSize: 11.5, color: '#2A9D8F', marginTop: 4 }}>✅ 🚩の印を立てました（予定表タブでも確認できます）</div>
                 )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                   <button
@@ -6113,6 +6371,8 @@ async function autoAssignTrucks() {
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
                   全{mailCheckResults.length}件中、未処理 {actionable.length}件（うち類似記録あり {hasMatch.length}件）
                   {registeredCount > 0 && <>／登録済み {registeredCount}件</>}
+                  {flaggableCount > 0 && <>／🚩印を立てられる候補 {flaggableCount}件</>}
+                  {flaggedCount > 0 && <>／🚩印を立て済み {flaggedCount}件</>}
                 </div>
                 {actionable.length === 0 && (
                   <div style={{ ...styles.empty, marginBottom: 16 }}>すべて処理済みです。</div>
@@ -6275,6 +6535,7 @@ async function autoAssignTrucks() {
                         ) : (
                           <React.Fragment>
                             {!iSaw && <button style={styles.seenBtn} onClick={() => markSeenBy(t)}>見た</button>}
+                            {iSaw && <button style={styles.switchTypeBtn} onClick={() => unmarkSeenBy(t)} title="間違えて押した時や、もう一度未確認に戻したい時">↩️ 見たを取り消す</button>}
                             <button style={styles.switchTypeBtn} onClick={() => archiveMemo(t)} title="片付けて「📦 アーカイブ」に移す（消さずに後で見返せます）">📦 アーカイブ</button>
                             {(!t.staff || t.staff === deviceStaff) && <button style={styles.switchTypeBtn} onClick={() => startEditTodo(t)}>✏️ 編集</button>}
                             <button style={styles.switchTypeBtn} onClick={() => switchTodoType(t)}>✅ タスクに移動</button>
@@ -6651,7 +6912,16 @@ async function autoAssignTrucks() {
                 </button>
               </div>
 
-              <div style={styles.areaGroupTitle}>🔔 確認待ち（{invoicePendingItems.length}件・「追加」「単発」で金額未入力のもの・全工務店）</div>
+              <div style={styles.areaGroupTitle}>
+                🔔 確認待ち（{invoicePendingItems.length}件・「追加」「単発」で金額未入力のもの・{invoicePendingAllKumiten ? '全工務店' : invoiceKumiten}）
+              </div>
+              <button
+                type="button"
+                style={{ ...styles.linkBtnSmall, marginBottom: 8 }}
+                onClick={() => setInvoicePendingAllKumiten((v) => !v)}
+              >
+                {invoicePendingAllKumiten ? `→ ${invoiceKumiten}だけに絞る` : '→ 全工務店を表示する（見逃し防止）'}
+              </button>
               {invoicePendingItems.length === 0 && <div style={styles.empty}>確認待ちの項目はありません</div>}
               {invoicePendingItems.map((record) => (
                 <div key={record.id} style={styles.invoiceRow}>
@@ -6695,6 +6965,15 @@ async function autoAssignTrucks() {
                   <div key={record.id} style={{ ...styles.invoiceRow, ...(highlightedInvoiceId === record.id ? styles.invoiceRowHighlight : {}) }}>
                     <div style={styles.invoiceName}>{record.name}</div>
                     <div style={styles.invoiceMeta}>{record.date}／{record.status}</div>
+                    {/* 【2026-09-30 追加】内訳メモと「詳しく見る」を出す。数量入力の時にいちいち上の
+                        確認待ち一覧まで探しに戻らなくても、ここで内訳・写真をすぐ確認できるようにする */}
+                    {record.items && <div style={styles.itemsInlineText}>品目：{record.items}</div>}
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6 }}>
+                      <button type="button" style={styles.linkBtnSmall} onClick={() => openEdit(record)}>🔍 詳しく見る（写真・数量）</button>
+                      {(record.photos || []).length > 0 && (
+                        <span style={{ fontSize: 11.5, color: '#8A8A83' }}>📷 写真{record.photos.length}枚あり</span>
+                      )}
+                    </div>
                     {record.invoiceDismissed && (
                       <div style={{ color: '#B08900', fontSize: 11.5, marginBottom: 4 }}>
                         ⚠️「確認待ち」からは不要にした項目です（金額を入力すれば集計・請求書には反映されます）
@@ -6723,28 +7002,40 @@ async function autoAssignTrucks() {
 
               {invoiceRows.length > 0 && (
                 <>
-                  <div style={{ ...styles.areaGroupTitle, marginTop: 18 }}>集計結果</div>
+                  {/* 【2026-09-30 変更】コピー機能は廃止し、他社フォーマットへ手入力する時に見やすい一覧に変更。
+                      工務店ごとに独自フォーマット・数式があり列を合わせた一括コピーは危険なため、
+                      この一覧を見ながら数量・単価を手で入力してもらう運用にする（洋子さんと確認済み） */}
+                  <div style={{ ...styles.areaGroupTitle, marginTop: 18 }}>集計結果（手入力用の一覧）</div>
                   {invoiceRows.map((site) => {
                     const subtotal = site.items.reduce((s, it) => s + it.amount, 0);
+                    // 日付ごとに区切って表示する（フォーマットに手入力する時に見やすいように）
+                    const byDate = [];
+                    site.items.forEach((it) => {
+                      const dateLabel = it.date || '（日付なし）';
+                      const last = byDate[byDate.length - 1];
+                      if (last && last.date === dateLabel) last.items.push(it);
+                      else byDate.push({ date: dateLabel, items: [it] });
+                    });
                     return (
                       <div key={site.name} style={styles.invoiceRow}>
-                        <div style={styles.invoiceName}>{site.name}</div>
-                        {site.items.map((it, i) => (
-                          <div key={i} style={styles.invoiceItemLine}>
-                            <span style={{ color: '#8A8A83', fontSize: 11 }}>{it.date}</span>
-                            <span>{it.name || '（名称未入力）'}</span>
-                            <span>{it.qty}{it.unit}</span>
-                            <span>単価¥{it.unitPrice}</span>
-                            <span style={{ fontWeight: 700 }}>¥{Math.round(it.amount).toLocaleString()}</span>
+                        <div style={{ ...styles.invoiceName, fontSize: 17 }}>{site.name}</div>
+                        {byDate.map((group, gi) => (
+                          <div key={gi} style={{ marginTop: gi === 0 ? 4 : 12, borderTop: gi === 0 ? 'none' : '1px solid #F0EFE9', paddingTop: gi === 0 ? 0 : 8 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 700, color: '#8A6D3B', marginBottom: 4 }}>📅 {group.date}</div>
+                            {group.items.map((it, i) => (
+                              <div key={i} style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, fontSize: 15.5, color: '#3A3A34', padding: '6px 0' }}>
+                                <span style={{ fontWeight: 600 }}>{it.name || '（名称未入力）'}</span>
+                                <span>{it.qty}{it.unit}</span>
+                                <span>単価¥{Number(it.unitPrice || 0).toLocaleString()}</span>
+                                <span style={{ fontWeight: 700 }}>¥{Math.round(it.amount).toLocaleString()}</span>
+                              </div>
+                            ))}
                           </div>
                         ))}
                         <div style={styles.invoiceM3}>小計 ¥{Math.round(subtotal).toLocaleString()}</div>
                       </div>
                     );
                   })}
-                  <button style={{ ...styles.saveBtn, marginTop: 14 }} onClick={openInvoiceExport}>
-                    請求書フォーマット用にコピー
-                  </button>
                 </>
               )}
             </>
@@ -6827,19 +7118,6 @@ async function autoAssignTrucks() {
         </div>
       )}
 
-      {showInvoiceExport && (
-        <div style={styles.overlay} onClick={() => setShowInvoiceExport(false)}>
-          <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.sheetHeader}>
-              <div style={styles.sheetTitle}>請求書用データ（タブ区切り）</div>
-              <button style={styles.closeBtn} onClick={() => setShowInvoiceExport(false)}>✕</button>
-            </div>
-            <div style={styles.exportHint}>Excelや工務店フォーマットに貼り付けると、そのまま列が揃います。実際のフォーマットを見せてもらえれば、列の並びをもっと合わせ込めます。</div>
-            <textarea style={{ ...styles.input, minHeight: 220, fontSize: 12 }} value={invoiceExportText} readOnly />
-            <div style={styles.sheetActions}><button style={styles.saveBtn} onClick={copyInvoiceExport}>コピーする</button></div>
-          </div>
-        </div>
-      )}
 
       {showInvoiceAddSite && (
         <div style={styles.overlay} onClick={() => setShowInvoiceAddSite(false)}>
@@ -7504,6 +7782,123 @@ async function autoAssignTrucks() {
           </div>
         </div>
       )}
+
+      {showFlagReview && (() => {
+        const q = flagReviewQuery.trim();
+        const qNorm = normalizeForCompare(q);
+        const matches = q.length === 0 ? [] : schedRecords.filter((r) => {
+          const rn = (r.name || '').trim();
+          if (!rn) return false;
+          if (rn.includes(q)) return true;
+          const rnorm = normalizeForCompare(rn);
+          return !!(qNorm && rnorm && rnorm.includes(qNorm));
+        }).slice(0, 20);
+        const selected = schedRecords.find((r) => r.id === flagReviewSelectedId) || null;
+        return (
+          <div style={styles.overlay} onClick={() => setShowFlagReview(false)}>
+            <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.sheetHeader}>
+                <div style={styles.sheetTitle}>🚩指定日要確認の印を立てる</div>
+                <button style={styles.closeBtn} onClick={() => setShowFlagReview(false)}>✕</button>
+              </div>
+              <div style={{ fontSize: 12.5, color: '#8A8A83', marginBottom: 10 }}>
+                夜間のメール整理などで「旧メモ:最終指定10/16」のように予定日が変わっていそうな現場に気づいたら、ここから予定表のカードに目立つ印を立てられます。すぐるが工程を組む時に見る画面にそのまま出るので、ToDoに埋もれません。印は日付を直して保存すると自動で消えます。
+                （📧メールタブでの照合時に現場がちょうど1件に決まる場合は、そちらにも🚩ボタンが自動で出るので、ここは0件・複数件ヒットして自動処理できなかった候補のための手動対応用です）
+              </div>
+              <label style={styles.label}>現場名で検索</label>
+              <input
+                style={styles.input}
+                placeholder="例：中海岸"
+                value={flagReviewQuery}
+                onChange={(e) => { setFlagReviewQuery(e.target.value); setFlagReviewSelectedId(''); }}
+              />
+              {q.length > 0 && matches.length === 0 && (
+                <div style={{ fontSize: 12.5, color: '#8A8A83', marginTop: 6 }}>一致する現場が見つかりません</div>
+              )}
+              {matches.length > 0 && (
+                <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto' }}>
+                  {matches.map((r) => (
+                    <div
+                      key={r.id}
+                      onClick={() => setFlagReviewSelectedId(r.id)}
+                      style={{
+                        padding: '8px 10px', borderRadius: 8, marginBottom: 6, cursor: 'pointer',
+                        background: flagReviewSelectedId === r.id ? '#FDEAEA' : '#F7F6F1',
+                        border: flagReviewSelectedId === r.id ? '1px solid #E53935' : '1px solid #EEEDE7',
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
+                      <div style={{ fontSize: 11.5, color: '#8A8A83' }}>{r.kumiten || '（工務店未設定）'} ／ 日付：{r.date || '（空欄）'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {selected && (
+                <>
+                  <label style={{ ...styles.label, marginTop: 14 }}>理由・旧予定など（自由記入）</label>
+                  <input
+                    style={styles.input}
+                    placeholder="例：旧:10/16"
+                    value={flagReviewReason}
+                    onChange={(e) => setFlagReviewReason(e.target.value)}
+                  />
+                  <button
+                    style={{ ...styles.saveBtn, marginTop: 12 }}
+                    onClick={async () => {
+                      await setNeedsReview(selected, flagReviewReason);
+                      setShowFlagReview(false);
+                    }}
+                  >
+                    この現場に印を立てる
+                  </button>
+                </>
+              )}
+
+              <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #EEEDE7' }}>
+                <label style={styles.label}>件数が多い時：まとめて貼り付けて一括で印を立てる</label>
+                <div style={{ fontSize: 12, color: '#8A8A83', marginBottom: 6 }}>
+                  夜間タスクの「🚩要確認候補」一覧をそのままコピペでOK（1行1件、「現場名 — 理由」の形。先頭の「・」は自動で無視します）。現場名が予定表の中でちょうど1件に決まる行だけ自動で印が立ちます。0件・複数件ヒットした行は自動処理せず、下に一覧で出すので上の検索欄から個別に対応してください。
+                </div>
+                <textarea
+                  style={{ ...styles.input, minHeight: 100, resize: 'vertical' }}
+                  placeholder={'例：\n・座間市緑ケ丘8期1号棟 — 旧:10/16\n・海老名市国分寺台8期1号棟 — 旧:10/13'}
+                  value={flagBulkText}
+                  onChange={(e) => { setFlagBulkText(e.target.value); setFlagBulkResult(null); }}
+                />
+                <button
+                  style={{ ...styles.saveBtn, marginTop: 10 }}
+                  onClick={async () => {
+                    const result = await applyBulkFlags(flagBulkText);
+                    setFlagBulkResult(result);
+                    if (result.applied.length > 0) showToast(`${result.applied.length}件に印を立てました`);
+                  }}
+                >
+                  まとめて印を立てる
+                </button>
+                {flagBulkResult && (
+                  <div style={{ marginTop: 10, fontSize: 12.5 }}>
+                    {flagBulkResult.applied.length > 0 && (
+                      <div style={{ color: '#2A9D8F', marginBottom: 6 }}>
+                        ✅ {flagBulkResult.applied.length}件に印を立てました：{flagBulkResult.applied.map((a) => a.name).join('、')}
+                      </div>
+                    )}
+                    {flagBulkResult.skipped.length > 0 && (
+                      <div style={{ color: '#B00020' }}>
+                        ⚠️ {flagBulkResult.skipped.length}件は自動処理できませんでした（上の検索欄から個別に対応してください）：
+                        {flagBulkResult.skipped.map((s, i) => (
+                          <div key={i} style={{ marginTop: 2 }}>
+                            ・{s.name}{s.reasonText ? `（理由:${s.reasonText}）` : ''} — {s.failed ? '保存に失敗' : (s.matchCount === 0 ? '一致する現場が見つかりません' : `${s.matchCount}件ヒット（現場名を絞り込んでください）`)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showSupervisorDeleteHistory && (
         <div style={styles.overlay} onClick={() => setShowSupervisorDeleteHistory(false)}>
