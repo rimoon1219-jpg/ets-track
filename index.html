@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-01-238';
+  window.__APP_VERSION__ = '2026-10-01-242';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1622,18 +1622,24 @@ function GenbaTracker() {
   }
   useEffect(() => { setExpandedAppsId(null); }, [tab]);
   // 各アプリのURLは実際に開いて確認済み（2026-09-25）。ANDPADとKizukuはログイン画面まで
-  // 直接開けることを確認できたが、現場PlusとArchitect Jumpはログイン画面の公開URLが
-  // 見つからず、公式の紹介ページどまりになっている（すぐるさんに確認をお願いしたい）。
+  // 直接開けることを確認できた。現場Plusは「テナント番号」ごとに別会社（別ダッシュボード）に
+  // なることが2026-10-01に判明したため、工務店ごとに別々のURLで登録している
+  // （ひかり=5100200、アール=5117611、アオイ=5103478で確認済み。
+  // 初めて開く端末は最初の1回だけテナント番号の入力が必要かもしれない）。
+  // Architect Jumpは2026-10-01、洋子さんがログイン後のホーム画面URLを確認できたので更新
+  // （architect-jump-pro-partner.openhouse-group.com。初めて開く端末はログインが必要かもしれない）。
   const EXTERNAL_SITE_APPS = [
-    { key: 'genbaplus', label: '現場Plus', url: 'https://www.kensetsu-cloud.jp/genbaplus/' },
-    { key: 'architectjump', label: 'Architect Jump', url: 'https://oha.openhouse-group.com/architect-jump/' },
+    { key: 'genbaplus_hikari', label: '現場Plus', url: 'https://apg.kensetsu-cloud.jp/main/dyapp/a/AX4DD2A8/assoc' },
+    { key: 'genbaplus_aru', label: '現場Plus', url: 'https://apg.kensetsu-cloud.jp/main/dyapp/a/AX4E16AB/assoc' },
+    { key: 'genbaplus_aoi', label: '現場Plus', url: 'https://apg.kensetsu-cloud.jp/main/dyapp/a/AX4DDF76/assoc' },
+    { key: 'architectjump', label: 'Architect Jump', url: 'https://architect-jump-pro-partner.openhouse-group.com/home' },
     { key: 'andpad', label: 'ANDPAD', url: 'https://andpad.jp/login' },
     { key: 'kizuku', label: 'Kizuku', url: 'https://kizuku2.ctx.co.jp/' },
   ];
   const KUMITEN_APP_KEY = {
-    'アオイ': 'genbaplus',
-    'ひかり': 'genbaplus',
-    'アール': 'genbaplus',
+    'ひかり': 'genbaplus_hikari',
+    'アール': 'genbaplus_aru',
+    'アオイ': 'genbaplus_aoi',
     'OHA': 'architectjump',
     'メルディア': 'andpad',
     'レイオン': 'andpad',
