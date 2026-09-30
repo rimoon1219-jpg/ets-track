@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-01-234';
+  window.__APP_VERSION__ = '2026-10-01-237';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -658,6 +658,9 @@ function memoVisibleToMe(t, me) {
 const TODO_VIEWERS = ['洋子', '本城', '酒井', '金子'];
 // 宛先を指定できるのは洋子さんの端末だけ（他の人が送る伝達は常に「全員」扱いになり、選ぶ手間自体が発生しない）
 const TODO_TARGET_PICKER_STAFF = '洋子';
+// 【2026-10-01追加】請求書・スタッフ管理を見られるのは洋子さんと社長(酒井)だけ。
+// すぐる(本城)・シオン(金子)はTODO/メール確認タブは見られるが、この2つは対象外（洋子さんの指示）。
+const RYUBEI_VIEWERS = ['洋子', '酒井'];
 
 const DEFAULT_KUMITEN = ['OHA', 'メルディア', 'OHD', 'アオイ', '一般', '成也', 'レジェンド', 'ビルド', 'ルークリア', 'ケイアイ', 'グローバル', 'ひかり', '根本', 'スキルド', 'リムクラフト', 'アール', 'レイオン', 'その他'];
 
@@ -5861,6 +5864,9 @@ async function autoAssignTrucks() {
         {ryubeiUnlocked && (
           <button onClick={() => setTab('mailcheck')} style={{ ...styles.tabBtn, ...(tab === 'mailcheck' ? styles.tabBtnActive : {}) }}>📧メール</button>
         )}
+        {/* 【2026-10-01変更】TODOタブも、そもそも対象外の他のスタッフには表示自体をやめる
+            （洋子さん・社長・すぐる・シオンの4人専用のため）。 */}
+        {TODO_VIEWERS.includes(deviceStaff) && (
         <button onClick={() => tryUnlockTodoTab('all')} style={{ ...styles.tabBtn, ...(tab === 'todo' ? styles.tabBtnActive : {}) }}>
           🔒TODO
           {todoUnlocked && (() => {
@@ -5877,6 +5883,7 @@ async function autoAssignTrucks() {
             );
           })()}
         </button>
+        )}
         {/* 【2026-10-01追加】すぐる・シオン向け「📧メール確認」タブ。TODOタブと同じ合言葉。
             自分たちの共有受信箱(ecolotex.information宛)に来ているメールと、この予定表の
             「📅仮日付・要確認」項目とを照らし合わせやすいよう、受信日時・一言要約だけを見せる
@@ -5894,13 +5901,21 @@ async function autoAssignTrucks() {
         {ryubeiUnlocked && (
           <button onClick={() => setTab('invoice')} style={{ ...styles.tabBtn, ...(tab === 'invoice' ? styles.tabBtnActive : {}) }}>請求書</button>
         )}
-        <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">
-          🔒
-          {/* 件数は他のスタッフには関係ないので、外からは「何かある」がわかる☆マークだけにしておく。
-              実際の件数はタブを開いた（合言葉を入れた）後、中の見出しに表示する */}
-          {invoicePendingItems.length > 0 && <span style={styles.todoTabBadge}>☆</span>}
-        </button>
-        <button onClick={tryUnlockStaffManager} style={styles.lockIconBtn} title="スタッフ管理">🔒👤</button>
+        {/* 【2026-10-01変更】請求書・スタッフ管理の鍵アイコンは、洋子さん・社長(酒井)以外には
+            表示自体をやめる（すぐる・シオンもここは対象外）。他のスタッフに常に鍵マークが
+            見えていると、合言葉を知らない人でも押して試せることに気づいてしまうため
+            （洋子さんの指示：8989は他の人に見られないように）。 */}
+        {RYUBEI_VIEWERS.includes(deviceStaff) && (
+          <button onClick={tryUnlockInvoiceTab} style={styles.lockIconBtn} title="請求書タブ">
+            🔒
+            {/* 件数は他のスタッフには関係ないので、外からは「何かある」がわかる☆マークだけにしておく。
+                実際の件数はタブを開いた（合言葉を入れた）後、中の見出しに表示する */}
+            {invoicePendingItems.length > 0 && <span style={styles.todoTabBadge}>☆</span>}
+          </button>
+        )}
+        {RYUBEI_VIEWERS.includes(deviceStaff) && (
+          <button onClick={tryUnlockStaffManager} style={styles.lockIconBtn} title="スタッフ管理">🔒👤</button>
+        )}
       </div>
 
       {findDuplicateGroups().length > 0 && (
