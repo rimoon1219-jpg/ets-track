@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-01-237';
+  window.__APP_VERSION__ = '2026-10-01-238';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -5862,7 +5862,7 @@ async function autoAssignTrucks() {
             他の社長・洋子さん専用機能と同じ8989の合言葉で隠しておき、内容が固まって
             公開してよくなったらこの条件を外す。 */}
         {ryubeiUnlocked && (
-          <button onClick={() => setTab('mailcheck')} style={{ ...styles.tabBtn, ...(tab === 'mailcheck' ? styles.tabBtnActive : {}) }}>📧メール</button>
+          <button onClick={() => setTab('mailcheck')} style={{ ...styles.tabBtn, ...(tab === 'mailcheck' ? styles.tabBtnActive : {}) }}>🗂️メール照合</button>
         )}
         {/* 【2026-10-01変更】TODOタブも、そもそも対象外の他のスタッフには表示自体をやめる
             （洋子さん・社長・すぐる・シオンの4人専用のため）。 */}
