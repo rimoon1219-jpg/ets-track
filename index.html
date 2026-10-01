@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-01-243';
+  window.__APP_VERSION__ = '2026-10-02-244';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3241,7 +3241,9 @@ async function autoAssignTrucks() {
     const carriedPhotos = (schedRecord.photos || []).filter((p) => p.pinned && p.kind !== 'gantt');
     // ゴミの種類タグ（管理表のstatus）は、多くの場合その日の工事の進捗（予定表のstatus）と同じになるため、
     // 毎回選び直す手間を減らすよう初期値として引き継ぐ。違う時はそのまま選び直せる
-    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '', status: schedRecord.status || '', photos: carriedPhotos });
+    // 担当者は「予定表を作った人（洋子さんなど）」ではなく「今まさに現場で数量を入力しているこの端末の人」が
+    // 自動で入ってほしいという要望（2026/10/2）があったため、予定表側のstaffではなく常にdeviceStaffを優先する
+    setForm({ ...emptyMgmt(), name: schedRecord.name, kumiten: schedRecord.kumiten, staff: deviceStaff || schedRecord.staff || '', date: todayStr(), supervisorName: schedRecord.supervisorName || '', status: schedRecord.status || '', photos: carriedPhotos });
     setEditingId(null);
     setPendingPhotos([]);
     setTab('mgmt');
@@ -3253,7 +3255,10 @@ async function autoAssignTrucks() {
   // 「コピー」扱いにして元のレコードをゴミ箱に送らない（saveRecord()側でprefix==='mgmt'かどうかで分岐、2026-09-26）。
   // form の _moveFromId に元のレコードIDを覚えておき、saveRecord() 側で保存成功後に処理する。
   function duplicateRecord(r, dayOffset = 7) {
-    const { id, createdAt, photos, ...rest } = r;
+    // 管理表のコピーでは、前回の数量（items／lineItems）が入ったまま複製されると、
+    // 新しい回収分の数量と混ざって誤登録のもとになるため、数量は引き継がずに空で始める
+    // （2026/10/2、洋子さんの指示）。予定表側はそもそもこの2項目を使わないため影響なし。
+    const { id, createdAt, photos, items, lineItems, ...rest } = r;
     const newDate = addDays(r.date, dayOffset);
     const entry = { from: r.date, to: newDate, by: deviceStaff || r.staff || '（担当者不明）', at: new Date().toISOString() };
     const dateHistory = [...(r.dateHistory || []), entry].slice(-10);
@@ -3261,7 +3266,7 @@ async function autoAssignTrucks() {
     // 工程表画像（kind:'gantt'）と📌固定した写真（駐車禁止の写真など、現場が変わっても
     // 残しておきたいもの）だけは、そのまま新しい現場側にもコピーして持ち越す。
     const carriedPhotos = (photos || []).filter((p) => p.kind === 'gantt' || p.pinned);
-    setForm({ ...rest, date: newDate, photos: carriedPhotos, dateHistory, _moveFromId: r.id });
+    setForm({ ...rest, date: newDate, photos: carriedPhotos, dateHistory, _moveFromId: r.id, items: '', lineItems: [] });
     setEditingId(null);
     setPendingPhotos([]);
     setShowForm(true);
