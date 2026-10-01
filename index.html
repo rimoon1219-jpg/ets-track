@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-244';
+  window.__APP_VERSION__ = '2026-10-02-245';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1726,6 +1726,9 @@ function GenbaTracker() {
   // 【2026-09-30 追加】「確認待ち」を選んだ工務店だけに絞るかどうか。デフォルトは絞る（洋子さんの要望）が、
   // 元々は工務店をまたいで見逃さないための一覧だったので、全工務店に切り替えられるようにしておく
   const [invoicePendingAllKumiten, setInvoicePendingAllKumiten] = useState(false);
+  // 【2026-10-02 追加】「その他」を選ぶと、本当はバラバラな工務店の現場が全部まとめて出てきてしまい
+  // 探しにくいという要望があったため、請求書タブにも現場名での検索を追加（その他以外でも使える）
+  const [invoiceSearch, setInvoiceSearch] = useState('');
   const [invoiceEdits, setInvoiceEdits] = useState({}); // recordId -> lineItems編集中バッファ
   useEffect(() => { hasUnsavedInvoiceEdits = Object.keys(invoiceEdits).length > 0; }, [invoiceEdits]); // 保存前に閉じようとした時の警告用
   const invoicePriceSectionRef = useRef(null);
@@ -5529,8 +5532,9 @@ async function autoAssignTrucks() {
     () => mgmtRecords
       .filter(needsInvoicePrice)
       .filter((r) => invoicePendingAllKumiten || r.kumiten === invoiceKumiten)
+      .filter((r) => !invoiceSearch || r.name.toLowerCase().includes(invoiceSearch.toLowerCase()))
       .sort((a, b) => (b.date || '').localeCompare(a.date || '')),
-    [mgmtRecords, invoicePendingAllKumiten, invoiceKumiten]
+    [mgmtRecords, invoicePendingAllKumiten, invoiceKumiten, invoiceSearch]
   );
   const invoiceDismissedItems = useMemo(
     () => mgmtRecords.filter((r) => (r.status === '追加' || r.status === '単発') && r.invoiceDismissed)
@@ -5676,8 +5680,9 @@ async function autoAssignTrucks() {
   }
 
   const invoiceRecords = useMemo(
-    () => mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発')),
-    [mgmtRecords, invoiceKumiten, invoiceMonth]
+    () => mgmtRecords.filter((r) => r.kumiten === invoiceKumiten && r.date && r.date.startsWith(invoiceMonth) && (r.status === '追加' || r.status === '単発')
+      && (!invoiceSearch || r.name.toLowerCase().includes(invoiceSearch.toLowerCase()))),
+    [mgmtRecords, invoiceKumiten, invoiceMonth, invoiceSearch]
   );
   const invoiceRows = useMemo(() => {
     const invoiceBySite = {};
@@ -7136,6 +7141,15 @@ async function autoAssignTrucks() {
                     <button key={k} onClick={() => setInvoiceKumiten(k)} style={{ ...styles.chip, ...(invoiceKumiten === k ? styles.chipActive : {}) }}>{k}</button>
                   ))}
                   <button onClick={() => setShowKumitenEditor(true)} style={styles.addKumitenChip}>⚙ 編集・並び替え</button>
+                </div>
+                {/* 【2026-10-02 追加】「その他」はいろいろな工務店の現場が一度に出てきて探しにくいという
+                    要望があったため、現場名で絞り込める検索欄を追加（その他以外の工務店でも使える） */}
+                <label style={styles.label}>現場名で検索（「その他」の絞り込みに便利です）</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input style={styles.input} value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} placeholder="例：ナカダ" />
+                  {invoiceSearch && (
+                    <button type="button" style={styles.linkBtnSmall} onClick={() => setInvoiceSearch('')}>✕クリア</button>
+                  )}
                 </div>
                 <label style={styles.label}>対象月</label>
                 <input type="month" style={styles.input} value={invoiceMonth} onChange={(e) => setInvoiceMonth(e.target.value)} />
