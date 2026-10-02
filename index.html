@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-246';
+  window.__APP_VERSION__ = '2026-10-02-247';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3584,7 +3584,7 @@ async function autoAssignTrucks() {
         keiTruckRequired: (keiTruck || '').trim() === '○' || (keiTruck || '').trim().toLowerCase() === 'true',
         expectedVisits: (expectedVisits || '').trim(),
         staff: (staff || deviceStaff || '').trim(),
-        note: (note || '').trim(),
+        note: stripExistingRegistrationNote((note || '').trim()),
         // メルディアは一括取り込みでもハウスNoが未入力になりがちなので、他と同じく「対象外」を自動で入れておく
         houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
       });
@@ -3671,6 +3671,18 @@ async function autoAssignTrucks() {
     if (!note) return '';
     const m = note.match(/ETS TRACK既存登録あり\(旧メモ[:：]?\s*([^)]*)\)/);
     return m ? m[1].trim() : '';
+  }
+  // 【2026-10-02 追加】「ETS TRACK既存登録あり(旧メモ:…)」は、夜間メール整理タスクが
+  // “予定日がズレてそう”と気づかせるための一時的な目印で、一括インポート・📧メールタブ経由で
+  // 実際に予定表へ取り込んだ時点でもう役目を終える。確定して登録した後までメモ欄に残っていると
+  // 紛らわしいという洋子さんの指摘（2026/10/2）を受けて、登録時に自動で取り除く。
+  function stripExistingRegistrationNote(note) {
+    if (!note) return '';
+    return note
+      .replace(/ETS TRACK既存登録あり\([^)]*\)/g, '')
+      .replace(/[、,]\s*[、,]/g, '、')
+      .replace(/^[、,。\s]+|[、,。\s]+$/g, '')
+      .trim();
   }
   // 【2026-10-01追加】毎朝のメール整理タスクが、メモ欄の先頭に
   // 「受信:2026-10-01 22:03｜要約:一言要約｜」の形で付けてくる受信日時・一言要約を取り出す。
@@ -3777,7 +3789,7 @@ async function autoAssignTrucks() {
       keiTruckRequired: (keiTruck || '').trim() === '○' || (keiTruck || '').trim().toLowerCase() === 'true',
       expectedVisits: (expectedVisits || '').trim(),
       staff: (staff || '').trim(),
-      note: mailMeta.restNote.trim(),
+      note: stripExistingRegistrationNote(mailMeta.restNote.trim()),
       mailReceivedAt: mailMeta.receivedAt,
       mailSummary: mailMeta.summary,
       houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
