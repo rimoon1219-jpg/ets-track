@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-252';
+  window.__APP_VERSION__ = '2026-10-03-253';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3880,6 +3880,30 @@ async function autoAssignTrucks() {
   }
   // 日付を変えずに「確認したが変更不要だった」場合の手動解除。こちらも誰が・いつ解除したかを
   // 自動で記録する（本人が追加で何か入力する必要はない＝ボタンを押すだけ）。
+  // 「⚠️指定日要確認」の印を、日付変更で解消した直後は目立つ赤枠に埋もれてしまい、
+  // 日付を動かした先（別の日）で改めて見た時に「これ、さっき自分が動かした現場だ」と
+  // 気付きにくいという声があったため、解消から一定期間だけ別の目立つ印（📝）を出す。
+  // 時間が経てば自動で消えるので、確認済みボタンなど新しい操作を覚える必要はない。
+  const REVIEW_RESOLVED_BADGE_DAYS = 3;
+  function recentReviewResolution(r) {
+    if (!r.reviewLog || r.reviewLog.length === 0) return null;
+    const last = r.reviewLog[r.reviewLog.length - 1];
+    if (!last || !last.resolvedAt) return null;
+    const ageDays = (Date.now() - new Date(last.resolvedAt).getTime()) / 86400000;
+    if (ageDays < 0 || ageDays > REVIEW_RESOLVED_BADGE_DAYS) return null;
+    if (r.reviewResolvedBadgeDismissedAt && new Date(r.reviewResolvedBadgeDismissedAt).getTime() >= new Date(last.resolvedAt).getTime()) return null;
+    const lastDateChange = (r.dateHistory || []).length > 0 ? r.dateHistory[r.dateHistory.length - 1] : null;
+    return { ...last, lastDateChange };
+  }
+  // 「もう気付いたので印はいらない」をすぐ消せるように、1件ずつ非表示にできるようにする
+  // （新しく指定日変更があればreviewLogにまた積まれるので、また出てくる）
+  async function dismissReviewResolvedBadge(record) {
+    const updated = { ...record, reviewResolvedBadgeDismissedAt: new Date().toISOString() };
+    try {
+      applyLocalRecordUpdate('sched', updated);
+      await storage.set(`sched:${record.id}`, JSON.stringify(updated), true, record);
+    } catch (e) { showToast('非表示に失敗しました'); }
+  }
   async function clearNeedsReview(record) {
     let latest = record;
     try {
@@ -6111,7 +6135,7 @@ async function autoAssignTrucks() {
 
           <div style={styles.list}>
             {filtered.map((r) => (
-              <div key={r.id} style={{ ...styles.card, ...(r.mailPending ? { border: '2px solid #F4A300' } : {}), ...(r.needsReviewReason ? { border: '2px solid #E53935' } : {}) }}>
+              <div key={r.id} style={{ ...styles.card, ...(r.mailPending ? { border: '2px solid #F4A300' } : {}), ...(r.needsReviewReason ? { border: '2px solid #E53935' } : {}), ...(tab === 'sched' && !r.needsReviewReason && recentReviewResolution(r) ? { border: '2px solid #2A6DF4' } : {}) }}>
                 <div style={{ ...styles.cardBar, background: statusColor(statusList, r.status) }} />
                 <div style={styles.cardBody} onClick={() => openEdit(r)}>
                   <div style={styles.cardTop}>
@@ -6130,6 +6154,23 @@ async function autoAssignTrucks() {
                         ✕印を消す
                       </button>
                     )}
+                    {tab === 'sched' && !r.needsReviewReason && recentReviewResolution(r) && (() => {
+                      const rr = recentReviewResolution(r);
+                      const moveText = rr.lastDateChange ? `${rr.lastDateChange.from}→${rr.lastDateChange.to}` : '';
+                      return (
+                        <span style={{ ...styles.garaBadge, background: '#E8EEFF', color: '#2A4FD0', border: '1px solid #2A6DF4', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          📝指定日を変更した現場{moveText ? `（${moveText}）` : ''}
+                          <button
+                            type="button"
+                            style={{ ...styles.linkBtn, fontSize: 11, padding: '1px 6px' }}
+                            onClick={(e) => { e.stopPropagation(); dismissReviewResolvedBadge(r); }}
+                            title="気付いたので印を消す"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      );
+                    })()}
                     {tab === 'sched' && r.mailPending && (
                       <span style={{ ...styles.garaBadge, background: '#FFF3D6', color: '#8A5A00', border: '1px solid #F4A300' }} title="メールから届いた仮の日付です。監督さんと調整して確定したら編集・保存してください">
                         📅仮日付・要確認
