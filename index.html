@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-245';
+  window.__APP_VERSION__ = '2026-10-02-246';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -7177,13 +7177,16 @@ async function autoAssignTrucks() {
                 <div key={record.id} style={styles.invoiceRow}>
                   <div style={styles.invoiceName}>{record.name}</div>
                   <div style={styles.invoiceMeta}>{record.kumiten}／{record.date}／{record.status}</div>
-                  {record.items && <div style={styles.itemsInlineText}>品目：{record.items}</div>}
+                  {record.items && <div style={styles.itemsInlineTextWrap}>品目：{record.items}</div>}
                   {(record.photos || []).length > 0 && (
                     <div style={{ fontSize: 11.5, color: '#8A8A83', marginBottom: 4 }}>📷 写真{record.photos.length}枚あり</div>
                   )}
                   <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                     <button type="button" style={styles.handoffBtn} onClick={() => jumpToInvoiceItem(record)}>ここで確認する</button>
-                    <button type="button" style={styles.linkBtnSmall} onClick={() => openEdit(record)}>🔍 詳しく見る（写真・数量）</button>
+                    {/* 【2026-10-02 修正】請求書タブ（tab==='invoice'）のまま開くと、編集フォーム側の
+                        写真・内訳欄が tab==='sched'／'mgmt' を条件に表示を出し分けているため、
+                        何も出ない不具合があった。管理表の記録なので開く前にtabをmgmtに合わせる */}
+                    <button type="button" style={styles.linkBtnSmall} onClick={() => { setTab('mgmt'); openEdit(record); }}>🔍 詳しく見る（写真・数量）</button>
                     <button type="button" style={styles.kumitenDeleteBtn} onClick={() => dismissInvoiceItem(record)}>不要にする</button>
                   </div>
                 </div>
@@ -7217,9 +7220,9 @@ async function autoAssignTrucks() {
                     <div style={styles.invoiceMeta}>{record.date}／{record.status}</div>
                     {/* 【2026-09-30 追加】内訳メモと「詳しく見る」を出す。数量入力の時にいちいち上の
                         確認待ち一覧まで探しに戻らなくても、ここで内訳・写真をすぐ確認できるようにする */}
-                    {record.items && <div style={styles.itemsInlineText}>品目：{record.items}</div>}
+                    {record.items && <div style={styles.itemsInlineTextWrap}>品目：{record.items}</div>}
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6 }}>
-                      <button type="button" style={styles.linkBtnSmall} onClick={() => openEdit(record)}>🔍 詳しく見る（写真・数量）</button>
+                      <button type="button" style={styles.linkBtnSmall} onClick={() => { setTab('mgmt'); openEdit(record); }}>🔍 詳しく見る（写真・数量）</button>
                       {(record.photos || []).length > 0 && (
                         <span style={{ fontSize: 11.5, color: '#8A8A83' }}>📷 写真{record.photos.length}枚あり</span>
                       )}
@@ -8932,6 +8935,9 @@ const styles = {
   noteText: { fontSize: 13, color: '#6B6B63', marginBottom: 6, whiteSpace: 'pre-wrap' },
   noteToggleBtn: { fontSize: 12, color: '#457B9D', background: '#F3F9FB', border: '1px solid #C7DCE5', borderRadius: 6, padding: '3px 9px', marginBottom: 6, cursor: 'pointer', display: 'inline-block' },
   itemsInlineText: { fontSize: 12.5, color: '#5A5A54', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' },
+  // 【2026-10-02 追加】請求書タブの品目表示用。スマホ幅だと品目数が多い現場（矢澤アパートなど）で
+  // 1行省略表示（…）になり続きが読めなくなる不具合があったため、折り返して全部表示する版を分ける
+  itemsInlineTextWrap: { fontSize: 12.5, color: '#5A5A54', marginBottom: 6, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.5 },
   dateHistoryBox: { marginBottom: 6 },
   dateHistoryText: { fontSize: 10.5, color: '#B0AFA8' },
   cardMeta: { fontSize: 12.5, color: '#5A5A54' },
@@ -9019,9 +9025,12 @@ const styles = {
   invoiceMeta: { fontSize: 11.5, color: '#8A8A83', marginBottom: 4 },
   invoiceM3: { fontSize: 15, fontWeight: 800, color: '#2A9D8F', marginTop: 6, textAlign: 'right' },
   invoiceItemLine: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12.5, color: '#5A5A54', padding: '3px 0', borderTop: '1px solid #F0EFE9' },
-  lineItemRow: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 },
-  lineItemName: { flex: 2, border: '1px solid #E5E3DC', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#FBFAF7' },
-  lineItemSmall: { flex: 1, border: '1px solid #E5E3DC', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#FBFAF7', minWidth: 0 },
+  // 【2026-10-02 修正】スマホ幅だと名称・数量・単位・単価・金額・削除ボタンが1行に収まらず、
+  // 数量・単価の入力欄が潰れてほぼタップ・入力できない状態になっていた不具合を修正。
+  // 折り返し可にして、名称は常に1行丸ごと使い、数量以降は入力しやすい最低幅を確保して次の行に回す
+  lineItemRow: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 6 },
+  lineItemName: { flex: '1 1 100%', border: '1px solid #E5E3DC', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#FBFAF7' },
+  lineItemSmall: { flex: '1 1 72px', border: '1px solid #E5E3DC', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#FBFAF7', minWidth: 60 },
   lineItemAmount: { fontSize: 12, fontWeight: 700, color: '#2A9D8F', minWidth: 64, textAlign: 'right' },
   lineItemRemove: { background: 'none', border: 'none', color: '#E63946', fontSize: 14, cursor: 'pointer', padding: '0 2px' },
   lineItemTotal: { textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#232320', marginTop: 6 },
