@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-251';
+  window.__APP_VERSION__ = '2026-10-02-252';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -7127,56 +7127,85 @@ async function autoAssignTrucks() {
               </div>
               {showInfoGaps && (
                 <div style={{ marginTop: 8 }}>
-                  {gapGroups.map(({ kumiten, items }) => (
-                    <div key={kumiten} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件）</div>
-                      {items.map(({ r, gaps }) => {
-                        const hasAddr = gaps.includes('住所');
-                        return (
-                          <div key={r.id} style={styles.gapSummaryRow} onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}>
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</div>
-                              <div style={{ fontSize: 11.5, color: '#8A8A83', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
-                                <span>{r.date}／</span>
-                                {gaps.map((g, i) => (
-                                  <span key={g} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                                    {i > 0 && <span>・</span>}
-                                    <span style={g === '住所' ? styles.gapUrgent : undefined}>{g}</span>
-                                    <button
-                                      type="button"
-                                      style={{ ...styles.lineItemRemove, fontSize: 10, padding: '1px 5px' }}
-                                      title={`「${g}」はこの現場だけ不要にする`}
-                                      onClick={(e) => { e.stopPropagation(); dismissGapItem(r, g); }}
-                                    >
-                                      不要
-                                    </button>
-                                  </span>
-                                ))}
-                                <span>が未入力</span>
+                  {gapGroups.map(({ kumiten, items }) => {
+                    // 同じ現場名（複数日程で登録されている現場）が1件ずつバラバラに並んで
+                    // 「同じ現場が何度も出てくる」ように見えるのを防ぐため、現場名でまとめて
+                    // 1つの見出しの下に日付ごとの内訳を出す
+                    const bySite = [];
+                    const siteIndex = new Map();
+                    items.forEach((it) => {
+                      const key = it.r.name.trim();
+                      if (!siteIndex.has(key)) {
+                        siteIndex.set(key, bySite.length);
+                        bySite.push({ name: it.r.name, occurrences: [] });
+                      }
+                      bySite[siteIndex.get(key)].occurrences.push(it);
+                    });
+                    return (
+                      <div key={kumiten} style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: '#8A6D00', marginBottom: 4 }}>{kumiten}（{items.length}件／{bySite.length}現場）</div>
+                        {bySite.map((site, siteI) => {
+                          const anyAddr = site.occurrences.some(({ gaps }) => gaps.includes('住所'));
+                          return (
+                            <div key={`${site.name}_${siteI}`} style={{ ...styles.gapSummaryRow, flexDirection: 'column', alignItems: 'stretch', cursor: 'default' }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', justifyContent: 'space-between' }}>
+                                <span>{site.name}</span>
+                                {site.occurrences.length > 1 && <span style={{ fontSize: 11, color: '#8A8A83', fontWeight: 400 }}>{site.occurrences.length}件の日程</span>}
                               </div>
-                              {r.gapDismissed && Object.keys(r.gapDismissed).length > 0 && (
-                                <div style={{ fontSize: 10.5, color: '#B5B5AC' }}>
-                                  {Object.entries(r.gapDismissed).map(([g, info]) => (
-                                    <span key={g} style={{ marginRight: 8 }}>
-                                      🚫{g}不要（{info.by}）
-                                      <button
-                                        type="button"
-                                        style={{ ...styles.lineItemRemove, fontSize: 10, padding: '1px 5px', marginLeft: 3 }}
-                                        onClick={(e) => { e.stopPropagation(); restoreGapItem(r, g); }}
-                                      >
-                                        元に戻す
-                                      </button>
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
+                              {site.occurrences.map(({ r, gaps }) => {
+                                const hasAddr = gaps.includes('住所');
+                                return (
+                                  <div
+                                    key={r.id}
+                                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, cursor: 'pointer' }}
+                                    onClick={() => { setTab('sched'); setSearch(r.name); openEdit(r); }}
+                                  >
+                                    <div>
+                                      <div style={{ fontSize: 11.5, color: '#8A8A83', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+                                        <span>{r.date}／</span>
+                                        {gaps.map((g, i) => (
+                                          <span key={g} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                            {i > 0 && <span>・</span>}
+                                            <span style={g === '住所' ? styles.gapUrgent : undefined}>{g}</span>
+                                            <button
+                                              type="button"
+                                              style={{ ...styles.lineItemRemove, fontSize: 10, padding: '1px 5px' }}
+                                              title={`「${g}」はこの現場だけ不要にする`}
+                                              onClick={(e) => { e.stopPropagation(); dismissGapItem(r, g); }}
+                                            >
+                                              不要
+                                            </button>
+                                          </span>
+                                        ))}
+                                        <span>が未入力</span>
+                                      </div>
+                                      {r.gapDismissed && Object.keys(r.gapDismissed).length > 0 && (
+                                        <div style={{ fontSize: 10.5, color: '#B5B5AC' }}>
+                                          {Object.entries(r.gapDismissed).map(([g, info]) => (
+                                            <span key={g} style={{ marginRight: 8 }}>
+                                              🚫{g}不要（{info.by}）
+                                              <button
+                                                type="button"
+                                                style={{ ...styles.lineItemRemove, fontSize: 10, padding: '1px 5px', marginLeft: 3 }}
+                                                onClick={(e) => { e.stopPropagation(); restoreGapItem(r, g); }}
+                                              >
+                                                元に戻す
+                                              </button>
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: 12, color: hasAddr ? '#B3261E' : '#2A9D8F', fontWeight: hasAddr ? 700 : 400 }}>開く</span>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            <span style={{ fontSize: 12, color: hasAddr ? '#B3261E' : '#2A9D8F', fontWeight: hasAddr ? 700 : 400 }}>開く</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
