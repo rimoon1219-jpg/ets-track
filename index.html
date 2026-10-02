@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-247';
+  window.__APP_VERSION__ = '2026-10-02-248';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3756,7 +3756,23 @@ async function autoAssignTrucks() {
     if (row.registered || registeringMailRowsRef.current.has(row)) return;
     registeringMailRowsRef.current.add(row);
     setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registering: true } : r)) : prev));
+    // 【2026-10-02 追加】個別の通信にはタイムアウトを入れているが、洋子さんから「登録中…」のまま
+    // かなりの時間ボタンが固まって見えるという報告があった（原因切り分け中）。実際の登録自体は
+    // applyLocalRecordUpdateでこの時点ですでにこの端末に反映されており、通信が遅いだけなら
+    // 予定表には既に出ているはず。それでもボタンだけが固まって二度と押せなくなるのを防ぐため、
+    // 一定時間たっても終わらなければボタン表示だけは必ず元に戻す（裏の送信・自動再送はそのまま続く）。
+    let settled = false;
+    const hardTimeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      registeringMailRowsRef.current.delete(row);
+      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registering: false } : r)) : prev));
+      showToast('時間がかかっています。予定表にもう反映されているか確認してください（反映されていなければもう一度お試しください）');
+    }, 60000);
     const stopRegistering = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hardTimeoutId);
       registeringMailRowsRef.current.delete(row);
       setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registering: false } : r)) : prev));
     };
@@ -3804,11 +3820,15 @@ async function autoAssignTrucks() {
       // 何が起きたのか画面から分からなかった)。
       const result = await storage.set(`sched:${id}`, JSON.stringify(record));
       const queued = !!(result && result.queued);
-      registeringMailRowsRef.current.delete(row);
-      setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true, queued, registering: false } : r)) : prev));
-      showToast(queued
-        ? '電波状況が悪いため保留しました。予定表にはこの端末上だけ先に反映済みで、電波が戻り次第サーバーに自動送信されます（それまではすぐる・シオンの画面にはまだ出ません）'
-        : '予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
+      if (!settled) {
+        settled = true;
+        clearTimeout(hardTimeoutId);
+        registeringMailRowsRef.current.delete(row);
+        setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true, queued, registering: false } : r)) : prev));
+        showToast(queued
+          ? '電波状況が悪いため保留しました。予定表にはこの端末上だけ先に反映済みで、電波が戻り次第サーバーに自動送信されます（それまではすぐる・シオンの画面にはまだ出ません）'
+          : '予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
+      }
     } catch (e) { showToast('登録に失敗しました'); stopRegistering(); }
   }
 
