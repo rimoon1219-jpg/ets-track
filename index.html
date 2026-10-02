@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-248';
+  window.__APP_VERSION__ = '2026-10-02-249';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -3748,7 +3748,12 @@ async function autoAssignTrucks() {
   // メールに書かれている日付はまだ仮のものなので、確定するまでは洋子・社長・すぐる・シオンの
   // 4人にしか見せない（filtered側でmailPendingを見て絞り込む）。すぐる・シオンが監督さんと
   // 調整して日付を編集・保存した時点で印が外れ、全スタッフに通常通り見えるようになる。
-  async function registerMailCandidate(row) {
+  // 【2026-10-02 追加】通常はメールの日付をまだ仮のものとして「📅仮日付・要確認」付きで登録し、
+  // すぐる・シオンが工程を見ながら日付を確定するが、洋子さんが見て「これはこのまま確定で問題ない」と
+  // 判断できる内容の時は、すぐる・シオンの確認を待たず洋子さん自身がその場で確定登録できた方が、
+  // 後から予定表側でもう一度編集する二度手間がなくて楽（洋子さんの指示：2026/10/2）。
+  // skipPendingがtrueの時は「仮日付・要確認」を付けず、最初から確定済みの通常の予定として登録する。
+  async function registerMailCandidate(row, skipPending) {
     // 【2026-09-29 追加】連打による二重登録の防止（洋子さんの報告：富岡西で3件の重複登録が
     // 発生した実例）。電波が悪くて反応が遅い時ほど「反応がない」と思って連打されやすいため、
     // 最初のクリックの時点ですぐにこの行をロックし、処理中は同じ行のボタンを押しても
@@ -3809,7 +3814,7 @@ async function autoAssignTrucks() {
       mailReceivedAt: mailMeta.receivedAt,
       mailSummary: mailMeta.summary,
       houseNumber: (kumiten || '').trim() === 'メルディア' ? '対象外' : '',
-      mailPending: true,
+      mailPending: !skipPending,
     };
     try {
       applyLocalRecordUpdate('sched', record);
@@ -3827,7 +3832,7 @@ async function autoAssignTrucks() {
         setMailCheckResults((prev) => (prev ? prev.map((r) => (r === row ? { ...r, registered: true, queued, registering: false } : r)) : prev));
         showToast(queued
           ? '電波状況が悪いため保留しました。予定表にはこの端末上だけ先に反映済みで、電波が戻り次第サーバーに自動送信されます（それまではすぐる・シオンの画面にはまだ出ません）'
-          : '予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）');
+          : (skipPending ? '予定表に確定登録しました' : '予定表に仮登録しました（すぐる・シオンの画面で「要確認」として一番上に出ます）'));
       }
     } catch (e) { showToast('登録に失敗しました'); stopRegistering(); }
   }
@@ -6636,6 +6641,16 @@ async function autoAssignTrucks() {
                   >
                     {r.registering ? '登録中…' : (warn ? '✅ OK→別の予定として登録' : '✅ OK→予定表に登録')}
                   </button>
+                  {ryubeiUnlocked && (
+                    <button
+                      style={{ ...styles.linkBtn, fontSize: 12, padding: '4px 10px', color: '#2A9D8F', borderColor: '#2A9D8F', opacity: r.registering ? 0.6 : 1 }}
+                      disabled={r.colMismatch || r.registering}
+                      onClick={() => registerMailCandidate(r, true)}
+                      title="すぐる・シオンの確認を待たず、このまま確定済みとして登録します（日付が間違いないと判断できる時だけ使ってください）"
+                    >
+                      ✅このまま確定登録（確認スキップ）
+                    </button>
+                  )}
                 </div>
               </div>
             );
