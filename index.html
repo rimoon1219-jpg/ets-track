@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-249';
+  window.__APP_VERSION__ = '2026-10-02-250';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -5154,7 +5154,11 @@ async function autoAssignTrucks() {
   // （どちらもボタンを押した時だけ反映。自動では反映しない）
   function findNearMatches(exactMatches) {
     const matchedIds = new Set((exactMatches || []).map((m) => `${m.prefix}:${m.recordId}`));
-    const near = [];
+    // 1つのETS側現場に対して虎の巻側の複数候補がゆるい部分一致でヒットしてしまうと、
+    // 同じ現場が何度も（別候補として）表示され続けて「反映しても反映しても同じところが出てくる」
+    // ように見える原因になる。そのため、ETS側1件につき最もそれらしい候補を1つだけ残すようにする
+    // （優先度：表記ゆれだけの完全一致 > ハウスNo一致 > ゆるい部分一致）。
+    const bestByRecord = new Map();
     [['sched', schedRecords], ['mgmt', mgmtRecords]].forEach(([prefix, records]) => {
       records.forEach((r) => {
         if (!HOUSE_NUMBER_KUMITEN.includes(r.kumiten)) return;
@@ -5164,6 +5168,7 @@ async function autoAssignTrucks() {
         if (!needSupervisor && !needHouseNumber) return;
         const normRecord = normalizeForCompare(r.name);
         const recordHouseNumber = (r.houseNumber || '').trim();
+        const recordKey = `${prefix}:${r.id}`;
         identifiedSites.forEach((s) => {
           if (s.kumiten !== r.kumiten) return;
           if (s.siteName.trim() === r.name.trim()) return; // 完全一致は上のfindReconcileMatchesの方で扱う
@@ -5182,7 +5187,8 @@ async function autoAssignTrucks() {
           const houseNumberMatches = !!(recordHouseNumber && siteHouseNumber && recordHouseNumber === siteHouseNumber);
           const isHouseNumberOnly = !isExactNorm && !isLoose && houseNumberMatches;
           if (!isExactNorm && !isLoose && !isHouseNumberOnly) return;
-          near.push({
+          const score = isExactNorm ? 3 : (isHouseNumberOnly ? 2 : 1);
+          const candidate = {
             prefix,
             recordId: r.id,
             etsName: r.name,
@@ -5193,10 +5199,15 @@ async function autoAssignTrucks() {
             isLoose,
             matchedBy: isHouseNumberOnly ? 'houseNumber' : 'name',
             houseNumberMatches,
-          });
+          };
+          const existing = bestByRecord.get(recordKey);
+          if (!existing || score > existing.score) {
+            bestByRecord.set(recordKey, { score, candidate });
+          }
         });
       });
     });
+    const near = Array.from(bestByRecord.values()).map((v) => v.candidate);
     return near;
   }
   // 虎の巻(特定済み現場データ)にはあるのに、予定表側に完全一致・表記ゆれ一致・部分一致のどれも
@@ -5313,8 +5324,10 @@ async function autoAssignTrucks() {
     };
     await storage.set(`${nm.prefix}:${rec.id}`, JSON.stringify(updatedRec));
     applyLocalRecordUpdate(nm.prefix, updatedRec);
-    setNearMatches((prev) => prev.filter((x) => !(x.prefix === nm.prefix && x.recordId === nm.recordId && x.dataName === nm.dataName)));
-    showToast(`「${rec.name}」に反映しました`);
+    // 同じETS側現場に対する他の候補（別の虎の巻名寄せ）が残っていると、反映済みなのに
+    // 一覧にまだ出ているように見えてしまうため、この現場IDの候補は全部まとめて消す
+    setNearMatches((prev) => prev.filter((x) => !(x.prefix === nm.prefix && x.recordId === nm.recordId)));
+    showToast(`「${rec.name}」に反映しました（監督：${updatedRec.supervisorName || 'なし'}／ハウスNo：${updatedRec.houseNumber || 'なし'}）`);
   }
   function openReconcileModal() {
     const matches = findReconcileMatches();
