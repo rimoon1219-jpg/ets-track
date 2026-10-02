@@ -9,7 +9,7 @@
 <script>
   // 開くたびに、サーバー上の本当に最新のindex.htmlと自分のバージョンを照合し、
   // 古ければキャッシュを無視して強制的に読み込み直す（PWA/ブラウザのキャッシュ対策）
-  window.__APP_VERSION__ = '2026-10-02-250';
+  window.__APP_VERSION__ = '2026-10-02-251';
   (function () {
     // 以前は1回一致したらそのタブでは二度と確認しない仕組みだったが、
     // GitHub Pages側の反映が少し遅れて「たまたま古いまま一致」した場合、
@@ -1781,6 +1781,7 @@ function GenbaTracker() {
   const [reconcileBusy, setReconcileBusy] = useState(false);
   const [nearMatches, setNearMatches] = useState([]);
   const [unmatchedSites, setUnmatchedSites] = useState([]);
+  const [unmatchedChecked, setUnmatchedChecked] = useState({});
   // 「監督名・ハウスNoがETS TRACK側では入力／変更されたのに、マニフェスト業務プロジェクトの
   // 特定済み現場データ（虎の巻）にまだ反映されていない」ものを溜めておき、洋子さんの好きな
   // タイミングでまとめてコピーしてClaudeに貼れるようにする機能。
@@ -5053,6 +5054,24 @@ async function autoAssignTrucks() {
     const next = identifiedSites.filter((s) => !(s.kumiten === kumiten && s.siteName === siteName));
     await saveIdentifiedSites(next);
   }
+  // 「予定表にまだ見当たらない現場」一覧から、チェックした分をまとめて保管庫（アーカイブ）に送る。
+  // 90日待たずに「もう終わっている」と自分で判断したものを、1件ずつ別画面で削除しなくて済むようにする。
+  // 削除ではなく自動アーカイブと同じ場所に入れるので、🗄️自動アーカイブ済みから後で元に戻すこともできる。
+  async function archiveSelectedUnmatchedSites() {
+    const targets = unmatchedSites.filter((s) => unmatchedChecked[`${s.kumiten}__${s.siteName}`]);
+    if (targets.length === 0) { showToast('チェックが入っていません'); return; }
+    if (!window.confirm(`選択した${targets.length}件を保管庫に移します（削除ではないので、後から元に戻せます）。よろしいですか？`)) return;
+    const archivedAt = new Date().toISOString();
+    const targetKeys = new Set(targets.map((s) => `${s.kumiten}__${s.siteName}`));
+    const nextSites = identifiedSites.filter((s) => !targetKeys.has(`${s.kumiten}__${s.siteName}`));
+    const nextArchived = [...archivedIdentifiedSites, ...targets.map((s) => ({ ...s, archivedAt }))];
+    await saveIdentifiedSites(nextSites);
+    await storage.set('meta:archivedIdentifiedSites', JSON.stringify(nextArchived), true);
+    setArchivedIdentifiedSites(nextArchived);
+    setUnmatchedSites((prev) => prev.filter((s) => !targetKeys.has(`${s.kumiten}__${s.siteName}`)));
+    setUnmatchedChecked({});
+    showToast(`${targets.length}件を保管庫に移しました`);
+  }
   // 参考ファイルの行をそのまま貼り付けて登録できるようにするパーサー。
   // 対応形式：「現場名：X／ハウスNo：Y／現場監督：Z／確認日：W」「AAA → 監督名」など
   async function importIdentifiedSitesBulkText() {
@@ -5345,6 +5364,7 @@ async function autoAssignTrucks() {
     setReconcileChecked(checked);
     setNearMatches(near);
     setUnmatchedSites(unmatched);
+    setUnmatchedChecked({});
     setShowReconcileModal(true);
   }
   async function applyReconcile() {
@@ -8405,15 +8425,45 @@ async function autoAssignTrucks() {
               <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid #F0EFE9' }}>
                 <div style={{ fontWeight: 700, marginBottom: 4 }}>予定表にまだ見当たらない現場（{unmatchedSites.length}件）</div>
                 <div style={{ color: '#8A8A83', fontSize: 13, marginBottom: 8 }}>
-                  虎の巻には登録されていますが、表記ゆれ・部分一致も含めて予定表側に同じ現場が1件も見つかりませんでした。まだ予定表にその現場のデータを作っていないか、現場名が大きく違う（住所ベースと施主名ベースなど）可能性があります。
+                  虎の巻には登録されていますが、表記ゆれ・部分一致も含めて予定表側に同じ現場が1件も見つかりませんでした。まだ予定表にその現場のデータを作っていないか、現場名が大きく違う（住所ベースと施主名ベースなど）か、すでに終わっている現場の可能性があります。もう終わっていると分かっているものはチェックして下の「保管庫に移す」でまとめて片付けられます（削除ではないので後から元に戻せます）。
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginBottom: 6 }}>
+                  <button
+                    style={styles.linkBtnSmall}
+                    onClick={() => {
+                      const all = {};
+                      unmatchedSites.forEach((s) => { all[`${s.kumiten}__${s.siteName}`] = true; });
+                      setUnmatchedChecked(all);
+                    }}
+                  >
+                    全部チェック
+                  </button>
+                  <button style={styles.linkBtnSmall} onClick={() => setUnmatchedChecked({})}>チェックを外す</button>
                 </div>
                 <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-                  {unmatchedSites.map((s, i) => (
-                    <div key={`${s.kumiten}_${s.siteName}_${i}`} style={{ padding: '6px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13 }}>
-                      <span style={{ fontWeight: 700 }}>{s.siteName}</span>　（{s.kumiten}／No:{s.houseNumber || '不明'}／監督：{s.supervisorName || '不明'}）
-                    </div>
-                  ))}
+                  {unmatchedSites.map((s, i) => {
+                    const key = `${s.kumiten}__${s.siteName}`;
+                    return (
+                      <label key={`${key}_${i}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 0', borderBottom: '1px solid #F0EFE9', fontSize: 13, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!unmatchedChecked[key]}
+                          onChange={(e) => setUnmatchedChecked((prev) => ({ ...prev, [key]: e.target.checked }))}
+                          style={{ marginTop: 3 }}
+                        />
+                        <span>
+                          <span style={{ fontWeight: 700 }}>{s.siteName}</span>　（{s.kumiten}／No:{s.houseNumber || '不明'}／監督：{s.supervisorName || '不明'}）
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
+                <button
+                  style={{ ...styles.saveBtn, marginTop: 10 }}
+                  onClick={archiveSelectedUnmatchedSites}
+                >
+                  🗄️ チェックした分を保管庫に移す（{Object.values(unmatchedChecked).filter(Boolean).length}件）
+                </button>
               </div>
             )}
           </div>
